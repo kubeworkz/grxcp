@@ -19,6 +19,19 @@
 #include "grx_device.h"
 #include <vx_dxa.h>
 
+// Same backstop as grx_wmma.h: including this header is a statement that the
+// kernel uses the DMA engine, so a configuration without one is a build error
+// rather than a silently different kernel. See ci/README.md, "configuration
+// provenance".
+#if !defined(VX_CFG_EXT_DXA_ENABLED)
+#error "grx_pipeline.h: no device configuration. Compile with \
+ci/build_kernel.sh, which resolves the configuration from the installed sysroot."
+#elif !VX_CFG_EXT_DXA_ENABLED
+#error "grx_pipeline.h: this device configuration has no DMA engine. Rebuild \
+the sysroot with ci/build_sysroot.sh --configs \"-DVX_CFG_EXT_DXA_ENABLE\", or \
+do not include this header."
+#endif
+
 namespace grx {
 
 // A barrier that counts both arrivals and asynchronous transactions -- the

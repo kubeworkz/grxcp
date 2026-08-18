@@ -17,6 +17,23 @@
 #include "grx_device.h"
 #include <vx_tensor.h>
 
+// A kernel that includes this header intends to use the tensor unit. If the
+// device configuration it is being compiled for does not have one, say so at
+// compile time. The failure mode this prevents is specific and nasty: the
+// sysroot is built with the TCU enabled, the runtime reports tensor cores,
+// the kernel is compiled from the baseline VX_config.toml where the TCU is
+// off, and the resulting test passes having exercised nothing.
+// ci/build_kernel.sh takes the configuration from the installed sysroot for
+// exactly this reason; this is the backstop for every other way in.
+#if !defined(VX_CFG_EXT_TCU_ENABLED)
+#error "grx_wmma.h: no device configuration. Compile with ci/build_kernel.sh, \
+which resolves the configuration from the installed sysroot."
+#elif !VX_CFG_EXT_TCU_ENABLED
+#error "grx_wmma.h: this device configuration has no tensor unit. Rebuild the \
+sysroot with ci/build_sysroot.sh --configs \"-DVX_CFG_EXT_TCU_ENABLE\", or do \
+not include this header."
+#endif
+
 namespace grx {
 namespace wmma {
 

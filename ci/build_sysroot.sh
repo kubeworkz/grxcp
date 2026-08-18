@@ -8,9 +8,23 @@
 # those; enumerating a device, allocating memory and moving data does not.
 #
 #   ./ci/build_sysroot.sh --grxgpu <path> [--xlen 64] [--jobs N]
+#                         [--tooldir <path>]
+#                         [--configs "-DVX_CFG_EXT_TCU_ENABLE ..."]
 #
 # On success it prints the VORTEX_PATH to export. Roughly ten minutes cold,
 # almost all of it ramulator.
+#
+# --configs selects the hardware configuration, exactly as grxgpu's own CONFIGS
+# variable does: the default VX_config.toml is the small FPGA baseline with the
+# tensor unit and the DMA engine OFF. A device with tensor cores needs
+#
+#   --configs "-DVX_CFG_EXT_TCU_ENABLE -DVX_CFG_EXT_DXA_ENABLE"
+#
+# and the string is RECORDED in the installed sysroot so ci/build_kernel.sh
+# compiles device code for the same machine the runtime was built for. Without
+# that record the two disagree silently: the runtime reports a tensor unit, the
+# kernel is compiled as though it has none, and a tensor test passes having
+# tested nothing. See ci/README.md, "configuration provenance".
 #
 # THREE THINGS THAT WILL BITE YOU, all found the hard way:
 #
@@ -36,6 +50,8 @@ XLEN=64
 JOBS="$(nproc 2>/dev/null || echo 4)"
 FIX_LINE_ENDINGS=0
 WORKDIR=""
+CONFIGS="${CONFIGS:-}"
+TOOLDIR="${TOOLDIR:-$HOME/tools}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -43,9 +59,11 @@ while [[ $# -gt 0 ]]; do
     --xlen)              XLEN="$2"; shift 2 ;;
     --jobs)              JOBS="$2"; shift 2 ;;
     --workdir)           WORKDIR="$2"; shift 2 ;;
+    --tooldir)           TOOLDIR="$2"; shift 2 ;;
+    --configs)           CONFIGS="$2"; shift 2 ;;
     --fix-line-endings)  FIX_LINE_ENDINGS=1; shift ;;
     -h|--help)
-      sed -n '2,32p' "$0" | sed 's|^# \{0,1\}||'
+      sed -n '2,43p' "$0" | sed 's|^# \{0,1\}||'
       exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
@@ -114,8 +132,13 @@ fetch_pinned() {
     git checkout -q FETCH_HEAD )
 }
 
+# The `|| true` is load-bearing. In a checkout with no git metadata -- a
+# tarball, an export, a copy without .git -- ls-tree exits 128, and with
+# `set -o pipefail` that aborts the whole script at the assignment below,
+# before the documented default SHAs can be applied. Empty here means "fall
+# back to the pins recorded in this file", which is what the next lines do.
 pinned_sha() {
-  git -C "$GRXGPU" ls-tree HEAD "third_party/$1" 2>/dev/null | awk '{print $3}'
+  git -C "$GRXGPU" ls-tree HEAD "third_party/$1" 2>/dev/null | awk '{print $3}' || true
 }
 
 SOFTFLOAT_SHA="$(pinned_sha softfloat)"
@@ -136,18 +159,50 @@ make -C third_party softfloat ramulator -j"$JOBS"
 
 mkdir -p build && cd build
 echo "==> configure --xlen=$XLEN"
-bash ../configure --xlen="$XLEN" --tooldir="${TOOLDIR:-$HOME/tools}"
+bash ../configure --xlen="$XLEN" --tooldir="$TOOLDIR"
 
 echo "==> building the driver and the SimX backend"
+echo "    CONFIGS=${CONFIGS:-<VX_config.toml defaults>}"
 # Only simx: rtlsim needs Verilator and the hw/dpi sources, and nothing in
 # GRXCP's current gates requires it.
+export CONFIGS
 make -C sw/runtime/simx -j"$JOBS"
 make -C sw/runtime/stub  -j"$JOBS" 2>/dev/null || true
+
+# The CTA runtime (libvortex2.a) is device code, so it needs the RISC-V
+# toolchain the rest of this script deliberately avoids. Build it here when the
+# toolchain is present -- with the SAME CONFIGS, which is the whole point of
+# this script taking them -- because ci/build_kernel.sh links every kernel
+# against it, and a CTA runtime built for a different machine than the kernel
+# is the same silent disagreement in a second place.
+if [[ -d "$TOOLDIR/llvm-vortex" ]]; then
+  echo "==> building the device-side CTA runtime (libvortex2.a)"
+  make -C sw/kernel -j"$JOBS"
+else
+  echo "==> skipping the device-side CTA runtime: no toolchain in $TOOLDIR"
+  echo "    ci/build_kernel.sh needs it. Install with ci/install_toolchain.sh,"
+  echo "    then re-run this script."
+fi
 
 echo "==> installing the sysroot"
 make install
 
 VORTEX_PATH="$(pwd)/install"
+
+# --- 4. configuration provenance -------------------------------------------
+# The installed sysroot carries no record of the configuration it was built
+# with -- no generated VX_config.h, and vortex-kernel.pc's Cflags do not carry
+# the defines. So a consumer compiling device code has no way to ask the
+# sysroot what machine it is for, and defaults to the repo's baseline toml,
+# which is not necessarily what is installed here.
+#
+# Until grxgpu records this itself (it should, and the file below is shaped so
+# that switching to an upstream mechanism is a one-line change), GRXCP writes
+# the string it used into a clearly GRXCP-owned path. ci/build_kernel.sh reads
+# it. This is provenance, not configuration: nothing reads it to DECIDE
+# anything, only to stay consistent with a decision already made here.
+mkdir -p "$VORTEX_PATH/share/grxcp"
+printf '%s\n' "$CONFIGS" > "$VORTEX_PATH/share/grxcp/device_configs"
 cat <<EOF
 
 Sysroot ready.

@@ -16,7 +16,8 @@ capability values. A green tier-1 run says the runtime is not broken; it says
 nothing about whether the device works.
 
 ```sh
-./ci/build_mock.sh --vortex-include $VORTEX_PATH/include
+./ci/build_mock.sh                 # finds vortex2.h from $VORTEX_PATH
+./ci/build_mock.sh --vortex-include <dir containing vortex2.h>
 ```
 
 ## Tier 2 — real backends (`ci/run_real.sh`, `ci/testcases/grxcp.yaml`)
@@ -55,9 +56,11 @@ binutils), about 580 MB:
 
 ```sh
 ./ci/install_toolchain.sh --tooldir $HOME/tools --grxgpu ../grxgpu
-# rebuild grxgpu with the toolchain visible so libvortex2.a exists
-( cd ../grxgpu/build && bash ../configure --xlen=64 --tooldir=$HOME/tools \
-  && make -C sw/kernel )
+# re-run the sysroot build with the toolchain visible: it then also builds the
+# device-side CTA runtime (libvortex2.a) with the same CONFIGS as everything
+# else. See "configuration provenance" below for why that matters.
+./ci/build_sysroot.sh --grxgpu ../grxgpu --tooldir $HOME/tools \
+  --configs "-DVX_CFG_EXT_TCU_ENABLE -DVX_CFG_EXT_DXA_ENABLE"
 ./ci/run_real.sh --grxgpu ../grxgpu --tooldir $HOME/tools
 ```
 
@@ -68,4 +71,42 @@ kernel written against GRXCP's own device header, launched through
 exercise the partial-warp path.
 
 Without a toolchain, `run_real.sh` **skips** that gate and says so, rather than
-reporting a pass over work that never ran.
+reporting a pass over work that never ran. The grxBLAS gate behaves the same
+way: no kernels built means it exits 77 (skip), because "nobody compiled it"
+must not read as "the GEMM is broken".
+
+## Configuration provenance
+
+A GRX-G100 sysroot is built for a *particular machine*. `VX_config.toml` is the
+small FPGA baseline — no tensor unit, no DMA engine — and a real configuration
+is a `CONFIGS` override on top of it:
+
+```sh
+./ci/build_sysroot.sh --grxgpu ../grxgpu --tooldir $HOME/tools \
+  --configs "-DVX_CFG_EXT_TCU_ENABLE -DVX_CFG_EXT_DXA_ENABLE"
+```
+
+Here is the trap, and it is a quiet one. The installed sysroot records nothing
+about how it was configured: there is no generated config header in the install
+tree, and `vortex-kernel.pc`'s `Cflags` carry only an include path. So anything
+compiling device code afterwards falls back to the repo's baseline toml. The
+result is a runtime that reports `tensor` in its capability list and a kernel
+compiled as though the tensor unit does not exist — and a tensor test that
+passes having tested nothing.
+
+Three things keep that from happening:
+
+1. `ci/build_sysroot.sh` writes the `CONFIGS` string it used to
+   `$VORTEX_PATH/share/grxcp/device_configs`, and builds `libvortex2.a` with
+   the same string when a toolchain is available.
+2. `ci/build_kernel.sh` reads that file, feeds it to `gen_config.py`, and
+   **prints** the resolved feature bits before compiling. `--configs`
+   overrides; a sysroot with no record produces a warning, not silence.
+3. `grx_wmma.h` and `grx_pipeline.h` refuse to compile when the configuration
+   they are being built for lacks the unit they exist to drive. That backstop
+   is deliberately at the header, so it holds no matter how the kernel is
+   built.
+
+The right long-term fix belongs upstream: the sysroot should describe its own
+configuration, ideally through `vortex-kernel.pc`. Item 1 is shaped so that
+switching to an upstream mechanism is a one-line change.
