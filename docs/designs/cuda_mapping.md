@@ -257,7 +257,29 @@ TEX units and TCACHE exist and are driven by the graphics path. Nothing
 exposes them to compute kernels. `grx::tex<>` is a Phase 6 item; CUDA
 texture-object code does not port until then.
 
-### 7.9 Out of scope for v1
+### 7.9 WMMA fragment shape — **HW, structural**
+
+`nvcuda::wmma` fixes fragments at 16x16x16 (plus 32x8x16 and 8x32x16), and
+every CUDA GPU with tensor cores has those shapes. GRX-G100's tile is
+**derived** from the build — warp width, registers per fragment, input element
+width — so it is neither 16x16x16 nor constant across configurations. The
+configuration this was developed against gives **8 x 4 x 8** for fp16 in /
+fp32 out; a wider warp gives something else again.
+
+There is no honest way to paper over this at the fragment level. Emulating a
+16x16x16 fragment on an 8x4x8 tile means loading four times the data per
+fragment and issuing eight MMA steps behind the caller's back — a reasonable
+thing for a *library* to do, and a bad thing for a fragment *type* to do,
+because the register budget the caller is reasoning about silently multiplies.
+
+So `grx::wmma::fragment` **checks** the shape it is declared with and refuses
+to compile when it is not the shape this build provides. A ported kernel that
+hardcodes 16 has to be edited; a kernel written against
+`grx::wmma::tile<T>::m` / `::n` / `::k` follows the configuration by itself.
+Absorbing the tiling difference is library-level work — grxBLAS — which is
+where it belongs.
+
+### 7.10 Out of scope for v1
 
 Dynamic parallelism (no device-side launch path), CUDA graphs, IPC handles,
 MPS, multi-process service, `cudaHostAlloc` write-combining hints, and

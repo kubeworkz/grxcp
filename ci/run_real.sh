@@ -109,6 +109,30 @@ else
 fi
 
 echo
+echo "==> TENSOR GATE: one WMMA tile, checked exactly against a CPU reference"
+# Whether to run this is the runtime's call, not a guess from the config file:
+# grx-smi reports what the device says it has, and grx_wmma.h refuses to compile
+# for a device without a tensor unit, so attempting the build on one would be a
+# hard error rather than a skip.
+if ! "$BUILD/grx-smi" 2>/dev/null | grep -q 'capabilities.*tensor'; then
+  echo "SKIPPED: this device reports no tensor unit."
+  echo "         Rebuild the sysroot with ci/build_sysroot.sh --configs"
+  echo "         \"-DVX_CFG_EXT_TCU_ENABLE\" to exercise it."
+elif [[ -z "$GRXGPU" || ! -d "$TOOLDIR/llvm-vortex" ]]; then
+  echo "SKIPPED: needs --grxgpu <path> and a device toolchain in $TOOLDIR."
+else
+  "$ROOT/ci/build_kernel.sh" --grxgpu "$GRXGPU" --tooldir "$TOOLDIR" \
+    "$ROOT/tests/kernels/wmma/kernel.cpp" -o "$BUILD/wmma.vxbin" >/dev/null
+  $CXX $CXXFLAGS -I"$ROOT/tests/kernels/wmma" \
+    -c "$ROOT/tests/kernels/wmma/main.cpp" -o "$BUILD/wmma_main.o"
+  $CXX "${OBJS[@]}" "$BUILD/wmma_main.o" $LIBS -o "$BUILD/wmma_gate"
+  if ! "$BUILD/wmma_gate" "$BUILD/wmma.vxbin"; then
+    rc=$?
+    [[ $rc -eq 77 ]] || exit $rc
+  fi
+fi
+
+echo
 echo "==> grxBLAS: library builds"
 $CXX $CXXFLAGS -c "$ROOT/src/libs/grxblas/grxblas.cpp" -o "$BUILD/grxblas.o"
 

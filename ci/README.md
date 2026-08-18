@@ -70,6 +70,14 @@ kernel written against GRXCP's own device header, launched through
 `grxLaunchFunction`, with the arithmetic checked on the host at sizes that
 exercise the partial-warp path.
 
+`tests/kernels/wmma/` is the tensor gate: one WMMA tile through
+`grx::wmma`, compared **exactly** against a CPU reference. The host asks the
+device for its tile shape rather than assuming one, and cross-checks the warp
+width the kernel was compiled for against the width the runtime reports — a
+disagreement there means the module and the runtime came from different
+configurations, which is the failure "configuration provenance" below exists to
+prevent. It skips when the device reports no tensor unit.
+
 Without a toolchain, `run_real.sh` **skips** that gate and says so, rather than
 reporting a pass over work that never ran. The grxBLAS gate behaves the same
 way: no kernels built means it exits 77 (skip), because "nobody compiled it"

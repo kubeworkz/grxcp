@@ -233,6 +233,23 @@ fail while NN and NT still pass. Worth repeating whenever the CPU reference
 changes — the reference's first version shared a wrong index expression with the
 kernel, so the transpose-A case passed while transposing nothing.
 
+**Progress — `grx::wmma` runs on the tensor unit.** The device-side WMMA API is
+implemented over `vortex::tensor::wmma_context` rather than declared: fragments,
+`fill_fragment`, `load_matrix_sync`, `store_matrix_sync`, `mma_sync`, dense
+fp16-in/fp32-out and fp32-in/fp32-out, single warp. `tests/kernels/wmma/` runs
+one tile on `simx` and checks every element **exactly** — the inputs are chosen
+so that a correct tensor unit reproduces the reference bit for bit, which means
+no tolerance is available to hide a wrong answer behind. Verified in the other
+direction too: declaring B `row_major` instead of `col_major` makes all 32
+elements wrong.
+
+The tile is **8 x 4 x 8**, not 16 x 16 x 16, and it is derived from the
+configuration rather than fixed. That is a structural difference from CUDA and
+is registered as such (cuda_mapping.md section 7.9). What is still missing for
+the exit gate: WGMMA warp groups (needs `VX_CFG_TCU_WGMMA_ENABLE`), the DXA
+async-copy staging in `grx_pipeline.h`, and the blocked grxBLAS kernel that puts
+them together.
+
 ---
 
 ## Phase 4 — `grxcc` single-source driver (≈5–6 engineer-months)
