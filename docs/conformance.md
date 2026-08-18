@@ -101,7 +101,7 @@ Failing at compile time is the point. A mystery at runtime would be worse.
 | Warp shuffle | emulated through local memory, roughly an order of magnitude slower than a register shuffle |
 | Event elapsed time | host clock; measures submission, not device execution |
 | `__constant__` | lowered to read-only global memory; no broadcast bandwidth advantage |
-| Managed memory | available |
+| Managed memory | refused on this backend |
 
 ## What this report does not measure
 

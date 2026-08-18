@@ -71,13 +71,14 @@ both `simx` and `rtlsim`, in CI, from a clean checkout.
 | Runtime device layer (`src/runtime/{internal.h,error.cpp,context.cpp}`) | done |
 | `grx-smi` v0 (human + `--json`) | done |
 | Mock driver fixture + unit tests + `ci/build_mock.sh` (tier 1) | done |
-| Exit gate: `grx-smi` on real `simx` / `rtlsim` (tier 2) | **blocked on an installed GRX-G100 sysroot** |
+| Exit gate: `grx-smi` on real `simx` | **MET** — real device enumerated through the actual driver |
+| Exit gate: `grx-smi` on real `rtlsim` | pending — needs Verilator and the `hw/dpi` sources |
 
-Tier-1 CI passes: the runtime compiles, links, and reports a self-consistent
-device record against the mock driver, including the FPGA managed-memory gate
-and the honesty-flag contract. That proves the code is not broken; it proves
-nothing about hardware. The gate is a tier-2 result and needs
-`$VORTEX_PATH` pointing at a `make install`-ed GRX-G100 tree.
+Tier-1 CI passes against the mock driver, and **tier 2 now passes against a
+real SimX device**: `ci/build_sysroot.sh` builds the GRX-G100 driver and SimX
+backend from a grxgpu checkout without needing the RISC-V toolchain, LLVM or
+Verilator, and `ci/run_real.sh` runs the gates against it. `grx-smi` reports a
+device enumerated through the actual driver.
 
 **Why first.** It proves the sysroot contract works and gives every later
 phase a place to land. It also surfaces build-integration problems while
@@ -129,7 +130,8 @@ it here — Phase 1's job is the host runtime, not kernel expressiveness.
 | `grxLaunchKernel` / `Ex` / `Cooperative` / `grxLaunchFunction` | done |
 | Occupancy API | done |
 | Conformance harness + published coverage number | done — 50 of 82 entry points (61%), published in [docs/conformance.md](../conformance.md) |
-| Exit gate: `vecadd` and `sgemm` numerically correct on `simx` and `rtlsim` | **blocked on an installed GRX-G100 sysroot** |
+| Data plane verified on a real `simx` device | **MET** — allocator, memcpy family, streams and events all pass through the real command processor |
+| Exit gate: `vecadd` and `sgemm` numerically correct | pending — needs a `.vxbin`, which needs the device toolchain (VOLT + RISC-V) |
 
 Four test binaries pass against the mock: `test_device_props`, `test_memory`,
 `test_stream_event`, `test_launch`. They verify data correctness through real
@@ -141,6 +143,11 @@ argument blob — reaches the driver exactly as the caller meant it.
 They verify **nothing** about kernel execution or concurrency. The mock has no
 RISC-V core and completes every enqueue before returning, so no test here can
 fail because of a race or a wrong result. Both are tier-2 properties.
+
+Three of the four now also pass on a **real SimX device** (`ci/run_real.sh`):
+`test_device_props`, `test_memory`, `test_stream_event`. `test_launch` stays
+tier-1 only, because it builds modules in the mock driver's image format.
+Kernel execution remains unproven: it needs a device binary.
 
 ---
 
