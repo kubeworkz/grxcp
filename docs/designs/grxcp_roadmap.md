@@ -61,6 +61,24 @@ of life. No API surface yet.
 **Exit gate.** `grx-smi` prints correct, non-fabricated device properties on
 both `simx` and `rtlsim`, in CI, from a clean checkout.
 
+**Status.**
+
+| Item | State |
+|---|---|
+| Repository, `AGENTS.md`, design docs | done |
+| CMake build with pkg-config sysroot discovery | done |
+| CI catalog (`ci/testcases/grxcp.yaml`) | done |
+| Runtime device layer (`src/runtime/{internal.h,error.cpp,context.cpp}`) | done |
+| `grx-smi` v0 (human + `--json`) | done |
+| Mock driver fixture + unit tests + `ci/build_mock.sh` (tier 1) | done |
+| Exit gate: `grx-smi` on real `simx` / `rtlsim` (tier 2) | **blocked on an installed GRX-G100 sysroot** |
+
+Tier-1 CI passes: the runtime compiles, links, and reports a self-consistent
+device record against the mock driver, including the FPGA managed-memory gate
+and the honesty-flag contract. That proves the code is not broken; it proves
+nothing about hardware. The gate is a tier-2 result and needs
+`$VORTEX_PATH` pointing at a `make install`-ed GRX-G100 tree.
+
 **Why first.** It proves the sysroot contract works and gives every later
 phase a place to land. It also surfaces build-integration problems while
 they are cheap.

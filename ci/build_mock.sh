@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# Build and smoke-test GRXCP against the mock driver -- no Vortex sysroot, no
+# simulator, no FPGA. This is what CI runs on every commit so a broken runtime
+# is caught in seconds rather than in a simulator run.
+#
+# It proves the code compiles, links, and reports a self-consistent device
+# record. It proves NOTHING about real hardware: the Phase 0 exit gate is
+# grx-smi on simx and rtlsim, which needs the real sysroot (see ci/README.md).
+#
+#   ./ci/build_mock.sh [--vortex-include <dir>]
+#
+# The mock still needs the real vortex2.h so it implements the actual driver
+# ABI rather than a paraphrase of it. Point --vortex-include at the GRX-G100
+# installed sysroot's include directory, or set VORTEX_PATH.
+
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+BUILD="$ROOT/build-mock"
+
+VORTEX_INCLUDE="${VORTEX_PATH:+$VORTEX_PATH/include}"
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --vortex-include) VORTEX_INCLUDE="$2"; shift 2 ;;
+    *) echo "unknown option: $1" >&2; exit 2 ;;
+  esac
+done
+
+if [[ -z "${VORTEX_INCLUDE:-}" || ! -f "$VORTEX_INCLUDE/vortex2.h" ]]; then
+  echo "error: vortex2.h not found." >&2
+  echo "  Set VORTEX_PATH to the installed GRX-G100 sysroot, or pass" >&2
+  echo "  --vortex-include <dir containing vortex2.h>." >&2
+  exit 1
+fi
+
+CXX="${CXX:-g++}"
+CXXFLAGS="-std=c++17 -Wall -Wextra -O1 -g -I$ROOT/include -I$VORTEX_INCLUDE"
+
+mkdir -p "$BUILD"
+echo "==> compiling runtime"
+$CXX $CXXFLAGS -c "$ROOT/src/runtime/error.cpp"   -o "$BUILD/error.o"
+$CXX $CXXFLAGS -c "$ROOT/src/runtime/context.cpp" -o "$BUILD/context.o"
+
+echo "==> compiling mock driver (test fixture, never installed)"
+$CXX $CXXFLAGS -c "$ROOT/tests/mock/vortex_mock.cpp" -o "$BUILD/vortex_mock.o"
+
+echo "==> linking grx-smi"
+$CXX $CXXFLAGS -c "$ROOT/tools/grx-smi/main.cpp" -o "$BUILD/grx-smi.o"
+$CXX "$BUILD"/{error,context,vortex_mock,grx-smi}.o -o "$BUILD/grx-smi"
+
+echo "==> linking unit tests"
+$CXX $CXXFLAGS -c "$ROOT/tests/unit/test_device_props.cpp" -o "$BUILD/test_device_props.o"
+$CXX "$BUILD"/{error,context,vortex_mock,test_device_props}.o -o "$BUILD/grxcp_unit"
+
+echo
+echo "==> unit tests (default config)"
+"$BUILD/grxcp_unit"
+
+echo
+echo "==> unit tests (FPGA backend: managed memory must be gated off)"
+VORTEX_DRIVER=xrt "$BUILD/grxcp_unit" > /dev/null
+
+echo
+echo "==> grx-smi (default config)"
+"$BUILD/grx-smi"
+
+echo "==> grx-smi (flagship G100 preset)"
+VORTEX_DRIVER=rtlsim \
+GRXMOCK_NUM_THREADS=32 GRXMOCK_NUM_WARPS=64 \
+GRXMOCK_NUM_CORES=16 GRXMOCK_NUM_CLUSTERS=8 \
+GRXMOCK_SOCKET_SIZE=4 GRXMOCK_ISSUE_WIDTH=4 \
+GRXMOCK_LOCAL_MEM=262144 GRXMOCK_GLOBAL_MEM=137438953472 \
+GRXMOCK_MEM_BANKS=8 GRXMOCK_MEM_BANK_SIZE=17179869184 \
+GRXMOCK_CLOCK_MHZ=2000 GRXMOCK_PEAK_BW_MBS=6400000 \
+  "$BUILD/grx-smi"
+
+echo "all mock checks passed"

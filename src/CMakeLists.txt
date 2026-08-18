@@ -10,10 +10,7 @@ if(GRXCP_ENABLE_NPU)
   list(APPEND GRXRT_SOURCES ${GRXRT_NPU_SOURCES})
 endif()
 
-if(GRXRT_SOURCES)
-  target_sources(grxrt PRIVATE ${GRXRT_SOURCES})
-else()
-  # Phase 0: no implementation yet. Keep the target linkable so the build
-  # graph, install rules, and pkg-config file can be validated end to end.
-  target_sources(grxrt PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/runtime/placeholder.cpp")
+if(NOT GRXRT_SOURCES)
+  message(FATAL_ERROR "grxcp: no runtime sources found under src/runtime/")
 endif()
+target_sources(grxrt PRIVATE ${GRXRT_SOURCES})
