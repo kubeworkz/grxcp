@@ -37,28 +37,45 @@ CXX="${CXX:-g++}"
 CXXFLAGS="-std=c++17 -Wall -Wextra -O1 -g -I$ROOT/include -I$VORTEX_INCLUDE"
 
 mkdir -p "$BUILD"
+
 echo "==> compiling runtime"
-$CXX $CXXFLAGS -c "$ROOT/src/runtime/error.cpp"   -o "$BUILD/error.o"
-$CXX $CXXFLAGS -c "$ROOT/src/runtime/context.cpp" -o "$BUILD/context.o"
+RT_OBJS=()
+for src in "$ROOT"/src/runtime/*.cpp; do
+  obj="$BUILD/$(basename "${src%.cpp}").o"
+  $CXX $CXXFLAGS -c "$src" -o "$obj"
+  RT_OBJS+=("$obj")
+done
 
 echo "==> compiling mock driver (test fixture, never installed)"
 $CXX $CXXFLAGS -c "$ROOT/tests/mock/vortex_mock.cpp" -o "$BUILD/vortex_mock.o"
+RT_OBJS+=("$BUILD/vortex_mock.o")
 
 echo "==> linking grx-smi"
 $CXX $CXXFLAGS -c "$ROOT/tools/grx-smi/main.cpp" -o "$BUILD/grx-smi.o"
-$CXX "$BUILD"/{error,context,vortex_mock,grx-smi}.o -o "$BUILD/grx-smi"
+$CXX "${RT_OBJS[@]}" "$BUILD/grx-smi.o" -o "$BUILD/grx-smi"
 
 echo "==> linking unit tests"
-$CXX $CXXFLAGS -c "$ROOT/tests/unit/test_device_props.cpp" -o "$BUILD/test_device_props.o"
-$CXX "$BUILD"/{error,context,vortex_mock,test_device_props}.o -o "$BUILD/grxcp_unit"
+TESTS=()
+for src in "$ROOT"/tests/unit/*.cpp; do
+  name="$(basename "${src%.cpp}")"
+  $CXX $CXXFLAGS -I"$ROOT/tests/unit" -c "$src" -o "$BUILD/$name.o"
+  $CXX "${RT_OBJS[@]}" "$BUILD/$name.o" -o "$BUILD/$name"
+  TESTS+=("$name")
+done
 
 echo
 echo "==> unit tests (default config)"
-"$BUILD/grxcp_unit"
+for t in "${TESTS[@]}"; do
+  printf -- "--- %s\n" "$t"
+  "$BUILD/$t"
+done
 
 echo
 echo "==> unit tests (FPGA backend: managed memory must be gated off)"
-VORTEX_DRIVER=xrt "$BUILD/grxcp_unit" > /dev/null
+for t in "${TESTS[@]}"; do
+  VORTEX_DRIVER=xrt "$BUILD/$t" > /dev/null || { echo "FAILED on xrt: $t"; exit 1; }
+done
+echo "all tests pass on the FPGA backend selection too"
 
 echo
 echo "==> grx-smi (default config)"

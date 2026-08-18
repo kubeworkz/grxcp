@@ -250,12 +250,14 @@ grxError_t grxMemGetInfo(size_t* freeBytes, size_t* totalBytes) {
 }
 
 grxError_t grxDeviceSynchronize(void) {
-  // Phase 0 has no queues, so there is nothing outstanding to wait on. This
-  // becomes a real per-queue drain in phase 1 when streams exist; it is a
-  // genuine no-op today rather than a stub that hides work.
+  const int device = grxcp::current_device_index();
   grxcp::Device* d = nullptr;
-  grxError_t e = grxcp::acquire_device(grxcp::current_device_index(), &d);
-  return (e == grxSuccess) ? grxSuccess : grxcp::set_error(e);
+  grxError_t e = grxcp::acquire_device(device, &d);
+  if (e != grxSuccess) return grxcp::set_error(e);
+  // Drains every stream on the device, including the null stream -- CUDA's
+  // contract is device-wide, not current-stream.
+  e = grxcp::sync_all_streams(device);
+  return (e == grxSuccess) ? e : grxcp::set_error(e);
 }
 
 grxError_t grxDeviceCanAccessPeer(int* canAccess, int, int) {

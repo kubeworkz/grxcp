@@ -9,19 +9,12 @@
 
 #include <grx/grx.h>
 
+#include "grx_test.h"
+
 #include <cstdio>
 #include <cstdlib>
 
-namespace {
-
-int g_failures = 0;
-
-void check(bool cond, const char* what) {
-  if (!cond) { std::printf("  FAIL  %s\n", what); ++g_failures; }
-  else       { std::printf("  ok    %s\n", what); }
-}
-
-}  // namespace
+using grxtest::check;
 
 int main() {
   int count = 0;
@@ -111,7 +104,5 @@ int main() {
           "sticky error survives until taken");
   }
 
-  std::printf("\n%s (%d failure%s)\n", g_failures ? "FAILED" : "PASSED",
-              g_failures, g_failures == 1 ? "" : "s");
-  return g_failures ? 1 : 0;
+  return grxtest::report();
 }

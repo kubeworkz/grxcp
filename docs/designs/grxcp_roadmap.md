@@ -113,6 +113,28 @@ and reports a number.
 **Risk.** The SPIR-V path constrains what kernels can express. Do not fight
 it here — Phase 1's job is the host runtime, not kernel expressiveness.
 
+**Status.**
+
+| Item | State |
+|---|---|
+| Device management, implicit context, `grxDeviceProp_t` | done (phase 0) |
+| Two-tier slab allocator + interval map | done |
+| `grxMalloc` / `Free` / `MallocHost` / `MallocManaged` | done |
+| `grxMemcpy` family, `grxMemset`, `grxPointerGetAttributes` | done (2D decomposed row-wise; strided descriptors are a follow-up) |
+| Streams over `vx_queue_h`, legacy null-stream ordering | done |
+| Events over timeline counters, elapsed with host fallback | done |
+| Mock driver models memory / queues / events | done |
+| Module + kernel handles, `grxLaunchKernel` | **next** |
+| Occupancy API | **next** (needs the kernel registry for static shared memory) |
+| Conformance harness + published pass rate | **next** |
+
+Three test binaries pass against the mock: `test_device_props`, `test_memory`,
+`test_stream_event`. They verify data correctness through real offsets, the
+allocator's non-overlap and reuse invariants, direction validation, and the
+event/stream error surface. They verify **nothing** about concurrency — the
+mock completes every enqueue before returning, so no test here can fail
+because of a race. Overlap is a tier-2 property.
+
 ---
 
 ## Phase 2 — Device programming model and tools baseline (≈3 engineer-months)
