@@ -1,0 +1,12 @@
+build/
+build*/
+install/
+*.o
+*.a
+*.so
+*.vxbin
+*.grxfat
+*.spv
+compile_commands.json
+.cache/
+__pycache__/

@@ -1,0 +1,29 @@
+# GRXCP Documentation
+
+## Design documents
+
+- [GRXCP Architecture](designs/grxcp_architecture.md) — the specification:
+  layer model, runtime API, compilation model, kernel ABI, memory model,
+  multi-device model, libraries, tools, verification strategy
+- [CUDA → GRXCP Mapping and Gap Register](designs/cuda_mapping.md) — the
+  concept tables and the honest list of what does not work yet
+- [Implementation Roadmap](designs/grxcp_roadmap.md) — phases 0–7 with exit
+  gates, external dependencies, and the risk register
+
+## Upstream references
+
+GRXCP is built on documents owned by the other repositories. Read these
+rather than re-deriving them here:
+
+- `grxgpu/docs/designs/gpu_chip_design.md` — the G100 chip design and its
+  CUDA-style integration table
+- `grxgpu/docs/designs/command_processor.md` — the CP control plane and the
+  runtime submit path (also the source of several GRXCP gap items)
+- `grxgpu/docs/designs/vortex_runtime_api.md` — the `vortex2.h` shape lock
+- `grxgpu/docs/designs/kernel_entry_and_dispatch.md` — `.vxbin` and the
+  `VXSYMTAB` multi-entry footer
+- `grxgpu/docs/designs/cta_clustering_and_dispatch.md` — KMU grid walk,
+  fixed-stride LMEM slots, the occupancy formula GRXCP uses verbatim
+- `grxgpu/docs/designs/tensor_core_wgmma_engine.md` — TCU / WGMMA
+- `grxgpu/docs/designs/dxa_async_copy_multicast.md` — async copy / multicast
+- `grx930/c930/doc/c930_architecture.md` — the GRX930 SoC and its NPU

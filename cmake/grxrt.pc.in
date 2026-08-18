@@ -1,0 +1,10 @@
+prefix=@CMAKE_INSTALL_PREFIX@
+libdir=${prefix}/lib
+includedir=${prefix}/include
+
+Name: grxrt
+Description: GRX Compute Platform runtime (CUDA-class runtime API for GRX-G100)
+Version: @PROJECT_VERSION@
+Requires: vortex-runtime
+Libs: -L${libdir} -lgrxrt
+Cflags: -I${includedir}
