@@ -260,6 +260,14 @@ grxError_t grxDeviceSynchronize(void) {
   return (e == grxSuccess) ? e : grxcp::set_error(e);
 }
 
+grxError_t grxDeviceGetAttribute(int* value, int attr, int device) {
+  (void)value; (void)attr; (void)device;
+  // CUDA's attribute enum is a CUDA-specific numbering that would have to be
+  // invented here to be honoured. grxGetDeviceProperties carries the same
+  // information with names that mean something on this hardware.
+  return grxcp::set_error(grxErrorNotSupported);
+}
+
 grxError_t grxDeviceCanAccessPeer(int* canAccess, int, int) {
   if (canAccess) *canAccess = 0;
   return grxSuccess;

@@ -50,9 +50,15 @@ echo "==> compiling mock driver (test fixture, never installed)"
 $CXX $CXXFLAGS -c "$ROOT/tests/mock/vortex_mock.cpp" -o "$BUILD/vortex_mock.o"
 RT_OBJS+=("$BUILD/vortex_mock.o")
 
-echo "==> linking grx-smi"
-$CXX $CXXFLAGS -c "$ROOT/tools/grx-smi/main.cpp" -o "$BUILD/grx-smi.o"
-$CXX "${RT_OBJS[@]}" "$BUILD/grx-smi.o" -o "$BUILD/grx-smi"
+echo "==> linking tools"
+for tool in grx-smi grx-conform; do
+  $CXX $CXXFLAGS -c "$ROOT/tools/$tool/main.cpp" -o "$BUILD/$tool.o"
+  $CXX "${RT_OBJS[@]}" "$BUILD/$tool.o" -o "$BUILD/$tool"
+done
+# grxify links nothing from the runtime on purpose: a source translator must
+# work on a machine with no device stack installed.
+$CXX $CXXFLAGS -c "$ROOT/tools/grxify/main.cpp" -o "$BUILD/grxify.o"
+$CXX "$BUILD/grxify.o" -o "$BUILD/grxify"
 
 echo "==> linking unit tests"
 TESTS=()
@@ -76,6 +82,30 @@ for t in "${TESTS[@]}"; do
   VORTEX_DRIVER=xrt "$BUILD/$t" > /dev/null || { echo "FAILED on xrt: $t"; exit 1; }
 done
 echo "all tests pass on the FPGA backend selection too"
+
+echo
+echo "==> API table / compat header drift check"
+python3 "$ROOT/ci/check_compat_table.py"
+
+echo
+echo "==> conformance report"
+"$BUILD/grx-conform"
+
+echo
+echo "==> end-to-end: translate a CUDA source, compile it, link it, run it"
+"$BUILD/grxify" --check "$ROOT/tests/conformance/portable_port.cu"
+"$BUILD/grxify" "$ROOT/tests/conformance/portable_port.cu" \
+  -o "$BUILD/portable_port.grx.cpp" 2>/dev/null
+$CXX $CXXFLAGS -c "$BUILD/portable_port.grx.cpp" -o "$BUILD/portable_port.o"
+$CXX "${RT_OBJS[@]}" "$BUILD/portable_port.o" -o "$BUILD/portable_port"
+"$BUILD/portable_port"
+
+echo
+echo "==> grxify reports the unmappable calls in an awkward port"
+if "$BUILD/grxify" --check "$ROOT/tests/conformance/sample_port.cu" 2>&1; then
+  echo "FAILED: grxify should have reported unmappable calls"; exit 1
+fi
+echo "(the diagnostics above are the expected result)"
 
 echo
 echo "==> grx-smi (default config)"

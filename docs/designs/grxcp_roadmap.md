@@ -128,7 +128,7 @@ it here — Phase 1's job is the host runtime, not kernel expressiveness.
 | Module + kernel handles, host-stub registry | done |
 | `grxLaunchKernel` / `Ex` / `Cooperative` / `grxLaunchFunction` | done |
 | Occupancy API | done |
-| Conformance harness + published pass rate | **next** |
+| Conformance harness + published coverage number | done — 50 of 82 entry points (61%), published in [docs/conformance.md](../conformance.md) |
 | Exit gate: `vecadd` and `sgemm` numerically correct on `simx` and `rtlsim` | **blocked on an installed GRX-G100 sysroot** |
 
 Four test binaries pass against the mock: `test_device_props`, `test_memory`,

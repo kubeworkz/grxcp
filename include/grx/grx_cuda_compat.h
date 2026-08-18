@@ -43,6 +43,7 @@
 #define cudaDeviceSynchronize           grxDeviceSynchronize
 #define cudaDeviceReset                 grxDeviceReset
 #define cudaMemGetInfo                  grxMemGetInfo
+#define cudaDeviceGetAttribute          grxDeviceGetAttribute
 #define cudaDeviceCanAccessPeer         grxDeviceCanAccessPeer
 #define cudaDeviceEnablePeerAccess      grxDeviceEnablePeerAccess
 
@@ -62,6 +63,7 @@
 #define cudaMemset                      grxMemset
 #define cudaMemsetAsync                 grxMemsetAsync
 #define cudaPointerGetAttributes        grxPointerGetAttributes
+#define cudaPointerAttributes           grxPointerAttributes
 #define cudaMemcpyKind                  grxMemcpyKind
 #define cudaMemcpyHostToHost            grxMemcpyHostToHost
 #define cudaMemcpyHostToDevice          grxMemcpyHostToDevice
@@ -97,6 +99,7 @@
 // --- launch and occupancy -------------------------------------------------
 #define cudaLaunchKernel                grxLaunchKernel
 #define cudaLaunchCooperativeKernel     grxLaunchCooperativeKernel
+#define cudaLaunchKernelExC             grxLaunchKernelEx
 #define cudaFuncAttributes              grxFuncAttributes
 #define cudaFuncGetAttributes           grxFuncGetAttributes
 #define cudaOccupancyMaxActiveBlocksPerMultiprocessor \
