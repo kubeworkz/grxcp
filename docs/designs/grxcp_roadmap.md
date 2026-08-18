@@ -131,7 +131,8 @@ it here — Phase 1's job is the host runtime, not kernel expressiveness.
 | Occupancy API | done |
 | Conformance harness + published coverage number | done — 50 of 82 entry points (61%), published in [docs/conformance.md](../conformance.md) |
 | Data plane verified on a real `simx` device | **MET** — allocator, memcpy family, streams and events all pass through the real command processor |
-| Exit gate: `vecadd` and `sgemm` numerically correct | pending — needs a `.vxbin`, which needs the device toolchain (VOLT + RISC-V) |
+| Exit gate: `vecadd` numerically correct on `simx` | **MET** — kernel built with VOLT from GRXCP's own device header, launched through `grxLaunchFunction`, correct at 1/64/70/255 elements including partial warps |
+| `sgemm` | pending — belongs with grxBLAS in phase 3 |
 
 Four test binaries pass against the mock: `test_device_props`, `test_memory`,
 `test_stream_event`, `test_launch`. They verify data correctness through real
@@ -147,7 +148,16 @@ fail because of a race or a wrong result. Both are tier-2 properties.
 Three of the four now also pass on a **real SimX device** (`ci/run_real.sh`):
 `test_device_props`, `test_memory`, `test_stream_event`. `test_launch` stays
 tier-1 only, because it builds modules in the mock driver's image format.
-Kernel execution remains unproven: it needs a device binary.
+
+**Kernel execution is now proven.** `ci/install_toolchain.sh` fetches VOLT and
+the RISC-V binutils, `ci/build_kernel.sh` compiles a kernel into a `.vxbin`,
+and `tests/kernels/vecadd/` runs it: a kernel written against GRXCP's own
+`grx_device.h`, compiled by the real VOLT clang, loaded with `grxModuleLoad`,
+launched with `grxLaunchFunction`, arithmetic checked on the host.
+
+What remains genuinely unproven is **stream concurrency**. The command
+processor runs a single queue, so no test anywhere can fail because of a race
+between streams. That is phase 5, and it is blocked upstream.
 
 ---
 

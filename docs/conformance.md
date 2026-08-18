@@ -105,4 +105,6 @@ Failing at compile time is the point. A mystery at runtime would be worse.
 
 ## What this report does not measure
 
-Kernel execution. No kernel runs here, so nothing above says whether a kernel produces the right answer, whether streams overlap, or whether a race exists. Those need a built GRX-G100 sysroot with a `simx` or `rtlsim` backend, and they are the exit gates for phases 0 and 1 of the roadmap.
+Kernel execution. No kernel runs in *this report*, so nothing above says whether a kernel produces the right answer. That is covered separately: `ci/run_real.sh` compiles a kernel with the device toolchain, runs it on a real backend and checks the arithmetic.
+
+Stream concurrency is still genuinely unproven. The command processor runs a single queue, so no test anywhere can currently fail because of a race between streams.

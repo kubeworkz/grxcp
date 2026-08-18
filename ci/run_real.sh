@@ -7,22 +7,28 @@
 # the simulator actually models, and data moves through the real command
 # processor rather than through a std::memcpy in a test fixture.
 #
-# What it still does not prove: kernel execution. Launching a kernel needs a
-# device binary, which needs the RISC-V toolchain and VOLT. That is the last
-# piece of the phase 1 exit gate.
+# It also runs a real kernel when the device toolchain is available, which is
+# the phase 1 exit gate: arithmetic computed by the device, checked on the host.
 #
 #   export VORTEX_PATH=<sysroot>          # see ci/build_sysroot.sh
-#   ./ci/run_real.sh [--driver simx]
+#   ./ci/run_real.sh [--driver simx] [--grxgpu <path>] [--tooldir <path>]
+#
+# Without --grxgpu and a toolchain the kernel gate is skipped and said so
+# explicitly, rather than quietly reporting a pass over work that never ran.
 
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD="$ROOT/build-real"
 DRIVER="${VORTEX_DRIVER:-simx}"
+GRXGPU="${GRXGPU:-}"
+TOOLDIR="${TOOLDIR:-$HOME/tools}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --driver) DRIVER="$2"; shift 2 ;;
+    --driver)  DRIVER="$2"; shift 2 ;;
+    --grxgpu)  GRXGPU="$2"; shift 2 ;;
+    --tooldir) TOOLDIR="$2"; shift 2 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
@@ -81,6 +87,25 @@ echo "==> end-to-end: a CUDA source, translated, compiled, linked, run on $DRIVE
 $CXX $CXXFLAGS -c "$BUILD/portable_port.grx.cpp" -o "$BUILD/portable_port.o"
 $CXX "${OBJS[@]}" "$BUILD/portable_port.o" $LIBS -o "$BUILD/portable_port"
 "$BUILD/portable_port"
+
+echo
+echo "==> PHASE 1 GATE: compile a kernel, run it, check the arithmetic"
+if [[ -n "$GRXGPU" && -d "$TOOLDIR/llvm-vortex" ]]; then
+  "$ROOT/ci/build_kernel.sh" --grxgpu "$GRXGPU" --tooldir "$TOOLDIR" \
+    "$ROOT/tests/kernels/vecadd/kernel.cpp" -o "$BUILD/vecadd.vxbin"
+  $CXX $CXXFLAGS -I"$ROOT/tests/kernels/vecadd" \
+    -c "$ROOT/tests/kernels/vecadd/main.cpp" -o "$BUILD/vecadd_main.o"
+  $CXX "${OBJS[@]}" "$BUILD/vecadd_main.o" $LIBS -o "$BUILD/vecadd"
+  # Sizes chosen to cover the partial-warp path: 70 and 255 are not multiples
+  # of the warp width, and 1 leaves all but one lane masked off.
+  for n in 64 70 255 1; do
+    "$BUILD/vecadd" "$BUILD/vecadd.vxbin" "$n" | tail -1
+  done
+else
+  echo "SKIPPED: needs --grxgpu <path> and a device toolchain in $TOOLDIR."
+  echo "         Install it with ci/install_toolchain.sh, then rebuild the"
+  echo "         GRX-G100 kernel library: make -C <grxgpu>/build/sw/kernel"
+fi
 
 echo
 echo "==> conformance report against the real device"

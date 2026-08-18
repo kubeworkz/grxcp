@@ -209,11 +209,11 @@ void print_human(const std::vector<Check>& checks, const DeviceFacts& facts) {
   }
 
   std::printf("\nNot measured here\n");
-  std::printf("  Kernel execution. Nothing in this report runs a kernel, so\n");
-  std::printf("  none of it says whether a kernel computes the right answer.\n");
-  std::printf("  That needs a built GRX-G100 sysroot and a simx or rtlsim\n");
-  std::printf("  backend. API coverage is not a conformance pass rate and is\n");
-  std::printf("  not reported as one.\n");
+  std::printf("  Kernel execution. Nothing in THIS REPORT runs a kernel, so\n");
+  std::printf("  none of the numbers above say whether a kernel computes the\n");
+  std::printf("  right answer. API coverage is not a conformance pass rate and\n");
+  std::printf("  is not reported as one. Kernel execution is covered separately\n");
+  std::printf("  by the phase 1 gate in ci/run_real.sh.\n");
 
   if (failed) std::printf("\n%d refusal check(s) FAILED\n", failed);
 }
@@ -313,11 +313,13 @@ void print_markdown(const std::vector<Check>& checks, const DeviceFacts& facts) 
   }
 
   std::printf("## What this report does not measure\n\n");
-  std::printf("Kernel execution. No kernel runs here, so nothing above says "
-              "whether a kernel produces the right answer, whether streams "
-              "overlap, or whether a race exists. Those need a built "
-              "GRX-G100 sysroot with a `simx` or `rtlsim` backend, and they "
-              "are the exit gates for phases 0 and 1 of the roadmap.\n");
+  std::printf("Kernel execution. No kernel runs in *this report*, so nothing "
+              "above says whether a kernel produces the right answer. That is "
+              "covered separately: `ci/run_real.sh` compiles a kernel with the "
+              "device toolchain, runs it on a real backend and checks the "
+              "arithmetic.\n\nStream concurrency is still genuinely unproven. "
+              "The command processor runs a single queue, so no test anywhere "
+              "can currently fail because of a race between streams.\n");
 }
 
 }  // namespace

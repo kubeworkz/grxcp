@@ -46,6 +46,26 @@ additionally needs Verilator and the `hw/dpi` sources, so it is not yet part of
 this script.
 
 `test_launch` runs in tier 1 only. It builds modules in the mock driver's own
-image format, which the real loader has no reason to accept — testing launch
-for real needs a `.vxbin`, and that needs the device toolchain. That is the
-remaining piece of the Phase 1 gate.
+image format, which the real loader has no reason to accept.
+
+## Tier 3 — kernels
+
+Running an actual kernel needs the device toolchain (VOLT plus the RISC-V
+binutils), about 580 MB:
+
+```sh
+./ci/install_toolchain.sh --tooldir $HOME/tools --grxgpu ../grxgpu
+# rebuild grxgpu with the toolchain visible so libvortex2.a exists
+( cd ../grxgpu/build && bash ../configure --xlen=64 --tooldir=$HOME/tools \
+  && make -C sw/kernel )
+./ci/run_real.sh --grxgpu ../grxgpu --tooldir $HOME/tools
+```
+
+`ci/build_kernel.sh` compiles a kernel into a `.vxbin` — what grxcc will do
+internally in Phase 4. `tests/kernels/vecadd/` is the Phase 1 exit gate: a
+kernel written against GRXCP's own device header, launched through
+`grxLaunchFunction`, with the arithmetic checked on the host at sizes that
+exercise the partial-warp path.
+
+Without a toolchain, `run_real.sh` **skips** that gate and says so, rather than
+reporting a pass over work that never ran.
