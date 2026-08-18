@@ -10,6 +10,10 @@
 //     so a memcpy test verifies real bytes moving through real offsets
 //   * timeline event counters with monotonic, never-decreasing signal
 //   * handle lifetimes and refcounts, so leaks and use-after-release surface
+//   * the launch descriptor: the grid, block, cluster, shared-memory size and
+//     argument blob the runtime hands the driver are recorded for inspection
+//     (vortex_mock.h), which is the part of the launch path testable without a
+//     simulator
 //
 // WHAT IT DOES NOT MODEL
 //   * asynchrony. Every enqueue executes immediately and its event is signaled
@@ -20,6 +24,9 @@
 //   * timing. Profiling timestamps are refused, exactly as the real command
 //     processor refuses them today, so the runtime exercises its host-clock
 //     fallback path rather than a fiction.
+//   * kernel execution. There is no RISC-V core here. A launch is recorded and
+//     retired; it computes nothing. Anything that depends on a kernel actually
+//     running is a tier-2 test.
 //
 // Defaults mirror the GRX-G100 repo's default VX_config.toml (NUM_WARPS=4,
 // NUM_THREADS=4). Override any value through the environment, e.g. the
@@ -29,6 +36,8 @@
 //   GRXMOCK_NUM_CORES=16   GRXMOCK_NUM_CLUSTERS=8   ./grx-smi
 
 #include <vortex2.h>
+
+#include "vortex_mock.h"
 
 #include <atomic>
 #include <cstdlib>
@@ -445,6 +454,193 @@ const char* vx_result_string(vx_result_t r) {
     case VX_ERR_INTERNAL:             return "internal error";
   }
   return "unknown";
+}
+
+}  // extern "C"
+
+// ---------------------------------------------------------------------------
+// Modules, kernels, and launch
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// Mock module image: "GRXMOCKMOD" followed by NUL-terminated kernel names and
+// a terminating empty name. Not the real .vxbin encoding -- the mock models
+// the contract (named entries resolve to kernels), not the file format.
+constexpr char kModuleMagic[] = "GRXMOCKMOD";
+
+struct MockKernel {
+  std::string      name;
+  uint64_t         entry_pc = 0;
+  std::atomic<int> refcount{1};
+};
+
+struct MockModule {
+  std::vector<MockKernel*> kernels;
+  std::atomic<int>         refcount{1};
+};
+
+grxmock_launch_record g_last_launch{};
+uint32_t              g_launch_count = 0;
+
+}  // namespace
+
+extern "C" {
+
+size_t grxmock_build_module(void* buffer, size_t capacity,
+                            const char* const* kernel_names, uint32_t count) {
+  size_t need = sizeof(kModuleMagic);
+  for (uint32_t i = 0; i < count; ++i) need += std::strlen(kernel_names[i]) + 1;
+  need += 1;   // terminating empty name
+  if (!buffer || capacity < need) return 0;
+
+  auto* out = (char*)buffer;
+  std::memcpy(out, kModuleMagic, sizeof(kModuleMagic));
+  size_t at = sizeof(kModuleMagic);
+  for (uint32_t i = 0; i < count; ++i) {
+    const size_t n = std::strlen(kernel_names[i]) + 1;
+    std::memcpy(out + at, kernel_names[i], n);
+    at += n;
+  }
+  out[at++] = '\0';
+  return at;
+}
+
+const grxmock_launch_record* grxmock_last_launch(void) { return &g_last_launch; }
+uint32_t grxmock_launch_count(void) { return g_launch_count; }
+void grxmock_reset_launches(void) {
+  g_last_launch = grxmock_launch_record{};
+  g_launch_count = 0;
+}
+
+vx_result_t vx_module_load_bytes(vx_device_h dev, const void* bytes,
+                                 size_t size, vx_module_h* out) {
+  if (!dev || !bytes || !out) return VX_ERR_INVALID_VALUE;
+  if (size < sizeof(kModuleMagic) ||
+      std::memcmp(bytes, kModuleMagic, sizeof(kModuleMagic)) != 0)
+    return VX_ERR_INVALID_VALUE;
+
+  auto* m = new MockModule();
+  const char* p   = (const char*)bytes + sizeof(kModuleMagic);
+  const char* end = (const char*)bytes + size;
+  uint64_t pc = 0x8000'0000ull;
+  while (p < end && *p) {
+    auto* k = new MockKernel();
+    k->name     = p;
+    k->entry_pc = pc;
+    pc += 0x1000;
+    m->kernels.push_back(k);
+    p += k->name.size() + 1;
+  }
+  *out = reinterpret_cast<vx_module_h>(m);
+  return VX_SUCCESS;
+}
+
+vx_result_t vx_module_load_file(vx_device_h dev, const char* path,
+                                vx_module_h* out) {
+  if (!dev || !path || !out) return VX_ERR_INVALID_VALUE;
+  return VX_ERR_NOT_SUPPORTED;   // the runtime reads files itself
+}
+
+vx_result_t vx_module_retain(vx_module_h mod) {
+  if (!mod) return VX_ERR_INVALID_HANDLE;
+  reinterpret_cast<MockModule*>(mod)->refcount.fetch_add(1);
+  return VX_SUCCESS;
+}
+
+vx_result_t vx_module_release(vx_module_h mod) {
+  if (!mod) return VX_ERR_INVALID_HANDLE;
+  auto* m = reinterpret_cast<MockModule*>(mod);
+  if (m->refcount.fetch_sub(1) != 1) return VX_SUCCESS;
+  for (auto* k : m->kernels) if (k->refcount.fetch_sub(1) == 1) delete k;
+  delete m;
+  return VX_SUCCESS;
+}
+
+vx_result_t vx_module_get_kernel(vx_module_h mod, const char* name,
+                                 vx_kernel_h* out) {
+  if (!mod || !name || !out) return VX_ERR_INVALID_HANDLE;
+  auto* m = reinterpret_cast<MockModule*>(mod);
+  for (auto* k : m->kernels) {
+    if (k->name == name) {
+      k->refcount.fetch_add(1);
+      *out = reinterpret_cast<vx_kernel_h>(k);
+      return VX_SUCCESS;
+    }
+  }
+  return VX_ERR_INVALID_VALUE;
+}
+
+vx_result_t vx_kernel_retain(vx_kernel_h k) {
+  if (!k) return VX_ERR_INVALID_HANDLE;
+  reinterpret_cast<MockKernel*>(k)->refcount.fetch_add(1);
+  return VX_SUCCESS;
+}
+
+vx_result_t vx_kernel_release(vx_kernel_h k) {
+  if (!k) return VX_ERR_INVALID_HANDLE;
+  auto* mk = reinterpret_cast<MockKernel*>(k);
+  if (mk->refcount.fetch_sub(1) == 1) delete mk;
+  return VX_SUCCESS;
+}
+
+vx_result_t vx_kernel_address(vx_kernel_h k, uint64_t* out_addr) {
+  if (!k || !out_addr) return VX_ERR_INVALID_HANDLE;
+  *out_addr = reinterpret_cast<MockKernel*>(k)->entry_pc;
+  return VX_SUCCESS;
+}
+
+vx_result_t vx_kernel_get_max_block_size(vx_kernel_h k, uint32_t* x,
+                                         uint32_t* y, uint32_t* z) {
+  if (!k) return VX_ERR_INVALID_HANDLE;
+  // The real driver reports the device's natural block dims here until the
+  // toolchain records per-kernel metadata, so the mock does the same.
+  if (x) *x = (uint32_t)env_u64("GRXMOCK_NUM_THREADS", 4);
+  if (y) *y = (uint32_t)env_u64("GRXMOCK_NUM_WARPS", 4);
+  if (z) *z = 1;
+  return VX_SUCCESS;
+}
+
+vx_result_t vx_enqueue_launch(vx_queue_h q, const vx_launch_info_t* info,
+                              uint32_t, const vx_event_h*,
+                              vx_event_h* out_event) {
+  if (!q || !info) return VX_ERR_INVALID_HANDLE;
+  if (!info->kernel) return VX_ERR_INVALID_VALUE;
+
+  std::lock_guard<std::mutex> lock(g_mutex);
+  auto& r = g_last_launch;
+  r = grxmock_launch_record{};
+  r.valid    = 1;
+  r.entry_pc = reinterpret_cast<MockKernel*>(info->kernel)->entry_pc;
+  r.ndim     = info->ndim;
+  for (int i = 0; i < 3; ++i) {
+    r.grid_dim[i]    = info->grid_dim[i];
+    r.block_dim[i]   = info->block_dim[i];
+    r.cluster_dim[i] = info->cluster_dim[i];
+  }
+  r.lmem_size = info->lmem_size;
+  r.args_size = (uint32_t)info->args_size;
+  if (info->args_host && info->args_size) {
+    const size_t n = (info->args_size < GRXMOCK_MAX_ARGS) ? info->args_size
+                                                          : GRXMOCK_MAX_ARGS;
+    std::memcpy(r.args, info->args_host, n);
+  }
+  ++g_launch_count;
+  return complete(q, out_event);
+}
+
+vx_result_t vx_device_max_occupancy_grid(vx_device_h dev, uint32_t ndim,
+                                         const uint32_t* global_dim,
+                                         uint32_t* grid_out,
+                                         uint32_t* block_out) {
+  if (!dev || !global_dim || !grid_out || !block_out) return VX_ERR_INVALID_VALUE;
+  const uint32_t natural[3] = {(uint32_t)env_u64("GRXMOCK_NUM_THREADS", 4),
+                               (uint32_t)env_u64("GRXMOCK_NUM_WARPS", 4), 1};
+  for (uint32_t i = 0; i < ndim && i < 3; ++i) {
+    block_out[i] = natural[i];
+    grid_out[i]  = (global_dim[i] + natural[i] - 1) / natural[i];
+  }
+  return VX_SUCCESS;
 }
 
 }  // extern "C"

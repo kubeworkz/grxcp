@@ -124,16 +124,23 @@ it here — Phase 1's job is the host runtime, not kernel expressiveness.
 | Streams over `vx_queue_h`, legacy null-stream ordering | done |
 | Events over timeline counters, elapsed with host fallback | done |
 | Mock driver models memory / queues / events | done |
-| Module + kernel handles, `grxLaunchKernel` | **next** |
-| Occupancy API | **next** (needs the kernel registry for static shared memory) |
+| `.grxfat` fat binary + ISA-flag image selection | done |
+| Module + kernel handles, host-stub registry | done |
+| `grxLaunchKernel` / `Ex` / `Cooperative` / `grxLaunchFunction` | done |
+| Occupancy API | done |
 | Conformance harness + published pass rate | **next** |
+| Exit gate: `vecadd` and `sgemm` numerically correct on `simx` and `rtlsim` | **blocked on an installed GRX-G100 sysroot** |
 
-Three test binaries pass against the mock: `test_device_props`, `test_memory`,
-`test_stream_event`. They verify data correctness through real offsets, the
-allocator's non-overlap and reuse invariants, direction validation, and the
-event/stream error surface. They verify **nothing** about concurrency — the
-mock completes every enqueue before returning, so no test here can fail
-because of a race. Overlap is a tier-2 property.
+Four test binaries pass against the mock: `test_device_props`, `test_memory`,
+`test_stream_event`, `test_launch`. They verify data correctness through real
+offsets, the allocator's non-overlap and reuse invariants, direction
+validation, the event/stream error surface, fat-binary image selection, and
+that the launch descriptor — grid, block, cluster, shared memory, packed
+argument blob — reaches the driver exactly as the caller meant it.
+
+They verify **nothing** about kernel execution or concurrency. The mock has no
+RISC-V core and completes every enqueue before returning, so no test here can
+fail because of a race or a wrong result. Both are tier-2 properties.
 
 ---
 

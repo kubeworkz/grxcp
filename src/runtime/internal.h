@@ -3,6 +3,7 @@
 #ifndef GRXCP_INTERNAL_H
 #define GRXCP_INTERNAL_H
 
+#include <grx/grx_abi.h>
 #include <grx/grx_types.h>
 #include <vortex2.h>
 
@@ -102,6 +103,37 @@ grxError_t sync_all_streams(int device);
 
 // Monotonic host nanoseconds, used for the event-timing fallback.
 uint64_t host_now_ns();
+
+// ---------------------------------------------------------------------------
+// Kernels
+// ---------------------------------------------------------------------------
+
+// Everything the launch path needs about a resolved kernel. `params` is null
+// and `has_layout` false when the toolchain did not supply a parameter layout,
+// which is the difference between being able to pack a CUDA-style void**
+// argument array and not.
+struct KernelBinding {
+  vx_kernel_h             kernel      = nullptr;
+  const grx_kernel_param* params      = nullptr;
+  uint32_t                num_params  = 0;
+  uint32_t                args_size   = 0;
+  uint32_t                static_smem = 0;
+  int32_t                 num_regs    = -1;
+  uint32_t                max_threads_per_block = 0;
+  bool                    has_layout  = false;
+  int                     device      = 0;
+};
+
+// Resolve a registered host stub for a device, loading its module on first use.
+bool lookup_registration(const void* stub, int device, KernelBinding* out);
+
+// Resolve a grxFunction_t obtained from the module path.
+bool lookup_function(grxFunction_t func, KernelBinding* out);
+
+// Resident CTAs per SM, from the CTA dispatcher's three bounds. Shared by the
+// occupancy API and by launch validation.
+int resident_blocks_per_sm(const grxDeviceProp_t& prop, int block_size,
+                           size_t smem_per_block);
 
 }  // namespace grxcp
 

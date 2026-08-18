@@ -12,6 +12,7 @@
 #define GRX_RUNTIME_H
 
 #include "grx_types.h"
+#include "grx_abi.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -129,6 +130,15 @@ grxError_t grxLaunchCooperativeKernel(const void* func, dim3_t gridDim,
 
 grxError_t grxFuncGetAttributes(grxFuncAttributes* attr, const void* func);
 
+// Driver-style launch: the caller supplies the argument blob already packed to
+// the kernel's device layout, so no parameter descriptor is required. This is
+// the entry point for language runtimes and translators that know their own
+// ABI, and the one to use before grxcc exists to emit descriptors.
+grxError_t grxLaunchFunction(grxFunction_t func, dim3_t gridDim,
+                             dim3_t blockDim, const void* argsBlob,
+                             size_t argsSize, size_t sharedMem,
+                             grxStream_t stream);
+
 // ---------------------------------------------------------------------------
 // Modules (driver-style path, for JIT and language runtimes)
 // ---------------------------------------------------------------------------
@@ -170,6 +180,12 @@ void   __grxUnregisterFatBinary(void** handle);
 void   __grxRegisterFunction   (void** handle, const char* hostStub,
                                 const char* deviceName,
                                 int minBlocks, int maxThreads);
+// Additive registration carrying the parameter layout, static shared-memory
+// size, and register count. grxcc emits this alongside __grxRegisterFunction;
+// without it grxLaunchKernel cannot pack a void** argument array and says so
+// rather than guessing at parameter widths.
+void   __grxRegisterKernelDesc (void** handle, const char* hostStub,
+                                const grx_kernel_desc* desc);
 void   __grxRegisterVar        (void** handle, const char* hostVar,
                                 const char* deviceName, size_t size,
                                 int isConstant);
