@@ -1,0 +1,7 @@
+enable_testing()
+file(GLOB UNIT_SRC CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/unit/*.cpp")
+if(UNIT_SRC)
+  add_executable(grxcp_unit ${UNIT_SRC})
+  target_link_libraries(grxcp_unit PRIVATE grxrt)
+  add_test(NAME unit COMMAND grxcp_unit)
+endif()

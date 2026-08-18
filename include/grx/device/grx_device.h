@@ -54,10 +54,12 @@
 
 namespace grx {
 
+// lane_id is the hardware lane index within the warp (VX_CSR_THREAD_ID), not
+// threadIdx.x % warpSize -- those differ for multi-dimensional blocks.
 __forceinline__ uint32_t warp_size()     { return (uint32_t)csr_read_nv(VX_CSR_NUM_THREADS); }
-__forceinline__ uint32_t lane_id()       { return (uint32_t)threadIdx.x % warp_size(); }
-__forceinline__ uint32_t warp_id()       { return get_sub_group_id(); }
-__forceinline__ uint32_t warps_per_cta() { return get_num_sub_groups(); }
+__forceinline__ uint32_t lane_id()       { return (uint32_t)vx_thread_id(); }
+__forceinline__ uint32_t warp_id()       { return get_sub_group_id(); }   // VX_CSR_CTA_RANK
+__forceinline__ uint32_t warps_per_cta() { return get_num_sub_groups(); } // VX_CSR_CTA_SIZE
 
 // Thread-block clusters (the Hopper-style feature the KMU already implements:
 // a cluster's CTAs are emitted contiguously and land in consecutive

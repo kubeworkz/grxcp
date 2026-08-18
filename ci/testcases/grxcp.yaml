@@ -1,0 +1,82 @@
+# GRXCP CI catalog. Same declarative shape as the GRX-G100 project's
+# ci/testcases/, so the two are readable by the same people and, later, the
+# same harness.
+#
+# Rule: every conformance case runs on BOTH simx and rtlsim. A GRXCP-level
+# result that differs between the two blocks the merge -- it is either a GRXCP
+# bug or an upstream model-parity bug, and both matter.
+
+category: grxcp
+
+cases:
+  - name: smi_enumerate
+    phase: 0
+    drivers: [simx, rtlsim]
+    check: output_match
+    description: >
+      grx-smi reports device properties sourced entirely from vx_device_query.
+      Gate for phase 0.
+
+  - name: runtime_vecadd
+    phase: 1
+    drivers: [simx, rtlsim]
+    check: numerical
+    description: vecadd through grxMalloc/grxMemcpy/grxLaunchKernel.
+
+  - name: runtime_sgemm
+    phase: 1
+    drivers: [simx, rtlsim]
+    check: numerical
+    description: sgemm through the GRXCP runtime API.
+
+  - name: allocator_stress
+    phase: 1
+    drivers: [simx]
+    check: exit_code
+    description: >
+      Randomized alloc/free with mixed sizes; asserts no interval-map leak and
+      no stale mapping after free.
+
+  - name: warp_reduction
+    phase: 2
+    drivers: [simx, rtlsim]
+    check: numerical
+    description: >
+      __shfl_down_sync reduction through the LMEM-staged fallback. Re-runs
+      natively once the WSHFL ISA extension lands; the two must agree bitwise.
+
+  - name: sanitize_oob
+    phase: 2
+    drivers: [simx]
+    check: diagnostic_match
+    description: grx-sanitize detects a planted out-of-bounds write and reports the line.
+
+  - name: blas_gemm_tcu
+    phase: 3
+    drivers: [simx, rtlsim]
+    check: numerical, perf_gate
+    description: >
+      grxblasGemmEx fp16/fp32 against a CPU reference, and within 15% of the
+      tuned sgemm_tcu_wg_dxa_mcast cycle baseline.
+
+  - name: grxcc_single_source
+    phase: 4
+    drivers: [simx, rtlsim]
+    check: numerical
+    description: vecadd.grx.cpp compiled by grxcc with <<<>>> syntax.
+
+  - name: cuda_conformance
+    phase: 4
+    drivers: [simx]
+    check: pass_rate
+    description: >
+      Ported CUDA sample corpus through grx_cuda_compat.h. The pass rate is
+      PUBLISHED, not gated -- it is a tracked trend, and hiding it helps nobody.
+
+  - name: stream_overlap
+    phase: 5
+    drivers: [simx]
+    check: perf_gate
+    description: >
+      Two-stream ping-pong shows measurable overlap. Blocked on the upstream
+      QMD-style atomic CMD_LAUNCH and multi-queue command processor work.

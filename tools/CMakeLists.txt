@@ -1,0 +1,8 @@
+foreach(tool grx-smi grx-prof grx-sanitize)
+  file(GLOB ${tool}_SRC CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/${tool}/*.cpp")
+  if(${tool}_SRC)
+    add_executable(${tool} ${${tool}_SRC})
+    target_link_libraries(${tool} PRIVATE grxrt)
+    install(TARGETS ${tool} RUNTIME DESTINATION bin)
+  endif()
+endforeach()
