@@ -29,6 +29,7 @@
 #define cudaErrorNotSupported           grxErrorNotSupported
 #define cudaErrorLaunchFailure          grxErrorLaunchFailure
 #define cudaErrorLaunchOutOfResources   grxErrorLaunchOutOfResources
+#define cudaErrorFileNotFound           grxErrorFileNotFound
 #define cudaGetErrorName                grxGetErrorName
 #define cudaGetErrorString              grxGetErrorString
 #define cudaGetLastError                grxGetLastError

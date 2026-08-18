@@ -65,6 +65,7 @@ const char* grxGetErrorName(grxError_t e) {
     case grxErrorLaunchOutOfResources:   return "grxErrorLaunchOutOfResources";
     case grxErrorDeviceLost:             return "grxErrorDeviceLost";
     case grxErrorTimeout:                return "grxErrorTimeout";
+    case grxErrorFileNotFound:           return "grxErrorFileNotFound";
     case grxErrorUnknown:                return "grxErrorUnknown";
   }
   return "grxErrorUnknown";
@@ -88,6 +89,7 @@ const char* grxGetErrorString(grxError_t e) {
     case grxErrorLaunchOutOfResources:   return "launch exceeds a per-core resource bound";
     case grxErrorDeviceLost:             return "device or backend became unreachable";
     case grxErrorTimeout:                return "wait timed out";
+    case grxErrorFileNotFound:           return "no such file";
     case grxErrorUnknown:                return "unknown error";
   }
   return "unknown error";

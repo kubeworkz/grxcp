@@ -13,6 +13,24 @@ foreach(src ${UNIT_SRC})
   set_tests_properties(${name} PROPERTIES SKIP_RETURN_CODE 77)
 endforeach()
 
+# Library gates: tests/libs/test_<lib>.cpp is the numerical gate for library
+# <lib>, and is built only if that library was. They need a compiled device
+# kernel, which this build does not produce (see src/libs/CMakeLists.txt); the
+# gate skips with 77 when the kernel is missing rather than reporting a
+# numerical failure against a file nobody compiled.
+file(GLOB LIB_TEST_SRC CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/libs/*.cpp")
+foreach(src ${LIB_TEST_SRC})
+  get_filename_component(name ${src} NAME_WE)
+  string(REGEX REPLACE "^test_" "" lib ${name})
+  if(TARGET ${lib})
+    add_executable(${name} ${src})
+    target_include_directories(${name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/unit)
+    target_link_libraries(${name} PRIVATE ${lib} grxrt)
+    add_test(NAME ${name} COMMAND ${name})
+    set_tests_properties(${name} PROPERTIES SKIP_RETURN_CODE 77)
+  endif()
+endforeach()
+
 # The device-property contract must hold on an FPGA backend too, where managed
 # memory has to be gated off. Same binary, different backend selection.
 if(TARGET test_device_props)

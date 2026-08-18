@@ -5,6 +5,10 @@
 # SPIR-V cannot reach. They ship as prebuilt .vxbin modules loaded through
 # grxModuleLoadData -- the same way vendor BLAS libraries ship precompiled
 # hand-tuned kernels behind a host API. See roadmap phase 3.
+#
+# The kernels themselves are NOT built here: they need a cross toolchain this
+# project does not require its host build to have. Build them with
+# ci/build_kernel.sh; the libraries locate them at runtime (see grxblas.h).
 foreach(lib grxblas grxdnn grxfft grxrand grxsparse)
   file(GLOB ${lib}_SRC CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/${lib}/*.cpp")
   if(${lib}_SRC)

@@ -216,6 +216,23 @@ of the tuned `sgemm_tcu_wg_dxa_mcast` reference on the same configuration,
 on `simx` cycle counts, with a passing numerical gate against a CPU
 reference.
 
+**Progress — grxBLAS v0 has landed, and it is not the exit gate.**
+`grxblasSgemm` runs end to end on `simx`: host API, a precompiled `.vxbin`
+resolved by name, and a numerical gate (`tests/libs/test_grxblas.cpp`) covering
+all four transpose combinations, padded leading dimensions, `alpha`/`beta`
+scaling, `k = 0`, and stray writes outside the m x n window. The kernel is one
+thread per output element — no blocking, no shared-memory staging, no tensor
+cores. It is **correct, not fast**. It exists to fix the API, prove the kernel
+packaging, and give the tuned path something to be measured against. The
+15%-of-reference gate above is untouched by it, and no performance claim should
+cite it.
+
+The v0 gate was itself checked against a deliberately broken kernel: reverting
+the transposed-A load to an expression that transposes nothing makes TN and TT
+fail while NN and NT still pass. Worth repeating whenever the CPU reference
+changes — the reference's first version shared a wrong index expression with the
+kernel, so the transpose-A case passed while transposing nothing.
+
 ---
 
 ## Phase 4 — `grxcc` single-source driver (≈5–6 engineer-months)

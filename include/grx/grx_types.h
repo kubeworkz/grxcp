@@ -36,6 +36,7 @@ typedef enum {
   grxErrorLaunchOutOfResources    = 13,
   grxErrorDeviceLost              = 14,
   grxErrorTimeout                 = 15,
+  grxErrorFileNotFound            = 16,
   grxErrorUnknown                 = 999
 } grxError_t;
 

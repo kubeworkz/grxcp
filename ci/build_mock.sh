@@ -18,7 +18,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD="$ROOT/build-mock"
 
-VORTEX_INCLUDE="${VORTEX_PATH:+$VORTEX_PATH/include}"
+VORTEX_INCLUDE=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --vortex-include) VORTEX_INCLUDE="$2"; shift 2 ;;
@@ -26,8 +26,26 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -z "${VORTEX_INCLUDE:-}" || ! -f "$VORTEX_INCLUDE/vortex2.h" ]]; then
-  echo "error: vortex2.h not found." >&2
+# Ask pkg-config before guessing at directory layouts: the installed sysroot
+# does not put its headers where an --prefix=/usr/local intuition expects
+# (they land in $VORTEX_PATH/runtime/include), and a script that hardcodes one
+# layout fails with "not found" while the header is sitting right there.
+if [[ -z "$VORTEX_INCLUDE" && -n "${VORTEX_PATH:-}" ]]; then
+  if PKG_CONFIG_PATH="$VORTEX_PATH/lib/pkgconfig:${PKG_CONFIG_PATH:-}" \
+     pkg-config --exists vortex-runtime 2>/dev/null; then
+    for flag in $(PKG_CONFIG_PATH="$VORTEX_PATH/lib/pkgconfig:${PKG_CONFIG_PATH:-}" \
+                  pkg-config --cflags-only-I vortex-runtime); do
+      [[ -f "${flag#-I}/vortex2.h" ]] && { VORTEX_INCLUDE="${flag#-I}"; break; }
+    done
+  fi
+  for d in "$VORTEX_PATH/runtime/include" "$VORTEX_PATH/include"; do
+    [[ -n "$VORTEX_INCLUDE" ]] && break
+    [[ -f "$d/vortex2.h" ]] && VORTEX_INCLUDE="$d"
+  done
+fi
+
+if [[ -z "$VORTEX_INCLUDE" || ! -f "$VORTEX_INCLUDE/vortex2.h" ]]; then
+  echo "error: vortex2.h not found${VORTEX_PATH:+ under $VORTEX_PATH}." >&2
   echo "  Set VORTEX_PATH to the installed GRX-G100 sysroot, or pass" >&2
   echo "  --vortex-include <dir containing vortex2.h>." >&2
   exit 1

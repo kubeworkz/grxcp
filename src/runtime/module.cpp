@@ -256,8 +256,10 @@ grxError_t grxModuleLoad(grxModule_t* module, const char* path) {
   // Read the file here rather than calling vx_module_load_file, so that the
   // same fat-binary selection applies whether an image arrives from disk or
   // from memory. A bare .vxbin still works: select_image passes it through.
+  // A missing file is not a malformed image. Reporting it as one sends the
+  // caller off to debug their toolchain when the answer is a wrong path.
   std::FILE* f = std::fopen(path, "rb");
-  if (!f) return grxcp::set_error(grxErrorInvalidKernelImage);
+  if (!f) return grxcp::set_error(grxErrorFileNotFound);
   std::fseek(f, 0, SEEK_END);
   const long len = std::ftell(f);
   std::fseek(f, 0, SEEK_SET);

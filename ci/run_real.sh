@@ -7,8 +7,9 @@
 # the simulator actually models, and data moves through the real command
 # processor rather than through a std::memcpy in a test fixture.
 #
-# It also runs a real kernel when the device toolchain is available, which is
-# the phase 1 exit gate: arithmetic computed by the device, checked on the host.
+# It also runs real kernels when the device toolchain is available: vecadd,
+# which is the phase 1 exit gate, and the grxBLAS sgemm gate. Both compute on
+# the device and are checked on the host.
 #
 #   export VORTEX_PATH=<sysroot>          # see ci/build_sysroot.sh
 #   ./ci/run_real.sh [--driver simx] [--grxgpu <path>] [--tooldir <path>]
@@ -105,6 +106,24 @@ else
   echo "SKIPPED: needs --grxgpu <path> and a device toolchain in $TOOLDIR."
   echo "         Install it with ci/install_toolchain.sh, then rebuild the"
   echo "         GRX-G100 kernel library: make -C <grxgpu>/build/sw/kernel"
+fi
+
+echo
+echo "==> grxBLAS: library builds"
+$CXX $CXXFLAGS -c "$ROOT/src/libs/grxblas/grxblas.cpp" -o "$BUILD/grxblas.o"
+
+echo "==> GRXBLAS GATE: sgemm against a CPU reference"
+if [[ -n "$GRXGPU" && -d "$TOOLDIR/llvm-vortex" ]]; then
+  "$ROOT/ci/build_kernel.sh" --grxgpu "$GRXGPU" --tooldir "$TOOLDIR" \
+    "$ROOT/src/libs/grxblas/kernels/sgemm.cpp" -o "$BUILD/grxblas_sgemm.vxbin" \
+    >/dev/null
+  $CXX $CXXFLAGS -I"$ROOT/tests/unit" -c "$ROOT/tests/libs/test_grxblas.cpp" \
+    -o "$BUILD/test_grxblas.o"
+  $CXX "${OBJS[@]}" "$BUILD/grxblas.o" "$BUILD/test_grxblas.o" $LIBS \
+    -o "$BUILD/test_grxblas"
+  "$BUILD/test_grxblas"
+else
+  echo "SKIPPED: needs --grxgpu <path> and a device toolchain in $TOOLDIR."
 fi
 
 echo

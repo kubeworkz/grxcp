@@ -153,6 +153,7 @@ GRX_CUDA_TYPE(cudaErrorNotReady,         grxErrorNotReady,         MAPPED, "")
 GRX_CUDA_TYPE(cudaErrorNotSupported,     grxErrorNotSupported,     MAPPED, "")
 GRX_CUDA_TYPE(cudaErrorLaunchFailure,    grxErrorLaunchFailure,    MAPPED, "")
 GRX_CUDA_TYPE(cudaErrorLaunchOutOfResources, grxErrorLaunchOutOfResources, MAPPED, "")
+GRX_CUDA_TYPE(cudaErrorFileNotFound,     grxErrorFileNotFound,     MAPPED, "")
 
 GRX_CUDA_TYPE(cudaDeviceProp,            grxDeviceProp_t,          PARTIAL, "field set differs: GRX-specific fields are added and CUDA fields the stack cannot source are absent")
 GRX_CUDA_TYPE(cudaStream_t,              grxStream_t,              MAPPED, "")
