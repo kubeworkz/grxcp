@@ -279,7 +279,47 @@ hardcodes 16 has to be edited; a kernel written against
 Absorbing the tiling difference is library-level work — grxBLAS — which is
 where it belongs.
 
-### 7.10 Out of scope for v1
+### 7.10 Static `__shared__` — **NEW (toolchain), was silently wrong**
+
+CUDA's `__shared__ float tile[64];` needs the toolchain to carve a per-CTA slot
+of local memory at link time. Nothing in this stack does that: the device link
+script has no `.shared` output section, and the CTA's local-memory base is a
+runtime value in `VX_CSR_CTA_LMEM_ADDR`, different for every CTA.
+
+GRXCP used to define `__shared__` as `__attribute__((section(".shared")))`,
+which compiled, ran, and put the array **in global memory** — the orphan
+section landed in the ELF image. Nothing failed, because no kernel had used it
+yet. The first one that did was the DXA gate, where the engine wrote to local
+memory while the kernel read the symbol from the image; the tile came back as
+the poison value it had been pre-filled with.
+
+`__shared__` is now `__attribute__((unavailable(...)))`, so using it is a
+compile error naming the alternative. Dynamic shared memory works and is the
+supported route: `grx::shared_memory<T>()` returns this CTA's slot, sized by the
+launch's `sharedMem` argument — that is CUDA's `extern __shared__`, and porting
+a static declaration means moving it there.
+
+### 7.11 Tensor maps are device slots, not values — **HW, structural**
+
+CUDA's `CUtensorMap` is an opaque object the program owns and hands to a kernel
+as an argument; each launch carries its own and nothing is shared. GRX-G100's
+DXA descriptors live in the device, in `VX_DCR_DXA_DESC_COUNT` slots programmed
+through config registers. Two consequences a port has to deal with:
+
+* Slots are a **shared resource**. Two kernels needing different maps in one
+  slot must not be in flight together, and no hardware will say otherwise.
+  `grxTensorMapProgramAsync` is stream-ordered, so a single stream is
+  predictable; two streams sharing a slot are racing.
+* The engine's bus master **bypasses the MMU**, so a descriptor's base is a
+  physical address. Where the device has virtual memory an ordinary allocation
+  will not do, and `grxMallocPhysical` exists to produce one that will. GRXCP
+  refuses the descriptor rather than programming an address the engine would
+  misread.
+
+Neither has a CUDA analogue, so neither can be hidden. Slot allocation is the
+program's job, and it is visible in the API.
+
+### 7.12 Out of scope for v1
 
 Dynamic parallelism (no device-side launch path), CUDA graphs, IPC handles,
 MPS, multi-process service, `cudaHostAlloc` write-combining hints, and

@@ -82,7 +82,7 @@ typedef struct {
   const grx_kernel_param* params;
   uint32_t                num_params;
   uint32_t                args_size;     // total packed blob size
-  uint32_t                static_smem;   // bytes of static __shared__
+  uint32_t                static_smem;   // per-kernel local-memory need, bytes
   int32_t                 num_regs;      // -1 when the toolchain cannot say
   uint32_t                max_threads_per_block;  // 0 = no __launch_bounds__
   uint32_t                reserved;

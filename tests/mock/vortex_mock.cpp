@@ -483,6 +483,9 @@ struct MockModule {
 grxmock_launch_record g_last_launch{};
 uint32_t              g_launch_count = 0;
 
+grxmock_dcr_record g_dcr[GRXMOCK_MAX_DCR]{};
+uint32_t           g_dcr_count = 0;
+
 }  // namespace
 
 extern "C" {
@@ -511,6 +514,29 @@ uint32_t grxmock_launch_count(void) { return g_launch_count; }
 void grxmock_reset_launches(void) {
   g_last_launch = grxmock_launch_record{};
   g_launch_count = 0;
+}
+
+const grxmock_dcr_record* grxmock_dcr_writes(void) { return g_dcr; }
+uint32_t grxmock_dcr_count(void) { return g_dcr_count; }
+void grxmock_reset_dcr(void) {
+  for (uint32_t i = 0; i < GRXMOCK_MAX_DCR; ++i) g_dcr[i] = grxmock_dcr_record{};
+  g_dcr_count = 0;
+}
+
+// The mock has no device configuration to change, so this records rather than
+// acts. That is the useful half anyway: a descriptor is exactly the sequence
+// of register writes that programs it, so capturing them lets tier 1 check the
+// encoding with no device in sight.
+vx_result_t vx_enqueue_dcr_write(vx_queue_h q, uint32_t addr, uint32_t value,
+                                 uint32_t, const vx_event_h*,
+                                 vx_event_h* out_event) {
+  if (!q) return VX_ERR_INVALID_HANDLE;
+  if (g_dcr_count < GRXMOCK_MAX_DCR) {
+    g_dcr[g_dcr_count].addr  = addr;
+    g_dcr[g_dcr_count].value = value;
+  }
+  ++g_dcr_count;   // keeps counting past the array so a test can notice
+  return complete(q, out_event);
 }
 
 vx_result_t vx_module_load_bytes(vx_device_h dev, const void* bytes,

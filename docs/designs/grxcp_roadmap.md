@@ -250,6 +250,31 @@ the exit gate: WGMMA warp groups (needs `VX_CFG_TCU_WGMMA_ENABLE`), the DXA
 async-copy staging in `grx_pipeline.h`, and the blocked grxBLAS kernel that puts
 them together.
 
+**Progress — asynchronous tile copy works, both sides of it.** `grx::pipeline`
+is implemented, and so is the host half it needs: `grxTensorMapProgramAsync`
+programs a DXA descriptor slot through stream-ordered register writes, and
+`grx::memcpy_async` fetches a tile of that descriptor into the CTA's shared
+memory, completing on a `grx::barrier` transaction. `tests/kernels/dxa/` checks
+a staged tile element for element out of a **padded** array, in both destination
+layouts, with one and two warps; `tests/unit/test_tensormap.cpp` checks the
+register encoding at tier 1 against writes captured by the mock driver.
+
+Two things this turned up, both now fixed and registered in cuda_mapping.md:
+
+* **Static `__shared__` never worked** (section 7.10). It was defined as a
+  `.shared` section attribute, and the device link script has no such section,
+  so arrays landed in global memory. Every kernel so far had done without it, so
+  nothing had failed. It is a compile error now, pointing at
+  `grx::shared_memory<T>()` — dynamic shared memory, which does work.
+* **Descriptors are device slots, not values** (section 7.11), and the engine
+  bypasses the MMU, so the memory it reads has to be physically addressed —
+  hence `grxMallocPhysical`.
+
+What is left before the phase 3 exit gate: WGMMA warp groups (needs
+`VX_CFG_TCU_WGMMA_ENABLE`, off in the configuration used here), the multi-stage
+`pipeline<Stages>` structure, and the blocked grxBLAS kernel that composes
+tensor cores with async staging.
+
 ---
 
 ## Phase 4 — `grxcc` single-source driver (≈5–6 engineer-months)

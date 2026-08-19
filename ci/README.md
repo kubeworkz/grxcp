@@ -70,6 +70,14 @@ kernel written against GRXCP's own device header, launched through
 `grxLaunchFunction`, with the arithmetic checked on the host at sizes that
 exercise the partial-warp path.
 
+`tests/kernels/dxa/` is the DMA gate: the host programs a tensor map, a kernel
+stages a tile of a **padded** 2D array into shared memory through the engine,
+and the host checks every element — in both the row-major and the transposing
+destination layouts. Its tier-1 counterpart is `tests/unit/test_tensormap.cpp`,
+which reads back the device-config-register writes the mock driver captured:
+that half says the registers hold what they should, this half says the engine
+does what the registers say.
+
 `tests/kernels/wmma/` is the tensor gate: one WMMA tile through
 `grx::wmma`, compared **exactly** against a CPU reference. The host asks the
 device for its tile shape rather than assuming one, and cross-checks the warp

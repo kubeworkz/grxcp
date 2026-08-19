@@ -4,5 +4,6 @@
 
 #include "grx_types.h"
 #include "grx_runtime.h"
+#include "grx_tensormap.h"
 
 #endif  // GRX_H

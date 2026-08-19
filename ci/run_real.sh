@@ -133,6 +133,26 @@ else
 fi
 
 echo
+echo "==> DXA GATE: an asynchronous tile copy, checked element for element"
+if ! "$BUILD/grx-smi" 2>/dev/null | grep -q 'capabilities.*async-copy'; then
+  echo "SKIPPED: this device reports no DMA engine."
+  echo "         Rebuild the sysroot with ci/build_sysroot.sh --configs"
+  echo "         \"-DVX_CFG_EXT_DXA_ENABLE\" to exercise it."
+elif [[ -z "$GRXGPU" || ! -d "$TOOLDIR/llvm-vortex" ]]; then
+  echo "SKIPPED: needs --grxgpu <path> and a device toolchain in $TOOLDIR."
+else
+  "$ROOT/ci/build_kernel.sh" --grxgpu "$GRXGPU" --tooldir "$TOOLDIR" \
+    "$ROOT/tests/kernels/dxa/kernel.cpp" -o "$BUILD/dxa.vxbin" >/dev/null
+  $CXX $CXXFLAGS -I"$ROOT/tests/kernels/dxa" \
+    -c "$ROOT/tests/kernels/dxa/main.cpp" -o "$BUILD/dxa_main.o"
+  $CXX "${OBJS[@]}" "$BUILD/dxa_main.o" $LIBS -o "$BUILD/dxa_gate"
+  if ! "$BUILD/dxa_gate" "$BUILD/dxa.vxbin"; then
+    rc=$?
+    [[ $rc -eq 77 ]] || exit $rc
+  fi
+fi
+
+echo
 echo "==> grxBLAS: library builds"
 $CXX $CXXFLAGS -c "$ROOT/src/libs/grxblas/grxblas.cpp" -o "$BUILD/grxblas.o"
 

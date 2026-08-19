@@ -19,6 +19,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD="$ROOT/build-mock"
 
 VORTEX_INCLUDE=""
+VORTEX_CFLAGS=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --vortex-include) VORTEX_INCLUDE="$2"; shift 2 ;;
@@ -33,8 +34,13 @@ done
 if [[ -z "$VORTEX_INCLUDE" && -n "${VORTEX_PATH:-}" ]]; then
   if PKG_CONFIG_PATH="$VORTEX_PATH/lib/pkgconfig:${PKG_CONFIG_PATH:-}" \
      pkg-config --exists vortex-runtime 2>/dev/null; then
-    for flag in $(PKG_CONFIG_PATH="$VORTEX_PATH/lib/pkgconfig:${PKG_CONFIG_PATH:-}" \
-                  pkg-config --cflags-only-I vortex-runtime); do
+    # Take EVERY include directory pkg-config names, not just the one holding
+    # vortex2.h: the runtime also includes VX_types.h, which the sysroot keeps
+    # in the kernel include directory. Picking one directory compiles most of
+    # the runtime and then fails on whichever file needs the other.
+    VORTEX_CFLAGS="$(PKG_CONFIG_PATH="$VORTEX_PATH/lib/pkgconfig:${PKG_CONFIG_PATH:-}" \
+                     pkg-config --cflags-only-I vortex-runtime)"
+    for flag in $VORTEX_CFLAGS; do
       [[ -f "${flag#-I}/vortex2.h" ]] && { VORTEX_INCLUDE="${flag#-I}"; break; }
     done
   fi
@@ -52,7 +58,7 @@ if [[ -z "$VORTEX_INCLUDE" || ! -f "$VORTEX_INCLUDE/vortex2.h" ]]; then
 fi
 
 CXX="${CXX:-g++}"
-CXXFLAGS="-std=c++17 -Wall -Wextra -O1 -g -I$ROOT/include -I$VORTEX_INCLUDE"
+CXXFLAGS="-std=c++17 -Wall -Wextra -O1 -g -I$ROOT/include -I$VORTEX_INCLUDE $VORTEX_CFLAGS"
 
 mkdir -p "$BUILD"
 

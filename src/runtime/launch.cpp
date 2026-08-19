@@ -135,8 +135,10 @@ grxError_t launch_common(const KernelBinding& k, const dim3_t& grid,
   info.block_dim[0] = block.x ? block.x : 1;
   info.block_dim[1] = block.y ? block.y : 1;
   info.block_dim[2] = block.z ? block.z : 1;
-  // The dispatcher's per-CTA local-memory stride covers both the kernel's
-  // static __shared__ and whatever the launch asks for dynamically.
+  // The dispatcher's per-CTA local-memory stride. `shared` is the launch's
+  // request; static_smem is whatever per-kernel metadata reports, which is 0
+  // until the toolchain records any -- and there is no static __shared__ to
+  // record, see the note in include/grx/device/grx_device.h.
   info.lmem_size    = (uint32_t)(shared + k.static_smem);
   info.cluster_dim[0] = cluster.x ? cluster.x : 1;
   info.cluster_dim[1] = cluster.y ? cluster.y : 1;

@@ -64,6 +64,7 @@ struct Mapping {
   uint64_t    size   = 0;   // bytes remaining from the queried address
   int         device = 0;
   bool        managed = false;
+  bool        physical = false;  // allocated where the DMA engine can reach it
 };
 
 // Resolve any address inside a live device allocation. Returns false for a

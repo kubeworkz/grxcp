@@ -35,6 +35,20 @@ const grxmock_launch_record* grxmock_last_launch(void);
 uint32_t                     grxmock_launch_count(void);
 void                         grxmock_reset_launches(void);
 
+// Device-config-register writes the driver received, in order. Descriptor
+// programming is nothing but a sequence of these, so recording them is how the
+// encoding gets tested without a device: the values are the whole contract.
+#define GRXMOCK_MAX_DCR 64
+
+typedef struct {
+  uint32_t addr;
+  uint32_t value;
+} grxmock_dcr_record;
+
+const grxmock_dcr_record* grxmock_dcr_writes(void);   // GRXMOCK_MAX_DCR entries
+uint32_t                  grxmock_dcr_count(void);    // may exceed the array
+void                      grxmock_reset_dcr(void);
+
 // Build a mock module image: a magic tag followed by NUL-terminated kernel
 // names. The mock does not parse real .vxbin encoding -- it models the
 // contract (named entries resolve to kernels), not the file format.

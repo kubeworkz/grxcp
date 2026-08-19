@@ -201,10 +201,13 @@ int main() {
     check(b_packed == (uint64_t)(uintptr_t)dev_b, "second pointer lands at offset 8");
     check(n_packed == 777u, "the scalar lands at offset 16");
 
-    // Static __shared__ is added to whatever the launch asks for dynamically,
-    // because the dispatcher's per-CTA stride has to cover both.
+    // A kernel's own recorded local-memory need is added to whatever the
+    // launch asks for dynamically, because the dispatcher's per-CTA stride has
+    // to cover both. (Nothing emits that number yet -- there is no static
+    // __shared__ on this platform, see include/grx/device/grx_device.h -- but
+    // the launch path has to honour it when a toolchain does.)
     check(r->lmem_size == 32 + 64,
-          "shared memory is dynamic plus the kernel's static requirement");
+          "shared memory is dynamic plus the kernel's recorded requirement");
 
     // A stub with no registered layout cannot have its void** packed. Refusing
     // beats assuming every argument is pointer-sized.

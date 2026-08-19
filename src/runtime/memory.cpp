@@ -59,6 +59,7 @@ struct Allocation {
   int         device  = 0;
   bool        direct  = false;   // owns `buffer` outright
   bool        managed = false;
+  bool        physical = false;  // VX_MEM_PHYS: the DMA engine can reach it
   size_t      slab    = 0;
 };
 
@@ -162,6 +163,37 @@ bool take_best_fit(uint64_t bytes, uint64_t align, uint64_t* out_base,
   return true;
 }
 
+// Physically-addressed allocation, for buffers the DXA engine will read.
+//
+// It always gets its own buffer rather than a slice of a slab. Physical memory
+// may be a scarcer resource than ordinary device memory, and handing out a
+// piece of a shared slab would keep the whole slab physical for as long as any
+// piece of it lived.
+grxError_t allocate_device_physical(int device, uint64_t bytes,
+                                    uint64_t* out_address) {
+  Device* d = nullptr;
+  grxError_t e = acquire_device(device, &d);
+  if (e != grxSuccess) return e;
+
+  const uint64_t need = align_up(bytes, alignment_for(*d));
+
+  vx_buffer_h buf = nullptr;
+  vx_result_t r = vx_buffer_create(d->handle, need,
+                                   VX_MEM_READ_WRITE | VX_MEM_PHYS, &buf);
+  if (r != VX_SUCCESS) return map_result(r);
+  uint64_t base = 0;
+  r = vx_buffer_address(buf, &base);
+  if (r != VX_SUCCESS) { vx_buffer_release(buf); return map_result(r); }
+
+  std::lock_guard<std::mutex> lock(g_mem_mutex);
+  Allocation a;
+  a.buffer = buf; a.base = base; a.size = need; a.offset = 0;
+  a.device = device; a.direct = true; a.physical = true;
+  g_live[base] = a;
+  *out_address = base;
+  return grxSuccess;
+}
+
 grxError_t allocate_device(int device, uint64_t bytes, bool managed,
                            uint64_t* out_address) {
   Device* d = nullptr;
@@ -241,6 +273,7 @@ bool lookup_device_pointer(const void* ptr, Mapping* out) {
     out->size    = a->size - delta;
     out->device  = a->device;
     out->managed = a->managed;
+    out->physical = a->physical;
   }
   return true;
 }
@@ -384,6 +417,17 @@ grxError_t grxMalloc(void** ptr, size_t size) {
   uint64_t address = 0;
   grxError_t e = grxcp::allocate_device(grxcp::current_device_index(), size,
                                         /*managed=*/false, &address);
+  if (e != grxSuccess) return grxcp::set_error(e);
+  *ptr = (void*)(uintptr_t)address;
+  return grxSuccess;
+}
+
+grxError_t grxMallocPhysical(void** ptr, size_t size) {
+  if (!ptr) return grxcp::set_error(grxErrorInvalidValue);
+  if (size == 0) { *ptr = nullptr; return grxSuccess; }
+  uint64_t address = 0;
+  grxError_t e = grxcp::allocate_device_physical(grxcp::current_device_index(),
+                                                 size, &address);
   if (e != grxSuccess) return grxcp::set_error(e);
   *ptr = (void*)(uintptr_t)address;
   return grxSuccess;

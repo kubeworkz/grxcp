@@ -35,10 +35,29 @@
 #define __forceinline__ __attribute__((always_inline)) inline
 #define __restrict__ __restrict
 
-// Static __shared__ carves from this CTA's fixed-stride local-memory slot.
-// The base address comes from VX_CSR_CTA_LMEM_ADDR; the slot's size is the
-// per-kernel `lmem_size` programmed at launch.
-#define __shared__   __attribute__((section(".shared")))
+// Shared memory is the CTA's fixed-stride local-memory slot: the base is in
+// VX_CSR_CTA_LMEM_ADDR and the size is the launch's sharedMem argument. That
+// is CUDA's DYNAMIC shared memory, and grx::shared_memory<T>() below returns
+// it.
+//
+// CUDA's STATIC __shared__ has no equivalent, and the definition that used to
+// sit here was worse than not having one: it put the variable in a `.shared`
+// section that the device link script does not mention, so the array was
+// placed in the ELF image -- in GLOBAL memory. It compiled and it ran, and it
+// was not shared memory. That went unnoticed until the first kernel that
+// actually used it (the DXA gate) had the DMA engine write into local memory
+// while the kernel read the symbol from global memory.
+//
+// Making it a compile error is the honest replacement: carving a per-CTA
+// local-memory slot at link time needs toolchain support that does not exist,
+// and there is no way to fake it that a caller would thank us for. See
+// docs/designs/cuda_mapping.md.
+#define __shared__                                                          \
+  __attribute__((unavailable(                                               \
+      "GRXCP has no static __shared__: nothing carves a per-CTA local "     \
+      "memory slot at link time, so the variable would land in global "     \
+      "memory. Use grx::shared_memory<T>() and pass the byte size as the "  \
+      "launch's sharedMem argument.")))
 
 // __constant__ currently lowers to read-only global memory: GRX-G100 has no
 // exposed broadcast constant path. Semantics are correct, the broadcast
@@ -68,6 +87,18 @@ __forceinline__ uint32_t cluster_size() { return get_cluster_size(); }
 __forceinline__ uint32_t cluster_rank() { return get_cluster_rank(); }
 
 __forceinline__ uint64_t clock64() { return (uint64_t)vx_rdcycle(); }
+
+// Base of this CTA's shared-memory slot -- CUDA's dynamic shared memory. The
+// slot is `sharedMem` bytes, from the launch; nothing on the device knows that
+// number, so reading past it silently reads the next CTA's slot. The runtime
+// checks the request against grxDeviceProp_t::sharedMemPerBlock at launch,
+// which is the only place the check can be made.
+__forceinline__ void* shared_memory() { return __local_mem(); }
+
+template <typename T>
+__forceinline__ T* shared_memory() {
+  return reinterpret_cast<T*>(__local_mem());
+}
 
 }  // namespace grx
 
