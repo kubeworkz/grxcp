@@ -70,6 +70,18 @@ kernel written against GRXCP's own device header, launched through
 `grxLaunchFunction`, with the arithmetic checked on the host at sizes that
 exercise the partial-warp path.
 
+`tests/kernels/cycles/` is the calibration weight for device-cycle
+measurement: it runs the same kernel at 1x, 2x and 4x the work and fails unless
+the measured count follows. Nothing else in the tree may quote a cycle figure
+without this passing — a measurement nobody has watched respond to its input is
+not a measurement. `tests/bench/sgemm_cycles.cpp` then reports what sgemm v0
+costs, which is the baseline the tuned tensor-core kernel is gated against;
+it is a report, and it fails only if the measurement itself is broken.
+
+Event elapsed time is **not** a measurement of the device — the driver's
+timestamps are host clocks, so on a simulator they measure the simulator. See
+`include/grx/grx_cycles.h`.
+
 `tests/kernels/dxa/` is the DMA gate: the host programs a tensor map, a kernel
 stages a tile of a **padded** 2D array into shared memory through the engine,
 and the host checks every element — in both the row-major and the transposing

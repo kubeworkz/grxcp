@@ -7,9 +7,11 @@
 # the simulator actually models, and data moves through the real command
 # processor rather than through a std::memcpy in a test fixture.
 #
-# It also runs real kernels when the device toolchain is available: vecadd,
-# which is the phase 1 exit gate, and the grxBLAS sgemm gate. Both compute on
-# the device and are checked on the host.
+# It also runs the kernel gates when the device toolchain is available --
+# vecadd (the phase 1 exit gate), the WMMA tile, the DXA async copy, the cycle
+# probe, and grxBLAS sgemm -- each computing on the device and checked on the
+# host. The last section is a REPORT rather than a gate: sgemm v0's cost in
+# device cycles, which is the baseline the tuned kernel has to beat.
 #
 #   export VORTEX_PATH=<sysroot>          # see ci/build_sysroot.sh
 #   ./ci/run_real.sh [--driver simx] [--grxgpu <path>] [--tooldir <path>]
@@ -133,6 +135,22 @@ else
 fi
 
 echo
+echo "==> CYCLE GATE: does the device cycle probe measure work"
+if [[ -z "$GRXGPU" || ! -d "$TOOLDIR/llvm-vortex" ]]; then
+  echo "SKIPPED: needs --grxgpu <path> and a device toolchain in $TOOLDIR."
+else
+  "$ROOT/ci/build_kernel.sh" --grxgpu "$GRXGPU" --tooldir "$TOOLDIR" \
+    "$ROOT/tests/kernels/cycles/kernel.cpp" -o "$BUILD/cycles.vxbin" >/dev/null
+  $CXX $CXXFLAGS -I"$ROOT/tests/kernels/cycles" \
+    -c "$ROOT/tests/kernels/cycles/main.cpp" -o "$BUILD/cycles_main.o"
+  $CXX "${OBJS[@]}" "$BUILD/cycles_main.o" $LIBS -o "$BUILD/cycles_gate"
+  if ! "$BUILD/cycles_gate" "$BUILD/cycles.vxbin"; then
+    rc=$?
+    [[ $rc -eq 77 ]] || exit $rc
+  fi
+fi
+
+echo
 echo "==> DXA GATE: an asynchronous tile copy, checked element for element"
 if ! "$BUILD/grx-smi" 2>/dev/null | grep -q 'capabilities.*async-copy'; then
   echo "SKIPPED: this device reports no DMA engine."
@@ -166,6 +184,20 @@ if [[ -n "$GRXGPU" && -d "$TOOLDIR/llvm-vortex" ]]; then
   $CXX "${OBJS[@]}" "$BUILD/grxblas.o" "$BUILD/test_grxblas.o" $LIBS \
     -o "$BUILD/test_grxblas"
   "$BUILD/test_grxblas"
+else
+  echo "SKIPPED: needs --grxgpu <path> and a device toolchain in $TOOLDIR."
+fi
+
+echo
+echo "==> BASELINE: what sgemm v0 costs, in device cycles"
+if [[ -n "$GRXGPU" && -d "$TOOLDIR/llvm-vortex" ]]; then
+  $CXX $CXXFLAGS -c "$ROOT/tests/bench/sgemm_cycles.cpp" -o "$BUILD/sgemm_cycles.o"
+  $CXX "${OBJS[@]}" "$BUILD/grxblas.o" "$BUILD/sgemm_cycles.o" $LIBS \
+    -o "$BUILD/sgemm_bench"
+  if ! "$BUILD/sgemm_bench"; then
+    rc=$?
+    [[ $rc -eq 77 ]] || exit $rc
+  fi
 else
   echo "SKIPPED: needs --grxgpu <path> and a device toolchain in $TOOLDIR."
 fi

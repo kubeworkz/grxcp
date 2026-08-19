@@ -211,10 +211,42 @@ libraries actually ship: precompiled, hand-tuned kernels behind a host API.
 It also de-risks Phase 4 by proving the native compile path before `grxcc`
 depends on it.
 
-**Exit gate.** `grxblasGemmEx` (fp16 in, fp32 accumulate) reaches within 15%
-of the tuned `sgemm_tcu_wg_dxa_mcast` reference on the same configuration,
-on `simx` cycle counts, with a passing numerical gate against a CPU
-reference.
+**Exit gate (restated).** `grxblasGemmEx` (fp16 in, fp32 accumulate) costs
+**no more than a fifth of sgemm v0's cycles per output element** on the same
+configuration, with a passing numerical gate against a CPU reference.
+
+The original wording was "within 15% of the tuned `sgemm_tcu_wg_dxa_mcast`
+reference on simx cycle counts". Two problems with it, both found by trying to
+run it. That reference kernel is not in the grxgpu source this project can
+reach, so the comparison had no left-hand side. And "simx cycle counts" had no
+mechanism: event timing is a host clock and on a simulator measures the
+simulator (cuda_mapping.md section 7.4), so there was nothing that could
+produce the number.
+
+Both are fixed rather than waived. Measurement is `grx::cycle_probe` reading
+the device's own counter, calibrated by `tests/kernels/cycles/` — which runs
+the same kernel at 1x, 2x and 4x the work and fails unless the count follows.
+The baseline is `tests/bench/sgemm_cycles.cpp`, and it is a number this project
+produces itself instead of one it hopes to be handed:
+
+| shape | span (cycles) | cycles / output element |
+|---|---|---|
+| 16 x 16 x 16 | 76 207 | **297.7** |
+| 16 x 16 x 32 | 133 973 | 523.3 |
+| 32 x 32 x 32 | 536 385 | 523.8 |
+| 64 x 64 x 32 | 2 147 531 | 524.3 |
+
+One SM, four-lane warp, SimX. About 16 cycles per multiply-add, flat across
+shapes, which is what an unblocked one-thread-per-element loop with two global
+loads per MAC and no reuse should cost. The 5x target is deliberately a target
+and not a prediction: the tensor unit does an 8x4x8 tile per instruction where
+this does one MAC per thread per iteration, so a tuned kernel that only manages
+5x has left most of the unit unused — and if the reference kernel does turn up,
+comparing against it is then a matter of running both through the same harness.
+
+A cycle count from a simulator is what the MODEL does. It is the right thing to
+compare two kernels with and the wrong thing to quote as hardware performance,
+and every place that prints one says so.
 
 **Progress — grxBLAS v0 has landed, and it is not the exit gate.**
 `grxblasSgemm` runs end to end on `simx`: host API, a precompiled `.vxbin`
@@ -274,6 +306,18 @@ What is left before the phase 3 exit gate: WGMMA warp groups (needs
 `VX_CFG_TCU_WGMMA_ENABLE`, off in the configuration used here), the multi-stage
 `pipeline<Stages>` structure, and the blocked grxBLAS kernel that composes
 tensor cores with async staging.
+
+**Progress — the gate is measurable now.** `grx::cycle_probe` reads the device's
+cycle counter, `tests/kernels/cycles/` proves the reading responds to work
+(1x/2x/4x, ratio 2.00, 81 cycles per loop iteration), and
+`grxblasSetCycleProbe` lets the same shipped kernel be measured without being
+recompiled for measurement. sgemm v0's baseline is in the table above.
+
+Also, and found the hard way: the sgemm argument block now carries an ABI
+version the kernel checks. Adding the probe field changed the struct, a stale
+test binary passed the old shorter blob, and the kernel read a pointer from past
+the end of the staging area and stored through it. A mismatched .vxbin and
+library is now an obviously wrong answer instead of memory corruption.
 
 ---
 

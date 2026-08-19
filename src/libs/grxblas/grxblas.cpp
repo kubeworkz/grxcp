@@ -56,8 +56,19 @@ struct Context {
   grxModule_t   sgemm_module = nullptr;
   grxFunction_t sgemm_fn = nullptr;
   std::string   sgemm_path;   // which file actually got loaded
+  grxCycleSlot* probe = nullptr;
+  int           probe_capacity = 0;
   std::mutex    mutex;
 };
+
+// One warp per block, so one slot per block. Kept as a function because the
+// launch geometry below has to agree with it exactly, and two places computing
+// the same thing from memory is how they stop agreeing.
+int slots_for(int m, int n, int warp_size) {
+  if (m <= 0 || n <= 0 || warp_size <= 0) return 0;
+  const long long total = (long long)m * n;
+  return (int)((total + warp_size - 1) / warp_size);
+}
 
 grxblasStatus_t ensure_sgemm(Context& ctx) {
   std::lock_guard<std::mutex> lock(ctx.mutex);
@@ -149,6 +160,24 @@ grxblasStatus_t grxblasSetKernelPath(const char* path) {
   return GRXBLAS_STATUS_SUCCESS;
 }
 
+grxblasStatus_t grxblasSetCycleProbe(grxblasHandle_t handle,
+                                     grxCycleSlot* slots, int capacity) {
+  if (!handle) return GRXBLAS_STATUS_NOT_INITIALIZED;
+  if (slots && capacity <= 0) return GRXBLAS_STATUS_INVALID_VALUE;
+  auto* ctx = reinterpret_cast<Context*>(handle);
+  std::lock_guard<std::mutex> lock(ctx->mutex);
+  ctx->probe          = slots;
+  ctx->probe_capacity = slots ? capacity : 0;
+  return GRXBLAS_STATUS_SUCCESS;
+}
+
+int grxblasCycleSlotsNeeded(grxblasHandle_t handle, int m, int n) {
+  (void)handle;
+  grxDeviceProp_t prop{};
+  if (grxGetDeviceProperties(&prop, 0) != grxSuccess) return 0;
+  return slots_for(m, n, prop.warpSize);
+}
+
 grxblasStatus_t grxblasGetLoadedKernelPath(grxblasHandle_t handle,
                                            const char** path) {
   if (!handle) return GRXBLAS_STATUS_NOT_INITIALIZED;
@@ -193,6 +222,7 @@ grxblasStatus_t grxblasSgemm(grxblasHandle_t handle,
   if (e != grxSuccess) return from_grx(e);
 
   grxblas_sgemm_args args{};
+  args.abi_version = GRXBLAS_SGEMM_ABI_VERSION;
   args.m = (uint32_t)m; args.n = (uint32_t)n; args.k = (uint32_t)k;
   args.lda = (uint32_t)lda; args.ldb = (uint32_t)ldb; args.ldc = (uint32_t)ldc;
   args.transa = (uint32_t)transa; args.transb = (uint32_t)transb;
@@ -206,6 +236,12 @@ grxblasStatus_t grxblasSgemm(grxblasHandle_t handle,
   const unsigned block = (unsigned)prop.warpSize;
   const unsigned total = (unsigned)((size_t)m * (size_t)n);
   const unsigned grid  = (total + block - 1) / block;
+
+  if (ctx->probe) {
+    if (ctx->probe_capacity < slots_for(m, n, prop.warpSize))
+      return GRXBLAS_STATUS_INVALID_VALUE;
+    args.cycles = (uint64_t)(uintptr_t)ctx->probe;
+  }
 
   e = grxLaunchFunction(ctx->sgemm_fn, dim3_t{grid, 1, 1}, dim3_t{block, 1, 1},
                         &args, sizeof(args), /*sharedMem=*/0, ctx->stream);

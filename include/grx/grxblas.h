@@ -23,6 +23,7 @@
 #ifndef GRXBLAS_H
 #define GRXBLAS_H
 
+#include "grx_cycles.h"
 #include "grx_runtime.h"
 #include "grx_types.h"
 
@@ -81,6 +82,21 @@ grxblasStatus_t grxblasSgemm(grxblasHandle_t handle,
 // not quietly load some other build: knowing which binary ran matters more than
 // the call succeeding, particularly when the answer decides a benchmark.
 grxblasStatus_t grxblasSetKernelPath(const char* path);
+
+// --- instrumentation -------------------------------------------------------
+//
+// Attach an array of cycle slots and the next sgemm records how long each warp
+// took, measured by the DEVICE's own cycle counter -- the only clock that
+// measures the device (see grx_cycles.h). NULL turns it off, and off is the
+// default: the same kernel runs either way, so the number describes the kernel
+// that ships rather than an instrumented variant of it.
+//
+// `capacity` is checked against what the call needs; too small is an error
+// rather than a partial record. grxblasCycleSlotsNeeded says how many an m x n
+// call will use.
+grxblasStatus_t grxblasSetCycleProbe(grxblasHandle_t handle,
+                                     grxCycleSlot* slots, int capacity);
+int             grxblasCycleSlotsNeeded(grxblasHandle_t handle, int m, int n);
 
 // The file the kernels were actually loaded from, or NULL if none have been
 // loaded yet (loading is lazy, so this is NULL until the first real call).
