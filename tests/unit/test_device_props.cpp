@@ -75,8 +75,13 @@ int main() {
           "managed memory is off on FPGA backends");
 
     // --- honesty flags: see the note at the top of this file ---
-    check(p.warpShuffleIsEmulated == 1,
-          "warp shuffle still reports emulated (no WSHFL instruction yet)");
+    // Was `== 1` while the shuffle was staged through local memory. The ISA
+    // has SHFL.* and VOTE.*, grx_warp.h issues them, and tests/kernels/warp/
+    // checks the semantics on a real device -- so the flag says native, and
+    // this says it must keep saying so. Flipping it back without restoring an
+    // emulation is the defect this catches.
+    check(p.warpShuffleIsEmulated == 0,
+          "warp shuffle reports native, because the ISA has SHFL.*");
     check(p.eventTimingIsDeviceSide == 0,
           "event timing still reports host clock (CP profiling writeback pending)");
     check(p.constantMemoryIsGlobal == 1,

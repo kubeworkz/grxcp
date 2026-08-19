@@ -97,7 +97,7 @@ __forceinline__ void* shared_memory() { return __local_mem(); }
 
 template <typename T>
 __forceinline__ T* shared_memory() {
-  return reinterpret_cast<T*>(__local_mem());
+  return reinterpret_cast<T*>(shared_memory());
 }
 
 }  // namespace grx

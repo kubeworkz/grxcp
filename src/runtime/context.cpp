@@ -121,9 +121,13 @@ void populate_properties(Device& d) {
   // Each of these marks a documented software stand-in for hardware. Clearing
   // one without removing the emulation it describes is a defect.
 
-  // vx_wgather gathers within a 4-lane group, not across the warp, so
-  // __shfl_sync is staged through local memory (cuda_mapping.md section 7.1).
-  p.warpShuffleIsEmulated   = 1;
+  // Was 1, for as long as the shuffle was staged through local memory. The ISA
+  // has SHFL.UP / DOWN / BFLY / IDX and VOTE.ALL / ANY / UNI / BAL -- they are
+  // in vx_intrinsics.h with no configuration gate and the ALU implements them,
+  // so grx_warp.h issues them directly and the emulation is gone. Verified by
+  // tests/kernels/warp/, which checks all four shuffle forms against CUDA's
+  // segmented semantics at two widths (cuda_mapping.md section 7.1).
+  p.warpShuffleIsEmulated   = 0;
   // The driver does stamp each command, but with the HOST clock around
   // execution -- the CP does not write back device timestamps. On a simulator
   // that number measures the simulator, so this flag stays 0 until the

@@ -1,25 +1,24 @@
 // GRXCP — warp-level primitives.
 //
-// READ THIS BEFORE USING SHUFFLE.
+// ALL OF THESE ARE NATIVE. Vote and shuffle are single instructions:
 //
-// Ballot-class primitives are native: the active thread mask is a CSR read
-// (vx_active_threads), so __activemask/__ballot_sync/__any_sync/__all_sync are
-// one instruction and cost nothing.
+//   vx_vote_all / any / uni / ballot   VOTE.*  in the ALU
+//   vx_shfl_up / down / bfly / idx     SHFL.*  in the ALU
 //
-// Shuffle is NOT native. vx_wgather gathers within a 4-lane GROUP -- its
-// documented purpose is a 4x4 transpose (vx_transpose4) -- not from an
-// arbitrary lane of a 32-lane warp. So __shfl_sync and friends are implemented
-// here by staging through the CTA's local memory: write your value to a
-// per-warp scratch slot, fence, read the source lane's slot. That is correct
-// and portable and roughly an order of magnitude slower than a register
-// shuffle would be.
+// This header used to say the opposite -- that shuffle was "the platform's
+// single highest-impact hardware gap", emulated by staging values through the
+// CTA's local memory at roughly an order of magnitude the cost, with a
+// proposed WSHFL ISA extension as the fix. That was true when it was written
+// and is not true now: the instructions are in vx_intrinsics.h, unconditional
+// (no VX_CFG gate), and the SimX ALU implements them. The emulation was
+// removed rather than kept as a fallback, because an unexercised fallback is a
+// liability and there is no configuration here that needs one.
 //
-// This is the platform's single highest-impact hardware gap, because warp
-// reductions and scans are the backbone of ported CUDA code (reduction,
-// softmax, layernorm, prefix sum, sort). It is tracked in
-// docs/designs/cuda_mapping.md section 7.1, the fix is the proposed WSHFL ISA
-// extension, and grxDeviceProp_t.warpShuffleIsEmulated reports the state at
-// runtime so a benchmark can say which it measured.
+// The one thing worth reading before use: the SHFL instructions implement
+// NVIDIA's segmented semantics exactly -- a `c` operand carrying a clamp and a
+// segment mask, with out-of-segment lanes keeping their own value -- so CUDA's
+// `width` argument maps onto them directly rather than being approximated.
+// The mapping is in shfl_control() below.
 
 #ifndef GRX_WARP_H
 #define GRX_WARP_H
@@ -28,26 +27,38 @@
 
 #define GRX_FULL_MASK 0xffffffffu
 
-// --- native: active mask and ballot ---------------------------------------
+// --- vote ------------------------------------------------------------------
+//
+// The `mask` argument is CUDA's participation mask. It is applied to the
+// RESULT rather than to the vote, because the hardware votes over the lanes
+// that are actually active and there is no way to make a lane that is not
+// executing participate. For the usual GRX_FULL_MASK call that is the same
+// thing; for a partial mask it means the answer describes the lanes that both
+// were asked for and were there.
 
 __forceinline__ unsigned __activemask() {
   return (unsigned)vx_active_threads();
 }
 
 __forceinline__ unsigned __ballot_sync(unsigned mask, int predicate) {
-  // Under SIMT predication the inactive lanes drop out of the thread mask, so
-  // the ballot is the active mask observed inside the predicated region.
-  unsigned r = 0;
-  if (predicate) r = (unsigned)vx_active_threads();
-  return r & mask;
+  return (unsigned)vx_vote_ballot(predicate) & mask;
 }
 
 __forceinline__ int __any_sync(unsigned mask, int predicate) {
-  return __ballot_sync(mask, predicate) != 0u;
+  return (mask == 0xffffffffu) ? (int)vx_vote_any(predicate)
+                               : (__ballot_sync(mask, predicate) != 0u);
 }
 
 __forceinline__ int __all_sync(unsigned mask, int predicate) {
-  return __ballot_sync(mask, predicate) == (mask & (unsigned)vx_active_threads());
+  if (mask == 0xffffffffu) return (int)vx_vote_all(predicate);
+  const unsigned participating = mask & (unsigned)vx_active_threads();
+  return __ballot_sync(mask, predicate) == participating;
+}
+
+// Is the predicate the same on every active lane? No CUDA spelling; the
+// hardware has it and a divergence check is worth having.
+__forceinline__ int __uni_sync(int predicate) {
+  return (int)vx_vote_uni(predicate);
 }
 
 // --- native: bit manipulation (RISC-V Zb*) --------------------------------
@@ -63,56 +74,71 @@ __forceinline__ unsigned __brev(unsigned x) {
   return (x >> 16) | (x << 16);
 }
 
-// --- emulated: shuffle ----------------------------------------------------
+// --- shuffle ----------------------------------------------------------------
 //
-// Scratch layout: each resident warp owns warpSize 8-byte slots at the top of
-// its CTA's local-memory allocation. grxcc reserves this region; a kernel
-// compiled without grxcc must reserve it via the launch's dynamic shared size.
+// The instructions take a packed control word: bval (the delta, or the source
+// lane for IDX), cval (the clamp) and mask (the segment mask), and compute
+//
+//   minLane = lane & mask
+//   maxLane = (lane & mask) | (cval & ~mask)
+//
+// keeping a lane's own value when the computed source falls outside
+// [minLane, maxLane]. CUDA's `width` splits the warp into segments of that
+// size, which is minLane = lane & ~(width-1) and maxLane = minLane + width - 1
+// -- so mask = ~(width-1) and cval = width-1, and the rest falls out.
 
 namespace grx { namespace detail {
 
-__forceinline__ volatile uint64_t* shfl_scratch() {
-  uint8_t* lmem = (uint8_t*)__local_mem();
-  const uint32_t slot = grx::warp_id() * grx::warp_size();
-  return (volatile uint64_t*)(lmem) + slot;
+__forceinline__ int shfl_control(uint32_t bval, int width) {
+  const uint32_t w = (width > 0) ? (uint32_t)width : grx::warp_size();
+  const uint32_t seg_mask = 0x3fu & ~(w - 1u);   // minLane = lane & seg_mask
+  const uint32_t clamp    = (w - 1u) & 0x3fu;    // maxLane = minLane + w - 1
+  return (int)((seg_mask << 12) | (clamp << 6) | (bval & 0x3fu));
 }
 
-template <typename T>
-__forceinline__ T shfl_impl(T value, uint32_t src_lane) {
-  volatile uint64_t* s = shfl_scratch();
-  uint64_t packed = 0;
-  __builtin_memcpy((void*)&packed, &value, sizeof(T));
-  s[grx::lane_id()] = packed;
-  __syncwarp();
-  uint64_t got = s[src_lane % grx::warp_size()];
+// The instructions move a machine word. Anything smaller rides inside one;
+// anything larger has to be split by the caller, which is the same rule CUDA
+// has.
+template <typename T, typename Op>
+__forceinline__ T shfl_bits(T value, Op op) {
+  static_assert(sizeof(T) <= sizeof(size_t),
+                "grx: shuffle moves one machine word; split a larger value");
+  size_t packed = 0;
+  __builtin_memcpy(&packed, &value, sizeof(T));
+  const size_t got = op(packed);
   T out;
-  __builtin_memcpy(&out, (const void*)&got, sizeof(T));
+  __builtin_memcpy(&out, &got, sizeof(T));
   return out;
 }
 
 }}  // namespace grx::detail
 
 template <typename T>
-__forceinline__ T __shfl_sync(unsigned, T v, int srcLane, int = 32) {
-  return grx::detail::shfl_impl(v, (uint32_t)srcLane);
+__forceinline__ T __shfl_sync(unsigned, T v, int srcLane,
+                              int width = (int)grx::warp_size()) {
+  const int c = grx::detail::shfl_control((uint32_t)srcLane, width);
+  return grx::detail::shfl_bits(v, [c](size_t x) { return vx_shfl_idx(x, c & 0x3f, (c >> 6) & 0x3f, (c >> 12) & 0x3f); });
 }
 
 template <typename T>
-__forceinline__ T __shfl_up_sync(unsigned, T v, unsigned delta, int width = 32) {
-  const uint32_t lane = grx::lane_id();
-  return grx::detail::shfl_impl(v, (lane >= delta) ? (lane - delta) : lane);
+__forceinline__ T __shfl_up_sync(unsigned, T v, unsigned delta,
+                                 int width = (int)grx::warp_size()) {
+  const int c = grx::detail::shfl_control(delta, width);
+  return grx::detail::shfl_bits(v, [c](size_t x) { return vx_shfl_up(x, c & 0x3f, (c >> 6) & 0x3f, (c >> 12) & 0x3f); });
 }
 
 template <typename T>
-__forceinline__ T __shfl_down_sync(unsigned, T v, unsigned delta, int width = 32) {
-  const uint32_t lane = grx::lane_id();
-  const uint32_t src  = lane + delta;
-  return grx::detail::shfl_impl(v, (src < (uint32_t)width) ? src : lane);
+__forceinline__ T __shfl_down_sync(unsigned, T v, unsigned delta,
+                                   int width = (int)grx::warp_size()) {
+  const int c = grx::detail::shfl_control(delta, width);
+  return grx::detail::shfl_bits(v, [c](size_t x) { return vx_shfl_down(x, c & 0x3f, (c >> 6) & 0x3f, (c >> 12) & 0x3f); });
 }
 
 template <typename T>
-__forceinline__ T __shfl_xor_sync(unsigned, T v, int laneMask, int = 32) {
-  return grx::detail::shfl_impl(v, grx::lane_id() ^ (uint32_t)laneMask);
+__forceinline__ T __shfl_xor_sync(unsigned, T v, int laneMask,
+                                  int width = (int)grx::warp_size()) {
+  const int c = grx::detail::shfl_control((uint32_t)laneMask, width);
+  return grx::detail::shfl_bits(v, [c](size_t x) { return vx_shfl_bfly(x, c & 0x3f, (c >> 6) & 0x3f, (c >> 12) & 0x3f); });
 }
 
 #endif  // GRX_WARP_H

@@ -175,26 +175,40 @@ Status legend:
 
 The honest list. Each gap says who must fix it and what it blocks.
 
-### 7.1 General warp shuffle — **ISA gap** (highest impact)
+### 7.1 General warp shuffle — **CLOSED: the instructions were already there**
 
-`vx_wgather` gathers within a **4-lane group** (its documented use is a 4×4
-transpose via `vx_transpose4`), not across an arbitrary lane of a 32-lane
-warp. So `__shfl_sync`, `__shfl_xor_sync`, `__shfl_up_sync`,
-`__shfl_down_sync` have no single-instruction backing.
+This entry used to open "highest impact" and describe `__shfl_sync` as staged
+through local memory at roughly an order of magnitude the cost of a register
+shuffle, with a proposed WSHFL ISA extension as the fix and
+`grxDeviceProp_t.warpShuffleIsEmulated = 1` reporting the state.
 
-- **Blocks:** warp-level reductions and scans, which is most of the
-  performance-critical idiom space in ported CUDA code (reduction kernels,
-  softmax, layernorm, prefix sums, sorting).
-- **v1 mitigation:** LMEM-staged emulation — each warp gets a
-  `warpSize × 8` byte scratch region in its CTA's LMEM slot; the shuffle
-  writes the source value, fences, and reads the source lane's slot. Correct,
-  portable, roughly an order of magnitude slower than a register shuffle.
-  `grxDeviceProp_t.warpShuffleIsEmulated = 1` reports it.
-- **Fix:** an ISA RFC to the GRX-G100 project for a `WSHFL` instruction
-  (idx / up / down / xor / bfly modes) reading the warp's register file
-  through the existing operand-collector crossbar — the same datapath
-  `WGATHER` already uses, generalized past 4 lanes. Needs RTL + SimX +
-  a `model_parity` case.
+That is no longer true, and the reason is worth recording. The ISA has the
+instructions and has had them for a while: `SHFL.UP`, `SHFL.DOWN`, `SHFL.BFLY`,
+`SHFL.IDX` and `VOTE.ALL / ANY / UNI / BAL`, exposed in `vx_intrinsics.h` with
+no `VX_CFG` gate and implemented in the SimX ALU. GRXCP was emulating something
+the hardware does in one instruction, and saying so in its device properties —
+honest about GRXCP, wrong about the device. Nobody had looked since the header
+was written.
+
+`grx_warp.h` now issues them directly and the emulation is deleted rather than
+kept as a fallback. The SHFL instructions implement NVIDIA's segmented
+semantics exactly — a control word carrying a clamp and a segment mask, with
+out-of-segment lanes keeping their own value — so CUDA's `width` argument maps
+onto them arithmetically:
+
+    seg_mask = ~(width - 1)      minLane = lane & seg_mask
+    clamp    = width - 1         maxLane = minLane | (clamp & ~seg_mask)
+
+`tests/kernels/warp/` checks all four forms against CUDA semantics at two
+segment widths on a real device, plus the vote family and a kernel that
+shuffles beside its own shared memory. `warpShuffleIsEmulated` reports 0, and
+`tests/unit/test_device_props.cpp` asserts it stays that way.
+
+**The lesson, which outlives the entry.** A gap register is a claim about the
+present, and it decays. This one cost the platform a documented "highest impact
+hardware gap" that had already been closed upstream. Anything in this file
+describing a missing capability should be re-checked against the current
+sysroot before it is planned around.
 
 ### 7.2 `__constant__` memory — **NEW / possibly ISA**
 

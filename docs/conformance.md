@@ -98,7 +98,7 @@ Failing at compile time is the point. A mystery at runtime would be worse.
 | Property | State |
 |---|---|
 | Device | GRX-G100 (simx) |
-| Warp shuffle | emulated through local memory, roughly an order of magnitude slower than a register shuffle |
+| Warp shuffle | native |
 | Event elapsed time | host clock; measures submission, not device execution |
 | `__constant__` | lowered to read-only global memory; no broadcast bandwidth advantage |
 | Managed memory | refused on this backend |

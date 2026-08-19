@@ -181,6 +181,22 @@ correct results through the fallback; `grx-sanitize` detects a deliberately
 planted out-of-bounds write and reports the source line; `grx-prof` produces
 a Perfetto trace a human can read.
 
+**Progress — warp primitives are done, and were easier than planned.**
+`grx_warp.h` is implemented over the ISA's own `SHFL.*` and `VOTE.*`
+instructions. The plan had them emulated through local memory, on the strength
+of a gap-register entry that had gone stale: the instructions exist, ungated,
+and the SimX ALU implements them. The emulation is deleted, not kept as a
+fallback, and `warpShuffleIsEmulated` now reports native (cuda_mapping.md 7.1).
+
+`tests/kernels/warp/` is the exit gate's first clause and more: the
+`__shfl_down_sync` warp reduction, all four shuffle forms against CUDA's
+segmented semantics at two widths, the vote family, and a kernel that shuffles
+beside its own shared memory -- which caught the emulation's scratch region
+starting at the same address `grx::shared_memory()` returns.
+
+Still open in phase 2: `grx_cg.h` (cooperative groups), `grx-prof` and
+`grx-sanitize`. `grxify` v0 already exists.
+
 **Note.** `grx-sanitize` lands early on purpose. On a functional simulator
 it is cheap, and it pays for itself across every later phase by catching the
 memory bugs that otherwise burn days in RTL debug.

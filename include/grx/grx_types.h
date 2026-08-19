@@ -188,7 +188,7 @@ typedef struct {
   // --- honesty flags: see AGENTS.md section 3 ---
   // Set when a documented software emulation stands in for hardware. Never
   // remove one of these without removing the emulation it describes.
-  int    warpShuffleIsEmulated;      // 1 until the WSHFL ISA extension lands
+  int    warpShuffleIsEmulated;      // 0: the ISA has SHFL.* and VOTE.*
   int    eventTimingIsDeviceSide;    // 0 while CP profiling writeback is a stub
   int    constantMemoryIsGlobal;     // 1 while __constant__ lowers to RO global
 } grxDeviceProp_t;

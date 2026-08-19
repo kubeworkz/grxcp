@@ -111,6 +111,22 @@ else
 fi
 
 echo
+echo "==> WARP GATE: shuffle and vote against CUDA semantics"
+if [[ -z "$GRXGPU" || ! -d "$TOOLDIR/llvm-vortex" ]]; then
+  echo "SKIPPED: needs --grxgpu <path> and a device toolchain in $TOOLDIR."
+else
+  "$ROOT/ci/build_kernel.sh" --grxgpu "$GRXGPU" --tooldir "$TOOLDIR" \
+    "$ROOT/tests/kernels/warp/kernel.cpp" -o "$BUILD/warp.vxbin" >/dev/null
+  $CXX $CXXFLAGS -I"$ROOT/tests/kernels/warp" \
+    -c "$ROOT/tests/kernels/warp/main.cpp" -o "$BUILD/warp_main.o"
+  $CXX "${OBJS[@]}" "$BUILD/warp_main.o" $LIBS -o "$BUILD/warp_gate"
+  if ! "$BUILD/warp_gate" "$BUILD/warp.vxbin"; then
+    rc=$?
+    [[ $rc -eq 77 ]] || exit $rc
+  fi
+fi
+
+echo
 echo "==> TENSOR GATE: one WMMA tile, checked exactly against a CPU reference"
 # Whether to run this is the runtime's call, not a guess from the config file:
 # grx-smi reports what the device says it has, and grx_wmma.h refuses to compile
