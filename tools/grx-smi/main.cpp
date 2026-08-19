@@ -97,8 +97,14 @@ void print_human(int index, const grxDeviceProp_t& p) {
               p.warpShuffleIsEmulated ? "EMULATED via local memory (no WSHFL instruction)"
                                       : "native");
   std::printf("    event timing           %s\n",
-              p.eventTimingIsDeviceSide ? "device-side"
-                                        : "HOST CLOCK (CP profiling writeback pending)");
+              p.eventTimingIsDeviceSide
+                  ? "device-side"
+                  : "HOST CLOCK around execution (CP writes back no timestamps)");
+  if (!p.eventTimingIsDeviceSide &&
+      (p.backend == GRX_BACKEND_SIMX || p.backend == GRX_BACKEND_RTLSIM ||
+       p.backend == GRX_BACKEND_GEM5))
+    std::printf("                           on a simulator that measures the "
+                "SIMULATOR, not the device\n");
   std::printf("    __constant__           %s\n",
               p.constantMemoryIsGlobal ? "read-only global (no broadcast path)"
                                        : "constant cache");

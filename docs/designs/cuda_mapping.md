@@ -223,9 +223,23 @@ atomic `CMD_LAUNCH` replacing today's ~18-`CMD_DCR_WRITE` launch dance
 
 ### 7.4 Device-side event timing — **DRV**
 
-`vx_event_get_profiling` is in the header, but CP profiling writeback is a
-skeleton (`VX_cp_profiling` is a bare cycle counter, §10 item 9).
-`grxEventElapsedTime` falls back to a host clock and says so.
+`vx_event_get_profiling` works: the driver stamps queued/submit/start/end for
+every command, and `grxEventElapsedTime` uses those rather than the host
+timestamps it captures at record, because they bracket execution instead of
+submission.
+
+They are still **host** timestamps, taken in the driver's queue worker either
+side of the call that runs the command. The command processor writes back no
+device timestamps, so `eventTimingIsDeviceSide` stays 0 — and on a simulator
+the distinction is the whole story: `end - start` measures how long **SimX**
+took, which says nothing about how long the device would take. `grx-smi` and
+`grx-conform` say so on simulator backends rather than leaving the number to
+be misread.
+
+A kernel that needs real device time reads the device's own cycle counter,
+`grx::clock64()`, and writes it out. Any performance claim in this project has
+to come from that, or from the simulator's own cycle statistics — never from
+event elapsed time on a simulator.
 
 ### 7.5 Managed memory on FPGA paths — **DRV**
 

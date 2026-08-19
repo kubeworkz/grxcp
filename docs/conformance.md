@@ -37,7 +37,7 @@ The denominator is a curated surface, not the whole CUDA API — see the note at
 | `cudaStreamCreate` | `grxStreamCreate` | ordering is correct; streams do not yet run concurrently because the command processor defaults to one queue |
 | `cudaStreamCreateWithFlags` | `grxStreamCreateWithFlags` | see cudaStreamCreate |
 | `cudaStreamCreateWithPriority` | `grxStreamCreateWithPriority` | priority reaches the queue but has no effect until multi-queue arbitration is wired |
-| `cudaEventElapsedTime` | `grxEventElapsedTime` | measures with a host clock until the command processor writes back profiling timestamps; reported by eventTimingIsDeviceSide |
+| `cudaEventElapsedTime` | `grxEventElapsedTime` | brackets execution with the driver's host-clock timestamps, not device ones -- on a simulator that measures the simulator; reported by eventTimingIsDeviceSide |
 | `cudaLaunchKernel` | `grxLaunchKernel` | requires a registered parameter layout; a stub without one is refused rather than packed by guesswork |
 | `cudaLaunchKernelExC` | `grxLaunchKernelEx` | cluster dimension, cooperative and priority attributes are honoured; the shared-memory carve-out attribute is refused because the hardware register does not exist |
 | `cudaFuncGetAttributes` | `grxFuncGetAttributes` | numRegs reports -1 until the toolchain emits register metadata |

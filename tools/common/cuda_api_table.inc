@@ -95,7 +95,7 @@ GRX_CUDA_API(cudaEventDestroy,         grxEventDestroy,         MAPPED,      "ev
 GRX_CUDA_API(cudaEventRecord,          grxEventRecord,          MAPPED,      "event", "")
 GRX_CUDA_API(cudaEventSynchronize,     grxEventSynchronize,     MAPPED,      "event", "")
 GRX_CUDA_API(cudaEventQuery,           grxEventQuery,           MAPPED,      "event", "")
-GRX_CUDA_API(cudaEventElapsedTime,     grxEventElapsedTime,     PARTIAL,     "event", "measures with a host clock until the command processor writes back profiling timestamps; reported by eventTimingIsDeviceSide")
+GRX_CUDA_API(cudaEventElapsedTime,     grxEventElapsedTime,     PARTIAL,     "event", "brackets execution with the driver's host-clock timestamps, not device ones -- on a simulator that measures the simulator; reported by eventTimingIsDeviceSide")
 
 // --- launch and occupancy --------------------------------------------------
 GRX_CUDA_API(cudaLaunchKernel,            grxLaunchKernel,            PARTIAL, "launch", "requires a registered parameter layout; a stub without one is refused rather than packed by guesswork")

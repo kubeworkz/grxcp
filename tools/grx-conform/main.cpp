@@ -113,6 +113,7 @@ struct DeviceFacts {
   std::string name;
   bool        warp_shuffle_emulated = false;
   bool        event_timing_host     = false;
+  bool        simulated             = false;
   bool        constant_is_global    = false;
   bool        managed_memory        = false;
 };
@@ -127,6 +128,9 @@ DeviceFacts probe_device() {
   f.name                  = p.name;
   f.warp_shuffle_emulated = p.warpShuffleIsEmulated != 0;
   f.event_timing_host     = p.eventTimingIsDeviceSide == 0;
+  f.simulated             = (p.backend == GRX_BACKEND_SIMX ||
+                             p.backend == GRX_BACKEND_RTLSIM ||
+                             p.backend == GRX_BACKEND_GEM5);
   f.constant_is_global    = p.constantMemoryIsGlobal != 0;
   f.managed_memory        = p.managedMemory != 0;
   return f;
@@ -199,8 +203,12 @@ void print_human(const std::vector<Check>& checks, const DeviceFacts& facts) {
                     ? "EMULATED through local memory (no WSHFL instruction)"
                     : "native");
     std::printf("  event elapsed time     %s\n",
-                facts.event_timing_host ? "HOST CLOCK (no device timestamps yet)"
-                                        : "device-side");
+                facts.event_timing_host
+                    ? "HOST CLOCK around execution (no device timestamps)"
+                    : "device-side");
+    if (facts.event_timing_host && facts.simulated)
+      std::printf("                         on this backend that measures the "
+                  "simulator, not the device\n");
     std::printf("  __constant__           %s\n",
                 facts.constant_is_global ? "read-only global (no broadcast path)"
                                          : "constant cache");

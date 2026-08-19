@@ -124,8 +124,11 @@ void populate_properties(Device& d) {
   // vx_wgather gathers within a 4-lane group, not across the warp, so
   // __shfl_sync is staged through local memory (cuda_mapping.md section 7.1).
   p.warpShuffleIsEmulated   = 1;
-  // CP profiling writeback is still a bare cycle counter, so elapsed time comes
-  // from a host clock (command_processor.md section 10, item 9).
+  // The driver does stamp each command, but with the HOST clock around
+  // execution -- the CP does not write back device timestamps. On a simulator
+  // that number measures the simulator, so this flag stays 0 until the
+  // timestamps come from the device (command_processor.md section 10, item 9;
+  // cuda_mapping.md section 7.4).
   p.eventTimingIsDeviceSide = 0;
   // No exposed broadcast constant path; __constant__ lowers to read-only global
   // memory (cuda_mapping.md section 7.2).

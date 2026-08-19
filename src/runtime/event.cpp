@@ -6,12 +6,22 @@
 // each record advancing the counter to a fresh target -- so re-recording an
 // event in a loop allocates nothing.
 //
-// Elapsed time is the one place this file has to be careful. The command
-// processor's profiling writeback is still a skeleton upstream, so
-// vx_event_get_profiling refuses. Rather than silently substituting a host
-// clock and letting someone publish it as a device measurement, the fallback
-// is used AND reported: grxDeviceProp_t.eventTimingIsDeviceSide is 0 while it
-// is in effect (cuda_mapping.md section 7.4).
+// Elapsed time is the one place this file has to be careful, and the care is
+// not where it first looks. vx_event_get_profiling SUCCEEDS: the driver stamps
+// queued/submit/start/end around each command, and this file uses those
+// timestamps because they bracket execution rather than submission.
+//
+// But they come from the HOST clock, taken in the driver's queue worker either
+// side of the call that runs the command -- they are not device timestamps.
+// On a simulator that difference is total: end - start is how long the
+// SIMULATOR took, which says nothing whatever about how long the device would
+// take. grxDeviceProp_t.eventTimingIsDeviceSide stays 0 for exactly this
+// reason, and it will stay 0 until the command processor writes back device
+// timestamps, no matter how well the host-side numbers behave
+// (cuda_mapping.md section 7.4).
+//
+// A kernel that needs real device time should read the device's own cycle
+// counter -- grx::clock64() -- and write it out.
 
 #include "internal.h"
 
@@ -172,7 +182,8 @@ grxError_t grxEventElapsedTime(float* ms, grxEvent_t start, grxEvent_t end) {
   if ((a->flags & grxEventDisableTiming) || (b->flags & grxEventDisableTiming))
     return grxcp::set_error(grxErrorInvalidResourceHandle);
 
-  // Preferred path: device-side timestamps from the command processor.
+  // Preferred path: the driver's per-command timestamps. Host clock, but taken
+  // around execution instead of around submission.
   vx_profile_info_t pa{}, pb{};
   if (a->completion && b->completion &&
       vx_event_get_profiling(a->completion, &pa) == VX_SUCCESS &&
@@ -182,9 +193,10 @@ grxError_t grxEventElapsedTime(float* ms, grxEvent_t start, grxEvent_t end) {
     return grxSuccess;
   }
 
-  // Fallback: host timestamps captured at record. This measures submission
-  // time, not device execution time, and grxDeviceProp_t.eventTimingIsDeviceSide
-  // reports 0 so a caller can tell which clock produced the number.
+  // Fallback, when the queue was not created with profiling or the backend
+  // does not stamp: host timestamps captured at RECORD, which measure
+  // submission rather than execution. Strictly worse than the path above, and
+  // reported the same way -- eventTimingIsDeviceSide is 0 for both.
   const double delta_ns = (double)b->host_ns - (double)a->host_ns;
   *ms = (float)(delta_ns / 1.0e6);
   return grxSuccess;
