@@ -135,6 +135,25 @@ else
 fi
 
 echo
+echo "==> WATCH: is the tensor unit still deadlocking on a second CTA"
+# A watch, not a gate: the defect is upstream, the workaround is in place, and
+# what CI has to do is notice the day it is fixed. It runs the launch in a
+# child process under a timeout, so a deadlock costs a minute rather than the
+# whole run.
+if "$BUILD/grx-smi" 2>/dev/null | grep -q 'capabilities.*tensor' &&
+   [[ -n "$GRXGPU" && -d "$TOOLDIR/llvm-vortex" ]]; then
+  "$ROOT/ci/build_kernel.sh" --grxgpu "$GRXGPU" --tooldir "$TOOLDIR" \
+    "$ROOT/tests/repro/tcu_multi_cta/kernel.cpp" -o "$BUILD/tcu_repro.vxbin" \
+    >/dev/null
+  $CXX $CXXFLAGS -c "$ROOT/tests/repro/tcu_multi_cta/main.cpp" \
+    -o "$BUILD/tcu_repro_main.o"
+  $CXX "${OBJS[@]}" "$BUILD/tcu_repro_main.o" $LIBS -o "$BUILD/tcu_repro"
+  "$BUILD/tcu_repro" "$BUILD/tcu_repro.vxbin" || true
+else
+  echo "SKIPPED: no tensor unit or no device toolchain."
+fi
+
+echo
 echo "==> CYCLE GATE: does the device cycle probe measure work"
 if [[ -z "$GRXGPU" || ! -d "$TOOLDIR/llvm-vortex" ]]; then
   echo "SKIPPED: needs --grxgpu <path> and a device toolchain in $TOOLDIR."
@@ -174,25 +193,39 @@ echo
 echo "==> grxBLAS: library builds"
 $CXX $CXXFLAGS -c "$ROOT/src/libs/grxblas/grxblas.cpp" -o "$BUILD/grxblas.o"
 
-echo "==> GRXBLAS GATE: sgemm against a CPU reference"
+echo "==> GRXBLAS GATES: sgemm and GemmEx against a CPU reference"
 if [[ -n "$GRXGPU" && -d "$TOOLDIR/llvm-vortex" ]]; then
+  # One module with every kernel. Each .vxbin links at the same load address,
+  # so two of them cannot be resident at once and a library that needs both
+  # sgemm and GemmEx has to ship them together. See kernels/all.cpp.
+  if "$BUILD/grx-smi" 2>/dev/null | grep -q 'capabilities.*tensor'; then
+    KSRC="$ROOT/src/libs/grxblas/kernels/all.cpp"
+  else
+    echo "    (no tensor unit: building the scalar-only module)"
+    KSRC="$ROOT/src/libs/grxblas/kernels/sgemm.cpp"
+  fi
   "$ROOT/ci/build_kernel.sh" --grxgpu "$GRXGPU" --tooldir "$TOOLDIR" \
-    "$ROOT/src/libs/grxblas/kernels/sgemm.cpp" -o "$BUILD/grxblas_sgemm.vxbin" \
-    >/dev/null
-  $CXX $CXXFLAGS -I"$ROOT/tests/unit" -c "$ROOT/tests/libs/test_grxblas.cpp" \
-    -o "$BUILD/test_grxblas.o"
-  $CXX "${OBJS[@]}" "$BUILD/grxblas.o" "$BUILD/test_grxblas.o" $LIBS \
-    -o "$BUILD/test_grxblas"
-  "$BUILD/test_grxblas"
+    "$KSRC" -o "$BUILD/grxblas_kernels.vxbin" >/dev/null
+
+  for t in test_grxblas test_grxblas_ex; do
+    $CXX $CXXFLAGS -I"$ROOT/tests/unit" -c "$ROOT/tests/libs/$t.cpp" \
+      -o "$BUILD/$t.o"
+    $CXX "${OBJS[@]}" "$BUILD/grxblas.o" "$BUILD/$t.o" $LIBS -o "$BUILD/$t"
+    printf -- "--- %s\n" "$t"
+    if ! "$BUILD/$t"; then
+      rc=$?
+      [[ $rc -eq 77 ]] || exit $rc
+    fi
+  done
 else
   echo "SKIPPED: needs --grxgpu <path> and a device toolchain in $TOOLDIR."
 fi
 
 echo
-echo "==> BASELINE: what sgemm v0 costs, in device cycles"
+echo "==> PHASE 3 EXIT GATE: scalar against tensor, in device cycles"
 if [[ -n "$GRXGPU" && -d "$TOOLDIR/llvm-vortex" ]]; then
-  $CXX $CXXFLAGS -c "$ROOT/tests/bench/sgemm_cycles.cpp" -o "$BUILD/sgemm_cycles.o"
-  $CXX "${OBJS[@]}" "$BUILD/grxblas.o" "$BUILD/sgemm_cycles.o" $LIBS \
+  $CXX $CXXFLAGS -c "$ROOT/tests/bench/gemm_cycles.cpp" -o "$BUILD/gemm_cycles.o"
+  $CXX "${OBJS[@]}" "$BUILD/grxblas.o" "$BUILD/gemm_cycles.o" $LIBS \
     -o "$BUILD/sgemm_bench"
   if ! "$BUILD/sgemm_bench"; then
     rc=$?

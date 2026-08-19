@@ -104,20 +104,33 @@ grxError_t grxTensorMapProgramAsync(const grxTensorMapDesc_t* desc,
   for (unsigned i = 0; i < desc->rank; ++i) {
     if (desc->size[i] == 0 || desc->tile[i] == 0)
       return grxcp::set_error(grxErrorInvalidValue);
-    if (desc->tile[i] > desc->size[i] || desc->tile[i] > 0xffffu)
-      return grxcp::set_error(grxErrorInvalidValue);
+    // A tile LARGER than the array is legal and useful: the engine pads the
+    // overhang with the descriptor's fill value rather than reading past the
+    // end. A blocked GEMM depends on it -- the edge tiles of a matrix whose
+    // dimensions are not multiples of the tile arrive zero-padded, and a zero
+    // contributes nothing to an accumulation. Only the 16-bit field is a
+    // limit here.
+    if (desc->tile[i] > 0xffffu) return grxcp::set_error(grxErrorInvalidValue);
   }
 
   // Bounds. A descriptor that describes more array than was allocated is a
   // DMA engine reading into someone else's buffer, and the engine will not
   // complain -- it has no idea where the allocation ends.
+  //
+  // The reach is computed from the TILE, not the array, because the engine
+  // bounds-checks only the outer dimensions: a tile that overhangs along
+  // dimension 0 reads straight past size0 into whatever follows (measured --
+  // see tests/kernels/dxa/). So the last row must have room for a full tile,
+  // or an edge tile reads off the end of the allocation.
+  const uint64_t row_elems =
+      (desc->tile[0] > desc->size[0]) ? desc->tile[0] : desc->size[0];
   uint64_t span = 0;
   if (desc->rank == 1) {
-    span = (uint64_t)desc->size[0] * eb;
+    span = row_elems * eb;
   } else {
-    const uint64_t row = (uint64_t)desc->size[0] * eb;
-    if (desc->strideBytes[0] < row) return grxcp::set_error(grxErrorInvalidValue);
-    span = (uint64_t)(desc->size[1] - 1) * desc->strideBytes[0] + row;
+    if (desc->strideBytes[0] < (uint64_t)desc->size[0] * eb)
+      return grxcp::set_error(grxErrorInvalidValue);
+    span = (uint64_t)(desc->size[1] - 1) * desc->strideBytes[0] + row_elems * eb;
   }
   if (span > m.size) return grxcp::set_error(grxErrorInvalidValue);
 

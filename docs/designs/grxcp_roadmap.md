@@ -307,6 +307,36 @@ What is left before the phase 3 exit gate: WGMMA warp groups (needs
 `pipeline<Stages>` structure, and the blocked grxBLAS kernel that composes
 tensor cores with async staging.
 
+**Phase 3 exit gate: MET.** `grxblasGemmEx` (fp16 in, fp32 accumulate) composes
+the tensor unit with DXA staging, is exact against a CPU reference on every
+shape including ragged ones, and costs far less than a fifth of sgemm per
+output element:
+
+| shape | sgemm cyc/elem | GemmEx cyc/elem | speedup |
+|---|---|---|---|
+| 16 x 16 x 16 | 297.8 | 40.0 | **7.45x** |
+| 16 x 16 x 32 | 523.4 | 47.1 | 11.11x |
+| 16 x 16 x 64 | 974.2 | 64.1 | 15.19x |
+| 32 x 32 x 32 | 523.8 | 43.4 | 12.06x |
+
+The gate is enforced in `tests/bench/gemm_cycles.cpp` now that it passes.
+
+What that number is **not**: tuned. This kernel is single buffered and uses each
+staged tile once, so the tensor unit waits for the DMA engine and vice versa.
+The speedup is what the composition gives before any of the tricks — double
+buffering, a larger per-warp tile, WGMMA warp groups. It also runs on ONE CTA,
+not by choice: see cuda_mapping.md section 7.12.
+
+Two device-stack defects came out of building it, both now documented and
+watched rather than worked around silently: the tensor unit deadlocks when a
+second CTA issues a tensor instruction (7.12), and only one device module can
+be resident at a time because every image links at the same address (7.13). A
+third sharp edge is documented at 7.14 -- the DMA engine pads a tile's outer
+dimensions but reads straight past the end of dimension 0.
+
+Still open for phase 3 v1: transposed operands, bf16/int8, batched GEMM,
+autotuned tile selection, and the tuning this kernel deliberately does not have.
+
 **Progress — the gate is measurable now.** `grx::cycle_probe` reads the device's
 cycle counter, `tests/kernels/cycles/` proves the reading responds to work
 (1x/2x/4x, ratio 2.00, 81 cycles per loop iteration), and

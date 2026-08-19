@@ -197,6 +197,74 @@ int main(int argc, char** argv) {
     }
   }
 
+  // --- an overhanging tile: which half of it is padded ----------------------
+  {
+    // Place the tile so its last two columns AND its last row fall outside the
+    // described array, because the engine treats the two directions
+    // differently and a blocked GEMM has to know which is which:
+    //
+    //   outer dimensions (1 and up)  bounds checked, padded with CFILL
+    //   dimension 0 (contiguous)     NOT checked -- reads past size0
+    //
+    // That is measured here rather than assumed, and it is load bearing: the
+    // GEMM's k tail is safe only because k is an OUTER dimension of the A
+    // descriptor, so the padding zeros multiply away whatever B's unchecked
+    // dimension-0 overhang picked up. A transposed variant would lose that.
+    grxTensorMapDesc_t over = desc;
+    over.layout = grxTensorMapLayoutRowMajor;
+    const grxError_t pe = grxTensorMapProgram(&over);
+    if (pe != grxSuccess) {
+      std::printf("  FAIL  overhang: %s\n", grxGetErrorString(pe));
+      ++failures;
+    } else {
+      const unsigned c0 = kCols - kTile0 + 2;   // 2 columns past the edge
+      const unsigned c1 = kRows - kTile1 + 1;   // 1 row past the edge
+      std::vector<uint32_t> poison(tile_elems, 0x5a5a5a5au);
+      CHECK(grxMemcpy(dOut, poison.data(), poison.size() * kElemBytes,
+                      grxMemcpyDefault));
+
+      dxa_args args{};
+      args.out = (uint64_t)(uintptr_t)dOut;
+      args.slot = (uint32_t)desc.slot;
+      args.coord0 = c0; args.coord1 = c1;
+      args.tile0 = kTile0; args.tile1 = kTile1;
+      args.barrier = 0;
+      CHECK(grxLaunchFunction(fn, dim3_t{1, 1, 1},
+                              dim3_t{(unsigned)prop.warpSize, 1, 1}, &args,
+                              sizeof(args), (size_t)tile_elems * kElemBytes,
+                              nullptr));
+      CHECK(grxDeviceSynchronize());
+
+      std::vector<uint32_t> got(tile_elems, 0);
+      CHECK(grxMemcpy(got.data(), dOut, tile_elems * kElemBytes,
+                      grxMemcpyDefault));
+
+      int bad_in = 0, bad_row = 0, bad_col = 0;
+      for (unsigned i1 = 0; i1 < kTile1; ++i1) {
+        for (unsigned i0 = 0; i0 < kTile0; ++i0) {
+          const unsigned c = c0 + i0, r = c1 + i1;
+          const uint32_t have = got[(size_t)i1 * kTile0 + i0];
+          if (r >= kRows) {
+            // Outer dimension out of range: padded.
+            if (have != 0) ++bad_row;
+          } else if (c >= kCols) {
+            // Dimension 0 out of range: whatever follows the row. Only that it
+            // is NOT padded is asserted -- the value is memory, not a promise.
+            if (have == 0) ++bad_col;
+          } else {
+            if (have != src[(size_t)r * kRowStride + c]) ++bad_in;
+          }
+        }
+      }
+      expect(bad_in == 0, "the in-range part of an overhanging tile is correct");
+      expect(bad_row == 0,
+             "an outer dimension past the end is padded with zeros");
+      expect(bad_col == 0,
+             "dimension 0 past the end is NOT padded -- it reads on, which is "
+             "why the runtime sizes the allocation for a full edge tile");
+    }
+  }
+
   // --- the descriptor validation, which is most of what protects a caller ---
   std::printf("descriptor validation:\n");
   {
@@ -214,8 +282,8 @@ int main(int argc, char** argv) {
            "a non-power-of-two element size is rejected");
 
     bad = desc; bad.tile[0] = kCols + 1;
-    expect(grxTensorMapProgram(&bad) == grxErrorInvalidValue,
-           "a tile wider than the array is rejected");
+    expect(grxTensorMapProgram(&bad) == grxSuccess,
+           "a tile wider than the array is accepted, to be padded");
 
     bad = desc; bad.strideBytes[0] = kElemBytes;   // narrower than one row
     expect(grxTensorMapProgram(&bad) == grxErrorInvalidValue,

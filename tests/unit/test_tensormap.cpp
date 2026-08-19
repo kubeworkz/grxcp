@@ -205,6 +205,12 @@ int main() {
     check(grxTensorMapProgram(&bad) == grxErrorInvalidValue,
           "a tile extent past 16 bits");
 
+    // Not a rejection: a tile that overhangs the array is how an edge tile of
+    // a blocked GEMM is fetched, and the engine pads the overhang.
+    bad = d; bad.tile[0] = d.size[0] + 4;
+    check(grxTensorMapProgram(&bad) == grxSuccess,
+          "a tile wider than the array is accepted, to be padded");
+
     bad = d; bad.strideBytes[0] = 8;
     check(grxTensorMapProgram(&bad) == grxErrorInvalidValue,
           "a stride shorter than one row");

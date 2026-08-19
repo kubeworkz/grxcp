@@ -25,6 +25,7 @@
 
 #include "grx_cycles.h"
 #include "grx_runtime.h"
+#include "grx_tensormap.h"
 #include "grx_types.h"
 
 #ifdef __cplusplus
@@ -55,6 +56,51 @@ grxblasStatus_t grxblasCreate   (grxblasHandle_t* handle);
 grxblasStatus_t grxblasDestroy  (grxblasHandle_t handle);
 grxblasStatus_t grxblasSetStream(grxblasHandle_t handle, grxStream_t stream);
 grxblasStatus_t grxblasGetStream(grxblasHandle_t handle, grxStream_t* stream);
+
+// Mixed-precision GEMM on the tensor unit: fp16 in, fp32 accumulate, fp32 out.
+// Shaped after cublasGemmEx, and like it, the types are arguments rather than
+// part of the name.
+//
+//   C = alpha * A * B + beta * C,  A m x k, B k x n, C m x n, all column major
+//
+// WHAT v0 ACCEPTS. Atype and Btype must be GRX_R_16F, Ctype GRX_R_32F, and
+// both operations GRXBLAS_OP_N. Anything else returns
+// GRXBLAS_STATUS_NOT_SUPPORTED rather than falling back to the scalar kernel:
+// a silent fallback would turn "the tensor path does not handle this" into "the
+// tensor path is slow", and the caller would have no way to tell.
+//
+// The device needs a tensor unit AND a DMA engine (grxDeviceProp_t
+// capabilities); without either this returns GRXBLAS_STATUS_ARCH_MISMATCH.
+//
+// A and B are staged through DXA descriptors, so they must live in memory the
+// engine can reach -- see grxMallocPhysical in grx_tensormap.h. On a device
+// without virtual memory that is any device allocation.
+//
+// SLOTS. This uses two descriptor slots, 0 and 1 by default. They are device
+// state shared with everything else on the device, so a program that programs
+// its own tensor maps must either avoid those two or move grxBLAS elsewhere
+// with grxblasSetTensorMapSlots. Nothing detects a collision.
+grxblasStatus_t grxblasGemmEx(grxblasHandle_t handle,
+                              grxblasOperation_t transa,
+                              grxblasOperation_t transb,
+                              int m, int n, int k,
+                              const float* alpha,
+                              const void* A, grxDataType_t Atype, int lda,
+                              const void* B, grxDataType_t Btype, int ldb,
+                              const float* beta,
+                              void* C, grxDataType_t Ctype, int ldc);
+
+// Which descriptor slots grxblasGemmEx programs. Defaults to 0 and 1.
+grxblasStatus_t grxblasSetTensorMapSlots(grxblasHandle_t handle,
+                                         int slotA, int slotB);
+
+// The tile shape the device's tensor unit actually provides, which is what
+// grxblasGemmEx blocks the problem into. Derived from the hardware
+// configuration rather than fixed at 16x16x16 -- see
+// include/grx/device/grx_wmma.h. Returns NOT_SUPPORTED on a device with no
+// tensor unit, and the kernels have to be loadable for this to answer.
+grxblasStatus_t grxblasGetTensorTile(grxblasHandle_t handle,
+                                     int* m, int* n, int* k);
 
 // Single-precision general matrix multiply. All pointers are device addresses.
 // alpha and beta are read from host memory (cuBLAS host pointer mode).

@@ -333,7 +333,61 @@ through config registers. Two consequences a port has to deal with:
 Neither has a CUDA analogue, so neither can be hidden. Slot allocation is the
 program's job, and it is visible in the API.
 
-### 7.12 Out of scope for v1
+### 7.12 Tensor unit deadlocks on a second CTA — **DEVICE STACK, blocking**
+
+`Core::issue` takes a CTA admission slot for **every** TCU micro-op that holds
+the FU lock (guarded only by `VX_CFG_EXT_TCU_ENABLE`), while the matching
+release lives inside `VX_CFG_TCU_WGMMA_ENABLE` and only fires for ops where
+`tcu_is_wgmma()`. On the default configuration — tensor unit on, WGMMA off —
+plain WMMA acquires the slot and nothing ever releases it, so the first CTA to
+issue a tensor instruction owns the unit for the rest of the kernel and
+`wgmma_cta_blocked()` stalls every other CTA at issue. One CTA is fine; two
+never return.
+
+Measured, not inferred: `tests/repro/tcu_multi_cta/` runs the same one-WMMA
+kernel with a grid of one and a grid of two, in a child process under a
+timeout. Tier 2 runs it as a **watch** — it reports whether the defect is still
+present without hanging CI, and it will say so when it is fixed.
+
+The fix is to make acquire and release symmetric. Until it lands, grxBLAS's
+tensor GEMM is a **persistent single-CTA kernel**: one block, warps walking the
+output tiles. On a one-SM configuration that costs nothing; anywhere else it is
+a ceiling, and it comes out the day the watch turns green.
+
+### 7.13 One device module at a time — **TOOLCHAIN**
+
+Every `.vxbin` is linked at the same fixed load address (`STARTUP_ADDR`), so
+loading a second module fails with an address overlap. CUDA programs routinely
+hold several modules open; here a program gets one unless someone hand-assigns
+link addresses.
+
+That is why `src/libs/grxblas/kernels/all.cpp` exists: a library offering both
+`grxblasSgemm` and `grxblasGemmEx` cannot ship them as separate modules. Found
+by trying, when the second `grxModuleLoad` returned "address range overlaps
+with existing allocation".
+
+The real fix is relocatable device images. A cheaper one is a per-module link
+address, which the toolchain already accepts as a `--defsym`.
+
+### 7.14 DXA pads outer dimensions only — **HW / DOC, sharp edge**
+
+A tile that overhangs the array is padded with the descriptor's fill value
+along the **outer** dimensions, and **not** along dimension 0: there the engine
+reads straight past `size0` into whatever memory follows. Measured in
+`tests/kernels/dxa/`; the gate asserts both halves so the asymmetry cannot
+change unnoticed.
+
+It matters more than it looks. The tensor GEMM's ragged-`k` case is exact only
+because `k` is an outer dimension of the **A** descriptor, so A's tail is
+zeroed and every tail term is `0 * whatever-B-picked-up`. Put `k` in dimension
+0 for both operands — which is what a transposed A would do — and the same
+kernel silently starts accumulating garbage. It is one reason `grxblasGemmEx`
+refuses transposes today rather than assuming they compose.
+
+`grxTensorMapProgramAsync` sizes its bounds check for a full edge tile, so the
+unchecked overhang cannot reach outside the caller's allocation.
+
+### 7.15 Out of scope for v1
 
 Dynamic parallelism (no device-side launch path), CUDA graphs, IPC handles,
 MPS, multi-process service, `cudaHostAlloc` write-combining hints, and

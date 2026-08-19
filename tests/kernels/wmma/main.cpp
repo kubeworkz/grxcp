@@ -18,6 +18,7 @@
 #include <cstring>
 #include <vector>
 
+#include "../../common/fp16.h"
 #include "common.h"
 
 #define CHECK(call)                                                      \
@@ -32,52 +33,8 @@
 
 namespace {
 
-// IEEE binary16 conversion, round to nearest even. Only the normal range is
-// handled with any care; the gate asserts that every value it uses survives a
-// round trip exactly, so a subnormal or an overflow shows up as a failed input
-// check rather than as a silently wrong matrix.
-uint16_t float_to_half(float f) {
-  uint32_t x;
-  std::memcpy(&x, &f, sizeof(x));
-  const uint32_t sign = (x >> 16) & 0x8000u;
-  const uint32_t biased = (x >> 23) & 0xffu;
-  const uint32_t mant = x & 0x7fffffu;
-
-  if (biased == 0xff) return (uint16_t)(sign | 0x7c00u | (mant ? 0x200u : 0u));
-
-  const int32_t exp = (int32_t)biased - 127 + 15;
-  if (exp >= 0x1f) return (uint16_t)(sign | 0x7c00u);   // overflow -> inf
-  if (exp <= 0)    return (uint16_t)sign;               // underflow -> zero
-
-  uint32_t h = sign | ((uint32_t)exp << 10) | (mant >> 13);
-  const uint32_t rem = mant & 0x1fffu;
-  if (rem > 0x1000u || (rem == 0x1000u && (h & 1u))) ++h;
-  return (uint16_t)h;
-}
-
-float half_to_float(uint16_t h) {
-  const uint32_t sign = (uint32_t)(h & 0x8000u) << 16;
-  uint32_t exp = (h >> 10) & 0x1fu;
-  uint32_t mant = h & 0x3ffu;
-  uint32_t x;
-  if (exp == 0) {
-    if (mant == 0) {
-      x = sign;
-    } else {
-      int shift = 0;
-      while (!(mant & 0x400u)) { mant <<= 1; ++shift; }
-      mant &= 0x3ffu;
-      x = sign | ((uint32_t)(127 - 15 - shift) << 23) | (mant << 13);
-    }
-  } else if (exp == 0x1f) {
-    x = sign | 0x7f800000u | (mant << 13);
-  } else {
-    x = sign | ((exp - 15 + 127) << 23) | (mant << 13);
-  }
-  float f;
-  std::memcpy(&f, &x, sizeof(f));
-  return f;
-}
+using grxtest::float_to_half;
+using grxtest::half_to_float;
 
 // Multiples of 0.5 in [-4, 4], deterministic, mixed signs. A matrix of ones
 // would give the same answer under most index errors, which is the opposite of

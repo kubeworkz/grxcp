@@ -105,6 +105,20 @@ typedef struct {
 } grxPointerAttributes;
 
 // ---------------------------------------------------------------------------
+// Element types
+// ---------------------------------------------------------------------------
+//
+// Named after CUDA's cudaDataType (CUDA_R_16F and friends) because library
+// entry points that take one -- grxblasGemmEx -- are shaped after the CUDA
+// calls that take the other. Only the types something actually implements are
+// listed: an enumerator for a format no kernel can consume is a promise the
+// compiler will let a caller make and the runtime will then break.
+typedef enum {
+  GRX_R_16F = 2,   // IEEE binary16
+  GRX_R_32F = 0    // IEEE binary32
+} grxDataType_t;
+
+// ---------------------------------------------------------------------------
 // Device model
 // ---------------------------------------------------------------------------
 
