@@ -15,7 +15,7 @@
 // Bumped whenever this struct changes; the kernel refuses to run on a
 // mismatch. See the same mechanism in sgemm_abi.h and the incident that
 // prompted it.
-#define GRXBLAS_HGEMM_ABI_VERSION 1u
+#define GRXBLAS_HGEMM_ABI_VERSION 2u
 
 // Indices into the buffer the shape entry point fills.
 enum {
@@ -23,7 +23,9 @@ enum {
   GRXBLAS_HGEMM_SHAPE_N,       // WMMA tile columns
   GRXBLAS_HGEMM_SHAPE_K,       // WMMA tile depth, fp16 in
   GRXBLAS_HGEMM_SHAPE_WARP,    // warp width the kernel was compiled for
-  GRXBLAS_HGEMM_SHAPE_SMEM,    // bytes of shared memory a CTA needs
+  GRXBLAS_HGEMM_SHAPE_SMEM,    // bytes of shared memory one warp needs
+  GRXBLAS_HGEMM_SHAPE_BLOCK_M, // rows of C one warp produces at a time
+  GRXBLAS_HGEMM_SHAPE_BLOCK_N, // columns of C one warp produces at a time
   GRXBLAS_HGEMM_SHAPE_COUNT
 };
 
@@ -37,8 +39,8 @@ struct grxblas_hgemm_args {
   uint32_t abi_version;
   uint32_t m, n, k;        // the problem, in elements
   uint32_t ldc;            // C is column major, fp32
-  uint32_t m_tiles;        // ceil(m / tile M), to decompose a tile index
-  uint32_t tiles;          // m_tiles * n_tiles: what the warps walk through
+  uint32_t m_tiles;        // ceil(m / block M), to decompose a block index
+  uint32_t tiles;          // m_tiles * n_tiles: the blocks the warps walk
   uint32_t k_steps;        // ceil(k / tile K)
   uint32_t slot_a, slot_b; // DXA descriptor slots the host programmed
   uint32_t barrier;        // first barrier slot; warp w uses barrier + w

@@ -67,6 +67,9 @@ struct Context {
   // Tensor path, resolved from the same module when it carries the entries.
   grxFunction_t hgemm_fn = nullptr;
   uint32_t      tile_m = 0, tile_n = 0, tile_k = 0, tile_smem = 0;
+  // What one warp produces per pass, which is a multiple of the tile: the
+  // kernel blocks several tiles together to reuse a staged region.
+  uint32_t      block_m = 0, block_n = 0;
   int           slot_a = 0, slot_b = 1;
 
   std::mutex    mutex;
@@ -208,6 +211,10 @@ grxblasStatus_t ensure_hgemm(Context& ctx) {
   ctx.tile_n       = shape[GRXBLAS_HGEMM_SHAPE_N];
   ctx.tile_k       = shape[GRXBLAS_HGEMM_SHAPE_K];
   ctx.tile_smem    = shape[GRXBLAS_HGEMM_SHAPE_SMEM];
+  ctx.block_m      = shape[GRXBLAS_HGEMM_SHAPE_BLOCK_M];
+  ctx.block_n      = shape[GRXBLAS_HGEMM_SHAPE_BLOCK_N];
+  if (ctx.block_m == 0 || ctx.block_n == 0)
+    return GRXBLAS_STATUS_INTERNAL_ERROR;
   return GRXBLAS_STATUS_SUCCESS;
 }
 
@@ -324,9 +331,12 @@ grxblasStatus_t grxblasGemmEx(grxblasHandle_t handle,
   grxError_t e = grxGetDeviceProperties(&prop, 0);
   if (e != grxSuccess) return from_grx(e);
 
-  const uint32_t tm = ctx->tile_m, tn = ctx->tile_n, tk = ctx->tile_k;
-  const uint32_t m_tiles = ((uint32_t)m + tm - 1) / tm;
-  const uint32_t n_tiles = ((uint32_t)n + tn - 1) / tn;
+  // The kernel walks BLOCKS, each several WMMA tiles wide and tall, so the
+  // descriptor tiles have to cover a block rather than a tile.
+  const uint32_t tk = ctx->tile_k;
+  const uint32_t bm = ctx->block_m, bn = ctx->block_n;
+  const uint32_t m_tiles = ((uint32_t)m + bm - 1) / bm;
+  const uint32_t n_tiles = ((uint32_t)n + bn - 1) / bn;
   const uint32_t k_steps = ((uint32_t)k + tk - 1) / tk;
 
   // A is m x k column major, so its contiguous direction is the row index; the
@@ -339,7 +349,7 @@ grxblasStatus_t grxblasGemmEx(grxblasHandle_t handle,
   da.rank = 2;
   da.size[0] = (unsigned)m;  da.size[1] = (unsigned)(k ? k : 1);
   da.strideBytes[0] = (unsigned)lda * 2u;
-  da.tile[0] = tm;           da.tile[1] = tk;
+  da.tile[0] = bm;           da.tile[1] = tk;
   da.elementBytes = 2;
   da.layout = grxTensorMapLayoutKMajor;
 
@@ -349,7 +359,7 @@ grxblasStatus_t grxblasGemmEx(grxblasHandle_t handle,
   db.rank = 2;
   db.size[0] = (unsigned)(k ? k : 1);  db.size[1] = (unsigned)n;
   db.strideBytes[0] = (unsigned)ldb * 2u;
-  db.tile[0] = tk;                     db.tile[1] = tn;
+  db.tile[0] = tk;                     db.tile[1] = bn;
   db.elementBytes = 2;
   db.layout = grxTensorMapLayoutRowMajor;
 

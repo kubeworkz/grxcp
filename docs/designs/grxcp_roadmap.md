@@ -321,11 +321,36 @@ output element:
 
 The gate is enforced in `tests/bench/gemm_cycles.cpp` now that it passes.
 
-What that number is **not**: tuned. This kernel is single buffered and uses each
-staged tile once, so the tensor unit waits for the DMA engine and vice versa.
-The speedup is what the composition gives before any of the tricks — double
-buffering, a larger per-warp tile, WGMMA warp groups. It also runs on ONE CTA,
-not by choice: see cuda_mapping.md section 7.12.
+**And then the tuning was tried, and lost.** The obvious levers were
+implemented and measured rather than assumed. Cycles per output element at
+16 x 16 x 16, one SM, four warps, one DXA worker:
+
+| per-warp shape | buffering | cyc/elem | vs shipped |
+|---|---|---|---|
+| 1 x 1 tile | single | **39.0** | shipped |
+| 1 x 1 tile | double | 47.9 | 21% worse |
+| 1 x 2 block | single | 42.0 | 8% worse |
+| 2 x 1 block | single | 43.8 | 12% worse |
+| 2 x 2 block | single | 47.9 | 23% worse |
+
+Every one of them is the textbook next step, and every one made it slower. Two
+reasons, and the second is the interesting one. Four warps on one core already
+hide the staging latency by interleaving, so a second buffer prefetches into a
+pipeline that was not stalling and only adds barrier and addressing work. And
+blocking cuts the BYTES staged per output tile without cutting what the single
+DXA worker costs: the A transfer uses the transposing destination, which
+scatters one element per beat, so its cost tracks elements per transfer rather
+than transfers issued — a bigger block makes each transfer proportionally
+longer while leaving fewer independent warps at the edges.
+
+The blocking factors stayed in the kernel as knobs, set to what measured best,
+with the table in the file header and an instruction to re-run the sweep before
+assuming it still holds. None of these conclusions need survive more DXA cores,
+more SMs, or WGMMA's larger native tiles — which is exactly why the numbers are
+recorded with the configuration attached rather than as a rule of thumb.
+
+What the shipped kernel is still missing: WGMMA warp groups, reuse across k,
+and more than one CTA -- the last not by choice, see cuda_mapping.md 7.12.
 
 Two device-stack defects came out of building it, both now documented and
 watched rather than worked around silently: the tensor unit deadlocks when a
