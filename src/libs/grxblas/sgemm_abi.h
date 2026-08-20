@@ -18,7 +18,7 @@
 // That is not hypothetical: adding the cycles field below, with a stale test
 // binary still passing the old (shorter) blob, had the kernel read a pointer
 // from past the end of the argument staging area and store through it.
-#define GRXBLAS_SGEMM_ABI_VERSION 2u
+#define GRXBLAS_SGEMM_ABI_VERSION 3u
 
 struct grxblas_sgemm_args {
   uint32_t abi_version;   // GRXBLAS_SGEMM_ABI_VERSION -- first field, never moves
@@ -32,6 +32,13 @@ struct grxblas_sgemm_args {
   // and unmeasured cases must be the SAME kernel, or the number describes a
   // kernel nobody ships.
   uint64_t cycles;
+  // Strided batching. `batch` is 1 for an unbatched call, and the strides are
+  // in ELEMENTS, matching cuBLAS. Signed, because a caller is allowed to walk a
+  // batch backwards and clamping that to unsigned would run off the front of
+  // the allocation instead of the back.
+  uint32_t batch;
+  uint32_t pad;
+  int64_t  stride_a, stride_b, stride_c;
 };
 
 #endif  // GRXBLAS_SGEMM_ABI_H

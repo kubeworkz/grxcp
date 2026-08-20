@@ -60,7 +60,8 @@ binutils), about 580 MB:
 # device-side CTA runtime (libvortex2.a) with the same CONFIGS as everything
 # else. See "configuration provenance" below for why that matters.
 ./ci/build_sysroot.sh --grxgpu ../grxgpu --tooldir $HOME/tools \
-  --configs "-DVX_CFG_EXT_TCU_ENABLE -DVX_CFG_EXT_DXA_ENABLE"
+  --configs "-DVX_CFG_EXT_TCU_ENABLE -DVX_CFG_EXT_DXA_ENABLE \
+             -DVX_CFG_TCU_INT8_ENABLE"
 ./ci/run_real.sh --grxgpu ../grxgpu --tooldir $HOME/tools
 ```
 
@@ -163,8 +164,17 @@ is a `CONFIGS` override on top of it:
 
 ```sh
 ./ci/build_sysroot.sh --grxgpu ../grxgpu --tooldir $HOME/tools \
-  --configs "-DVX_CFG_EXT_TCU_ENABLE -DVX_CFG_EXT_DXA_ENABLE"
+  --configs "-DVX_CFG_EXT_TCU_ENABLE -DVX_CFG_EXT_DXA_ENABLE \
+             -DVX_CFG_TCU_INT8_ENABLE"
 ```
+
+`VX_CFG_TCU_INT8_ENABLE` is in that list because the tensor unit's input types
+are a build-time choice and int8 is off by default: without it
+`grxblasGetTensorTypes` reports fp16 alone and there is nothing to gate an int8
+GEMM against. `VX_CFG_TCU_WGMMA_ENABLE` is deliberately **not** in it — turning
+it on was tried, it does not fix the multi-CTA deadlock
+(`docs/designs/cuda_mapping.md` 7.12), and enabling a feature nothing exercises
+only widens the gap between what the sysroot claims and what has been run.
 
 Here is the trap, and it is a quiet one. The installed sysroot records nothing
 about how it was configured: there is no generated config header in the install

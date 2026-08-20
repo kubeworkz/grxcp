@@ -370,6 +370,13 @@ kernel with a grid of one and a grid of two, in a child process under a
 timeout. Tier 2 runs it as a **watch** — it reports whether the defect is still
 present without hanging CI, and it will say so when it is fixed.
 
+**Turning `VX_CFG_TCU_WGMMA_ENABLE` on does not fix it**, and that was tested
+rather than assumed: a sysroot rebuilt with the flag set still deadlocks. The
+release has two conditions and the compile-time flag is only one of them — the
+retiring op must also *be* a WGMMA op, which a kernel issuing plain WMMA never
+is. Worth stating plainly, because the flag is the obvious thing to try and it
+sends whoever fixes this to the wrong line.
+
 The fix is to make acquire and release symmetric. Until it lands, grxBLAS's
 tensor GEMM is a **persistent single-CTA kernel**: one block, warps walking the
 output tiles. On a one-SM configuration that costs nothing; anywhere else it is

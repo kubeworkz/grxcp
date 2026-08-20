@@ -40,6 +40,15 @@ __global__ void sgemm(grxblas_sgemm_args* __UNIFORM__ arg) {
   const uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
   const uint32_t m = arg->m, n = arg->n, k = arg->k;
 
+  // The batch is the grid's SECOND dimension rather than a division of a
+  // linearised index: one integer divide per thread by a runtime value is a
+  // real cost in a kernel whose inner loop is two loads and a multiply-add,
+  // and the dispatcher walks a 2D grid for free.
+  const uint32_t batch = blockIdx.y;
+  A += batch * arg->stride_a;
+  B += batch * arg->stride_b;
+  C += batch * arg->stride_c;
+
   if (idx < m * n) {
     // Column-major: consecutive idx walks down a column, which is also the
     // direction consecutive lanes should read C for a coalesced store.

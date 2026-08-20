@@ -670,19 +670,26 @@ grxblasStatus_t grxblasSgemv(grxblasHandle_t handle, grxblasOperation_t trans,
   return from_grx(e);
 }
 
-grxblasStatus_t grxblasSgemm(grxblasHandle_t handle,
-                             grxblasOperation_t transa,
-                             grxblasOperation_t transb,
-                             int m, int n, int k,
-                             const float* alpha,
-                             const void* A, int lda,
-                             const void* B, int ldb,
-                             const float* beta,
-                             void* C, int ldc) {
+// One implementation, with the unbatched call as the batch-of-one case.
+//
+// Two entry points sharing a body rather than two bodies: the validation rules
+// are identical and the launch differs by one grid dimension, and the way a
+// batched GEMM usually goes wrong is that its unbatched twin drifted.
+static grxblasStatus_t sgemm_batched(grxblasHandle_t handle,
+                                     grxblasOperation_t transa,
+                                     grxblasOperation_t transb,
+                                     int m, int n, int k,
+                                     const float* alpha,
+                                     const void* A, int lda, long long strideA,
+                                     const void* B, int ldb, long long strideB,
+                                     const float* beta,
+                                     void* C, int ldc, long long strideC,
+                                     int batch) {
   if (!handle) return GRXBLAS_STATUS_NOT_INITIALIZED;
   if (!alpha || !beta) return GRXBLAS_STATUS_INVALID_VALUE;
   if (m < 0 || n < 0 || k < 0) return GRXBLAS_STATUS_INVALID_VALUE;
-  if (m == 0 || n == 0) return GRXBLAS_STATUS_SUCCESS;
+  if (batch < 0) return GRXBLAS_STATUS_INVALID_VALUE;
+  if (m == 0 || n == 0 || batch == 0) return GRXBLAS_STATUS_SUCCESS;
   if (k > 0 && (!A || !B)) return GRXBLAS_STATUS_INVALID_VALUE;
   if (!C) return GRXBLAS_STATUS_INVALID_VALUE;
 
@@ -712,22 +719,53 @@ grxblasStatus_t grxblasSgemm(grxblasHandle_t handle,
   args.a = (uint64_t)(uintptr_t)A;
   args.b = (uint64_t)(uintptr_t)B;
   args.c = (uint64_t)(uintptr_t)C;
+  args.batch = (uint32_t)batch;
+  args.stride_a = (int64_t)strideA;
+  args.stride_b = (int64_t)strideB;
+  args.stride_c = (int64_t)strideC;
 
   // One thread per output element. The block is a whole warp so no lane is
-  // wasted, and the grid covers m*n with the tail masked by the kernel.
+  // wasted, and the grid covers m*n with the tail masked by the kernel. The
+  // batch is the grid's second dimension, which is the whole reason batching
+  // costs one launch here instead of `batch` of them.
   const unsigned block = (unsigned)prop.warpSize;
   const unsigned total = (unsigned)((size_t)m * (size_t)n);
   const unsigned grid  = (total + block - 1) / block;
 
   if (ctx->probe) {
-    if (ctx->probe_capacity < slots_for(m, n, prop.warpSize))
+    // The probe is one slot per block, and the grid is now two-dimensional.
+    if (ctx->probe_capacity < slots_for(m, n, prop.warpSize) * batch)
       return GRXBLAS_STATUS_INVALID_VALUE;
     args.cycles = (uint64_t)(uintptr_t)ctx->probe;
   }
 
-  e = grxLaunchFunction(ctx->sgemm_fn, dim3_t{grid, 1, 1}, dim3_t{block, 1, 1},
-                        &args, sizeof(args), /*sharedMem=*/0, ctx->stream);
+  e = grxLaunchFunction(ctx->sgemm_fn, dim3_t{grid, (unsigned)batch, 1},
+                        dim3_t{block, 1, 1}, &args, sizeof(args),
+                        /*sharedMem=*/0, ctx->stream);
   return from_grx(e);
+}
+
+grxblasStatus_t grxblasSgemm(grxblasHandle_t handle,
+                             grxblasOperation_t transa,
+                             grxblasOperation_t transb,
+                             int m, int n, int k,
+                             const float* alpha,
+                             const void* A, int lda,
+                             const void* B, int ldb,
+                             const float* beta,
+                             void* C, int ldc) {
+  return sgemm_batched(handle, transa, transb, m, n, k, alpha, A, lda, 0,
+                       B, ldb, 0, beta, C, ldc, 0, 1);
+}
+
+grxblasStatus_t grxblasSgemmStridedBatched(
+    grxblasHandle_t handle, grxblasOperation_t transa,
+    grxblasOperation_t transb, int m, int n, int k, const float* alpha,
+    const void* A, int lda, long long strideA,
+    const void* B, int ldb, long long strideB,
+    const float* beta, void* C, int ldc, long long strideC, int batchCount) {
+  return sgemm_batched(handle, transa, transb, m, n, k, alpha, A, lda, strideA,
+                       B, ldb, strideB, beta, C, ldc, strideC, batchCount);
 }
 
 }  // extern "C"

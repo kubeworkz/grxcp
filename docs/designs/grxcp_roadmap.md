@@ -551,9 +551,37 @@ by luck. Confirmed in the failing direction: with the zeroing removed, exactly
 the TN ragged-`k` cases fail and NN, NT and TT stay correct — which is what the
 layout table predicts, observed rather than assumed.
 
-Still open in phase 3: batched GEMM, int8 GEMM (needs a sysroot with the flag),
-autotuned tile selection, and the WGMMA warp-group forms (also a build option
-this sysroot does not enable).
+**Progress — batched GEMM, in one launch rather than a loop.**
+
+`grxblasSgemmStridedBatched` puts the batch on the grid's second dimension, so
+the whole batch is one launch. The unbatched entry point is now the same body
+with `batchCount = 1` and zero strides, sharing an implementation rather than a
+resemblance — a batched GEMM's usual failure mode is that its unbatched twin
+drifted.
+
+Strides are in elements and signed, matching cuBLAS, and `strideB = 0`
+broadcasts one B across the batch. The gate checks all of that against a
+per-matrix reference over the WHOLE buffer, with deliberate slack between batch
+members that has to come back untouched. Watched failing: pinning the kernel's
+batch index to 0 makes every multi-member case wrong, which is what says the
+grid's second dimension is really being read.
+
+**Two things were learned by rebuilding the sysroot.**
+
+`VX_CFG_TCU_INT8_ENABLE` turns int8 on, and `grxblasGetTensorTypes` then
+reports `fp16 int8` — so int8 GEMM has something to be gated against, and
+`ci/README.md`'s recommended configuration now includes the flag.
+
+`VX_CFG_TCU_WGMMA_ENABLE` does **not** fix the multi-CTA tensor deadlock. That
+was the obvious thing to try, and it was tried: a sysroot built with the flag
+still deadlocks on a second CTA. The release has two conditions and the flag is
+only one of them — the retiring op must also *be* a WGMMA op, which a kernel
+issuing plain WMMA never is. `tests/repro/tcu_multi_cta/` and cuda_mapping.md
+7.12 now say so, because a bug report that suggests flipping a flag sends
+whoever fixes it to the wrong line.
+
+Still open in phase 3: int8 GEMM, autotuned tile selection, and the WGMMA
+warp-group forms.
 ---
 
 ## Phase 4 — `grxcc` single-source driver (≈5–6 engineer-months)

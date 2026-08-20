@@ -185,6 +185,23 @@ grxblasStatus_t grxblasSgemm(grxblasHandle_t handle,
                              const float* beta,
                              void* C, int ldc);
 
+// The same GEMM over a batch of matrices laid out at a constant stride.
+//
+// Strides are in ELEMENTS, matching cuBLAS, and are signed: a caller is allowed
+// to walk a batch backwards. A stride of 0 aims every batch member at the same
+// matrix, which is legal for A and B (broadcasting one operand across the
+// batch) and a race for C -- nothing detects that, exactly as in cuBLAS.
+//
+// This is ONE launch for the whole batch, not a loop: the batch is the grid's
+// second dimension. The unbatched call above is this one with batchCount = 1
+// and zero strides, sharing a body rather than a resemblance.
+grxblasStatus_t grxblasSgemmStridedBatched(
+    grxblasHandle_t handle, grxblasOperation_t transa,
+    grxblasOperation_t transb, int m, int n, int k, const float* alpha,
+    const void* A, int lda, long long strideA,
+    const void* B, int ldb, long long strideB,
+    const float* beta, void* C, int ldc, long long strideC, int batchCount);
+
 // Where the library looks for its device kernels. grxBLAS ships precompiled
 // .vxbin modules rather than compiling at runtime, the same way a vendor BLAS
 // ships tuned binaries.

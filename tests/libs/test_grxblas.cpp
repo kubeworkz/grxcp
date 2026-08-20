@@ -79,6 +79,98 @@ void reference_sgemm(bool ta, bool tb, int m, int n, int k, float alpha,
   }
 }
 
+// Strided batching, checked as a whole buffer rather than matrix by matrix.
+//
+// `gap` puts slack between batch members so a kernel that walks its own stride
+// instead of the caller's writes into it and is caught. Passing strideB = 0
+// broadcasts one B across the batch, which cuBLAS allows and which a kernel
+// that multiplies the batch index into every pointer gets wrong.
+bool run_batched(grxblasHandle_t h, bool ta, bool tb, int m, int n, int k,
+                 float alpha, float beta, int batch, int gap, bool broadcast_b,
+                 const char* label) {
+  const int lda = std::max(1, ta ? k : m);
+  const int ldb = std::max(1, tb ? n : k);
+  const int ldc = std::max(1, m);
+
+  const size_t a_elems = (size_t)lda * (size_t)(ta ? m : k);
+  const size_t b_elems = (size_t)ldb * (size_t)(tb ? k : n);
+  const size_t c_elems = (size_t)ldc * (size_t)n;
+
+  const long long sa = (long long)(a_elems + gap);
+  const long long sb = broadcast_b ? 0 : (long long)(b_elems + gap);
+  const long long sc = (long long)(c_elems + gap);
+
+  std::vector<float> A((size_t)(sa * (batch - 1)) + a_elems + gap);
+  std::vector<float> B(broadcast_b ? b_elems + gap
+                                   : (size_t)(sb * (batch - 1)) + b_elems + gap);
+  std::vector<float> C((size_t)(sc * (batch - 1)) + c_elems + gap);
+
+  auto fill = [](std::vector<float>& v, unsigned seed) {
+    for (size_t i = 0; i < v.size(); ++i) {
+      seed = seed * 1664525u + 1013904223u;
+      v[i] = (float)((int)(seed >> 16) % 17 - 8) * 0.25f;
+    }
+  };
+  fill(A, 3u); fill(B, 11u); fill(C, 17u);
+
+  // Reference: one GEMM per batch member, into a copy of the whole C buffer,
+  // so anything outside the m x n windows has to come back untouched.
+  std::vector<float> expected = C;
+  for (int bi = 0; bi < batch; ++bi) {
+    const std::vector<float> Ab(A.begin() + (size_t)(sa * bi), A.end());
+    const std::vector<float> Bb(B.begin() + (size_t)(sb * bi), B.end());
+    std::vector<float> Cb(expected.begin() + (size_t)(sc * bi), expected.end());
+    reference_sgemm(ta, tb, m, n, k, alpha, Ab, lda, Bb, ldb, beta, Cb, ldc);
+    std::copy(Cb.begin(), Cb.begin() + (long)c_elems,
+              expected.begin() + (size_t)(sc * bi));
+  }
+
+  void *dA = nullptr, *dB = nullptr, *dC = nullptr;
+  if (grxMalloc(&dA, A.size() * sizeof(float)) != grxSuccess ||
+      grxMalloc(&dB, B.size() * sizeof(float)) != grxSuccess ||
+      grxMalloc(&dC, C.size() * sizeof(float)) != grxSuccess) {
+    std::printf("  FAIL  %s (allocation)\n", label);
+    return false;
+  }
+  grxMemcpy(dA, A.data(), A.size() * sizeof(float), grxMemcpyDefault);
+  grxMemcpy(dB, B.data(), B.size() * sizeof(float), grxMemcpyDefault);
+  grxMemcpy(dC, C.data(), C.size() * sizeof(float), grxMemcpyDefault);
+
+  const grxblasStatus_t st = grxblasSgemmStridedBatched(
+      h, ta ? GRXBLAS_OP_T : GRXBLAS_OP_N, tb ? GRXBLAS_OP_T : GRXBLAS_OP_N,
+      m, n, k, &alpha, dA, lda, sa, dB, ldb, sb, &beta, dC, ldc, sc, batch);
+  if (st != GRXBLAS_STATUS_SUCCESS) {
+    std::printf("  FAIL  %s (%s)\n", label, grxblasGetStatusString(st));
+    grxFree(dA); grxFree(dB); grxFree(dC);
+    return false;
+  }
+  grxDeviceSynchronize();
+
+  std::vector<float> got(C.size(), 0.0f);
+  grxMemcpy(got.data(), dC, got.size() * sizeof(float), grxMemcpyDefault);
+  grxFree(dA); grxFree(dB); grxFree(dC);
+
+  int bad = 0;
+  float worst = 0.0f;
+  for (size_t i = 0; i < got.size(); ++i) {
+    const float d = std::fabs(got[i] - expected[i]);
+    if (d > worst) worst = d;
+    const float scale = std::fabs(expected[i]) + 1.0f;
+    if (d > 1e-4f * scale * (float)(k + 1)) {
+      if (bad < 3)
+        std::printf("        [%zu] got %g want %g\n", i, (double)got[i],
+                    (double)expected[i]);
+      ++bad;
+    }
+  }
+  if (bad) {
+    std::printf("  FAIL  %s (%d wrong, worst %g)\n", label, bad, (double)worst);
+    return false;
+  }
+  std::printf("  ok    %s (worst %g)\n", label, (double)worst);
+  return true;
+}
+
 // pad grows every leading dimension past its minimum. A GEMM that ignores ld
 // and assumes tightly packed columns passes every unpadded test and corrupts
 // the first real sub-matrix it is handed, so at least one case must pad.
@@ -224,6 +316,35 @@ int main() {
   all &= run_case(h, true,  true,   6,  5,  4, 2.0f, -1.0f, "6x5x4 TT padded ld", 2);
   all &= run_case(h, false, false,  4,  3,  0, 1.0f, 2.0f, "4x3x0 k=0 scales C by beta");
   check(all, "every sgemm case matches the reference");
+
+  section("sgemm, strided batched");
+  {
+    bool all = true;
+    all &= run_batched(h, false, false, 6, 5, 4, 1.0f, 0.0f, 3, 0, false,
+                       "3 matrices, tight strides");
+    all &= run_batched(h, false, false, 6, 5, 4, 2.0f, -1.0f, 4, 7, false,
+                       "4 matrices, slack between them, alpha and beta");
+    all &= run_batched(h, false, false, 6, 5, 4, 1.0f, 0.0f, 3, 5, true,
+                       "strideB = 0 broadcasts one B across the batch");
+    all &= run_batched(h, true, true, 5, 4, 6, 1.0f, 0.5f, 3, 3, false,
+                       "transposed operands, batched");
+    all &= run_batched(h, false, false, 7, 3, 5, 1.0f, 0.0f, 1, 4, false,
+                       "batchCount = 1 is the unbatched path");
+    check(all, "every batched case matches a per-matrix reference");
+
+    const float one = 1.0f, zero = 0.0f;
+    void* d = nullptr;
+    grxMalloc(&d, 1024);
+    check(grxblasSgemmStridedBatched(h, GRXBLAS_OP_N, GRXBLAS_OP_N, 4, 4, 4,
+                                     &one, d, 4, 16, d, 4, 16, &zero, d, 4, 16,
+                                     0) == GRXBLAS_STATUS_SUCCESS,
+          "batchCount = 0 succeeds and does nothing");
+    check(grxblasSgemmStridedBatched(h, GRXBLAS_OP_N, GRXBLAS_OP_N, 4, 4, 4,
+                                     &one, d, 4, 16, d, 4, 16, &zero, d, 4, 16,
+                                     -1) == GRXBLAS_STATUS_INVALID_VALUE,
+          "a negative batchCount is refused");
+    grxFree(d);
+  }
 
   section("argument validation");
   {

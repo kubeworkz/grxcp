@@ -10,10 +10,17 @@
 //   inside #ifdef VX_CFG_TCU_WGMMA_ENABLE and additionally only runs for ops
 //   where tcu_is_wgmma(tcu_type).
 //
-//   So on a build with the tensor unit ON and WGMMA OFF, which is the default
-//   configuration, plain WMMA acquires the admission slot and nothing ever
-//   releases it. wgmma_cta_blocked() then blocks every other CTA at issue,
-//   forever. One CTA is fine, since it owns the slot it took.
+//   So plain WMMA acquires the admission slot and nothing ever releases it.
+//   wgmma_cta_blocked() then blocks every other CTA at issue, forever. One CTA
+//   is fine, since it owns the slot it took.
+//
+// TURNING WGMMA ON DOES NOT FIX IT, and this was tested rather than reasoned
+// about. A sysroot built with -DVX_CFG_TCU_TCU_WGMMA_ENABLE still deadlocks
+// here, because the release has TWO conditions and the compile-time flag is
+// only one of them: the retiring op must also BE a WGMMA op. A kernel issuing
+// plain WMMA never satisfies that, whatever the build says. The distinction
+// matters for whoever fixes this -- flipping the flag is not the fix, and a
+// bug report that suggests it is sends them to the wrong place.
 //
 // The fix is to make acquire and release symmetric -- either gate the acquire
 // on WGMMA as well, or release on any TCU op that carries fu_unlock.
@@ -113,9 +120,12 @@ int main(int argc, char** argv) {
   if (two == -1) {
     std::printf("  two CTAs: DEADLOCK -- upstream defect still present\n");
     std::printf("            tcu_unit.cpp takes a CTA admission slot for every "
-                "TCU op but\n            releases it only under "
-                "VX_CFG_TCU_WGMMA_ENABLE. See the header of\n            this "
-                "file. grxBLAS works around it with a single persistent CTA.\n");
+                "TCU op and\n            releases it only for ops that ARE "
+                "WGMMA -- so a WMMA kernel\n            deadlocks whether or "
+                "not VX_CFG_TCU_WGMMA_ENABLE is set, which\n            has "
+                "been checked both ways. See the header of this file.\n"
+                "            grxBLAS works around it with a single persistent "
+                "CTA.\n");
     return 0;
   }
   if (two == 0) {
