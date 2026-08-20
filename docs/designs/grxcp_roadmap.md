@@ -761,8 +761,60 @@ sizes, so the sysroot went from 4 warps per core to 16 —
   bound is itself a consequence of the single-CTA workaround for the tensor
   unit's multi-CTA deadlock, so it goes when that is fixed.
 
-**Remaining in this phase:** the host target matrix (`x86_64-linux-gnu` and
-`riscv64-linux-gnu`), and the measurable conformance improvement.
+**The host target matrix is done, and it runs rather than only compiling.**
+`ci/build_mock.sh --host riscv64-linux-gnu` cross-builds the runtime, the tools
+and the unit tests and executes them under qemu-user; all five unit tests pass
+and `grx-smi` reports the same device. `ci/run_real.sh`'s HOST MATRIX GATE
+compiles a grxcc program's host pass for the same triple. That the gate has
+teeth was checked rather than assumed: a `__builtin_ia32_rdtsc` planted in
+`event.cpp` passes the native build and fails the riscv64 one.
+
+Compiling was never the interesting half. A cross compile catches inline asm and
+`__x86_64__` ifdefs; only an execution catches a struct laid out differently or
+an alignment fault, and the GRX930 is the machine this runtime is ultimately
+for.
+
+**The conformance number moved, and the four entry points behind it work.**
+50 of 82 (61%) to **54 of 83 (65%)**, from `cudaMemcpyToSymbol`,
+`cudaMemcpyFromSymbol`, `cudaGetSymbolAddress` and `cudaGetSymbolSize`.
+
+`grxcc` already read the device ELF for register counts; it now reads the symbol
+table too and registers `__constant__` and `__device__` variables by address and
+size. The runtime writes them by editing its own copy of the image and reloading
+the module, because the driver gives the host no handle for a loaded module's
+memory — measured, not assumed: `vx_buffer_reserve` refuses any range that
+overlaps it.
+
+That mechanism is exact for `__constant__`, which the device cannot write, and
+unsound for `__device__`, which it can — so reading back a `__device__` symbol
+is **refused** rather than answered with a value that was true before the kernel
+ran. `tests/cuda_samples/12_constant_memory.cu` gates both, and the reload path
+was watched failing with the invalidation removed: the first write still landed
+and the second silently did not. `cuda_mapping.md` section 7.23.
+
+**Phase 4's exit gate, clause by clause.**
+
+| clause | state |
+|---|---|
+| a single `.grx.cpp` with `__global__` and `<<<>>>` compiles with `grxcc` and runs correctly on `simx` | **met** — PHASE 4 GATE |
+| ...and on `rtlsim` | **not run** — see below |
+| at least ten CUDA samples compile unmodified except for the `grx_cuda_compat.h` include | **met** — eleven do, and run |
+| the conformance rate improves measurably over phase 1's published number | **met** — 61% to 65% |
+
+**`rtlsim` has not been run, and cannot be from this checkout.** It is not a
+matter of wall-clock or of a `VORTEX_DRIVER` setting: `sw/runtime/rtlsim` needs
+`hw/dpi/dpi_util.cpp` and the RTL it wraps, and this grxgpu working copy
+contains two files under `hw/` — `VX_define.vh` and `VX_gpu_pkg.sv`. Verilator
+was installed and the build stops at the missing DPI source, so what is absent
+is the hardware description, not the tool.
+
+Worth being clear about what running it would add. GRXCP's code path is
+identical on either backend — the driver is selected by `VORTEX_DRIVER` and the
+runtime never branches on it — so `rtlsim` would substantiate the RTL rather
+than GRXCP. That is a real check and it belongs in the gate; it just belongs to
+whoever has the RTL. The one place GRXCP itself would notice is
+`grxDeviceProp_t::backend`, which every timing claim in this project is already
+required to report.
 
 ---
 

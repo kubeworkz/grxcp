@@ -72,9 +72,10 @@ GRX_CUDA_API(cudaPointerGetAttributes, grxPointerGetAttributes, MAPPED,      "me
 GRX_CUDA_API(cudaMallocPitch,          ,                        ABSENT,      "memory", "pitched allocation belongs with the strided copy path")
 GRX_CUDA_API(cudaMemPrefetchAsync,     ,                        ABSENT,      "memory", "managed-memory migration hints need a page-migration engine")
 GRX_CUDA_API(cudaMemAdvise,            ,                        ABSENT,      "memory", "see cudaMemPrefetchAsync")
-GRX_CUDA_API(cudaMemcpyToSymbol,       ,                        ABSENT,      "memory", "the .vxbin footer carries no device variable symbol table yet")
-GRX_CUDA_API(cudaMemcpyFromSymbol,     ,                        ABSENT,      "memory", "see cudaMemcpyToSymbol")
-GRX_CUDA_API(cudaGetSymbolAddress,     ,                        ABSENT,      "memory", "see cudaMemcpyToSymbol")
+GRX_CUDA_API(cudaMemcpyToSymbol,       grxMemcpyToSymbol,       PARTIAL,     "memory", "grxcc registers device symbols from the ELF; a write after the module is loaded reloads it (cuda_mapping.md 7.23)")
+GRX_CUDA_API(cudaMemcpyFromSymbol,     grxMemcpyFromSymbol,     PARTIAL,     "memory", "__constant__ only: the driver gives the host no view of a loaded module, so a __device__ symbol a kernel wrote cannot be read back and is refused")
+GRX_CUDA_API(cudaGetSymbolAddress,     grxGetSymbolAddress,     PARTIAL,     "memory", "returns the link address, which is where the loader puts it; grxMemcpy will not accept it, because the allocation map does not own it")
+GRX_CUDA_API(cudaGetSymbolSize,        grxGetSymbolSize,        MAPPED,      "memory", "")
 
 // --- streams ---------------------------------------------------------------
 GRX_CUDA_API(cudaStreamCreate,           grxStreamCreate,           PARTIAL, "stream", "ordering is correct; streams do not yet run concurrently because the command processor defaults to one queue")
@@ -114,7 +115,7 @@ GRX_CUDA_API(cuModuleLoadData,         grxModuleLoadData,       MAPPED,      "mo
 GRX_CUDA_API(cuModuleUnload,           grxModuleUnload,         MAPPED,      "module", "")
 GRX_CUDA_API(cuModuleGetFunction,      grxModuleGetFunction,    MAPPED,      "module", "")
 GRX_CUDA_API(cuLaunchKernel,           grxLaunchFunction,       PARTIAL,     "module", "takes one packed argument blob rather than CUDA's void** plus extra array")
-GRX_CUDA_API(cuModuleGetGlobal,        ,                        ABSENT,      "module", "see cudaMemcpyToSymbol")
+GRX_CUDA_API(cuModuleGetGlobal,        ,                        ABSENT,      "module", "the symbol path is keyed on a host stand-in grxcc registers, not on a module handle and a name")
 
 // --- features with no GRXCP implementation ---------------------------------
 GRX_CUDA_API(cudaGraphCreate,          ,                        ABSENT,      "graph",   "CUDA graphs are deferred; the driver's batched command submission is the natural substrate when they land")

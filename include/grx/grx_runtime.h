@@ -162,6 +162,31 @@ grxError_t grxModuleLoad       (grxModule_t* module, const char* path);
 grxError_t grxModuleLoadData   (grxModule_t* module, const void* image,
                                 size_t size);
 grxError_t grxModuleUnload     (grxModule_t module);
+// ---------------------------------------------------------------------------
+// Device variables
+//
+// `symbol` is the HOST address of a __constant__ or __device__ variable that
+// grxcc registered -- you write grxMemcpyToSymbol(coeffs, ...), exactly as in
+// CUDA, and the host object exists only so that its address can be the key.
+//
+// __constant__ WORKS AND __device__ DOES NOT, and the asymmetry is not
+// arbitrary. The driver has no host-side handle for a loaded module's memory
+// (vx_buffer_reserve refuses any range overlapping it), so these operate on
+// the runtime's own copy of the image and reload the module. For a
+// __constant__ symbol that copy is authoritative, because the device cannot
+// write it. For a __device__ symbol it is not: a kernel that wrote one would
+// leave the host copy stale, so a read would return a value that was true
+// before the kernel ran. That is a wrong answer, so it is refused instead.
+// See docs/designs/cuda_mapping.md section 7.23.
+grxError_t grxMemcpyToSymbol   (const void* symbol, const void* src,
+                                size_t count, size_t offset,
+                                grxMemcpyKind kind);
+grxError_t grxMemcpyFromSymbol (void* dst, const void* symbol,
+                                size_t count, size_t offset,
+                                grxMemcpyKind kind);
+grxError_t grxGetSymbolAddress (void** devPtr, const void* symbol);
+grxError_t grxGetSymbolSize    (size_t* size, const void* symbol);
+
 grxError_t grxModuleGetFunction(grxFunction_t* func, grxModule_t module,
                                 const char* name);
 
@@ -201,9 +226,8 @@ void   __grxRegisterFunction   (void** handle, const char* hostStub,
 // rather than guessing at parameter widths.
 void   __grxRegisterKernelDesc (void** handle, const char* hostStub,
                                 const grx_kernel_desc* desc);
-void   __grxRegisterVar        (void** handle, const char* hostVar,
-                                const char* deviceName, size_t size,
-                                int isConstant);
+void   __grxRegisterVar        (void** handle, const void* hostVar,
+                                const grx_var_desc* desc);
 grxError_t __grxPushCallConfiguration(dim3_t gridDim, dim3_t blockDim,
                                       size_t sharedMem, grxStream_t stream);
 grxError_t __grxPopCallConfiguration (dim3_t* gridDim, dim3_t* blockDim,
@@ -211,6 +235,48 @@ grxError_t __grxPopCallConfiguration (dim3_t* gridDim, dim3_t* blockDim,
 
 #ifdef __cplusplus
 }  // extern "C"
+
+// ---------------------------------------------------------------------------
+// Symbol overloads, for the way these are actually called
+// ---------------------------------------------------------------------------
+//
+// CUDA writes
+//
+//     __constant__ float c_filter[7];
+//     cudaMemcpyToSymbol(c_filter, taps, sizeof(taps));
+//
+// passing the VARIABLE, not its address -- so the entry point is a template
+// taking `const T&`. The C form above stays, and is what a C program or a
+// language binding calls; these forward to it.
+//
+// Overload resolution does the right thing without any help: for an argument
+// of array or object type the template binds by identity and wins, and for an
+// argument that is already a `const void*` the C function is an exact match and
+// wins. That is the same arrangement CUDA uses, for the same reason.
+
+template <typename T>
+inline grxError_t grxMemcpyToSymbol(const T& symbol, const void* src,
+                                    size_t count, size_t offset = 0,
+                                    grxMemcpyKind kind = grxMemcpyHostToDevice) {
+  return grxMemcpyToSymbol((const void*)&symbol, src, count, offset, kind);
+}
+
+template <typename T>
+inline grxError_t grxMemcpyFromSymbol(void* dst, const T& symbol, size_t count,
+                                      size_t offset = 0,
+                                      grxMemcpyKind kind = grxMemcpyDeviceToHost) {
+  return grxMemcpyFromSymbol(dst, (const void*)&symbol, count, offset, kind);
+}
+
+template <typename T>
+inline grxError_t grxGetSymbolAddress(void** devPtr, const T& symbol) {
+  return grxGetSymbolAddress(devPtr, (const void*)&symbol);
+}
+
+template <typename T>
+inline grxError_t grxGetSymbolSize(size_t* size, const T& symbol) {
+  return grxGetSymbolSize(size, (const void*)&symbol);
+}
 #endif
 
 #endif  // GRX_RUNTIME_H

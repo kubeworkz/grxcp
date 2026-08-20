@@ -71,6 +71,11 @@
 #define cudaMemset                      grxMemset
 #define cudaMemsetAsync                 grxMemsetAsync
 #define cudaPointerGetAttributes        grxPointerGetAttributes
+#define cudaMemcpyToSymbol              grxMemcpyToSymbol
+#define cudaMemcpyFromSymbol            grxMemcpyFromSymbol
+#define cudaGetSymbolAddress            grxGetSymbolAddress
+#define cudaGetSymbolSize               grxGetSymbolSize
+#define cudaErrorInvalidSymbol          grxErrorInvalidSymbol
 #define cudaPointerAttributes           grxPointerAttributes
 #define cudaMemcpyKind                  grxMemcpyKind
 #define cudaMemcpyHostToHost            grxMemcpyHostToHost

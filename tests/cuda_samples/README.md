@@ -9,6 +9,10 @@ that claim, and the rule it was written under matters more than the count:
 > that still needs an edit says so at the top of the file, in the sample, and
 > is not counted.
 
+Twelve files: eleven compile and run, and the twelfth (`11_histogram_atomics.cu`)
+must fail to compile on a build with no atomic extension, which is what the gate
+checks for it.
+
 The alternative — writing samples against what `grxcc` already supports — would
 produce ten files that pass and prove nothing. The value here is entirely in
 what broke the first time.
@@ -59,6 +63,14 @@ a constant, not a construct.
 
 **Third pass: ten of ten, plus the refusal.** `11_histogram_atomics.cu` fails to
 compile, which is the correct outcome on this build and is what the gate checks.
+
+**Then a twelfth was added**, for a construct the first ten did not reach for:
+`12_constant_memory.cu` sets a convolution's filter taps with
+`cudaMemcpyToSymbol`. `09_stencil_1d.cu` would normally do the same for its
+coefficients, and the reason it does not is that `__constant__` had no host-side
+reach until this sample was written. It is also where the platform's one
+asymmetry is documented and checked: `__constant__` reads back exactly,
+`__device__` is refused, and both are gated. See `cuda_mapping.md` section 7.23.
 
 ## The device the samples run on
 

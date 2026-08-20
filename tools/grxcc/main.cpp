@@ -386,6 +386,21 @@ struct Param {
   bool        is_pointer = false;
 };
 
+// A file-scope __device__ or __constant__ variable.
+//
+// CUDA declares one of these on BOTH sides: the device gets the storage, and
+// the host gets an object of the same name whose only job is to have an address
+// -- `cudaMemcpyToSymbol(coeffs, ...)` passes that address, and the runtime
+// looks the device symbol up by it. So unlike a __device__ FUNCTION, which is
+// dropped from the host pass, a __device__ VARIABLE is kept in both.
+struct DeviceVar {
+  std::string name;
+  bool        is_constant = false;
+  int         line = 0;
+  uint64_t    vma = 0;      // filled in from the device ELF after it is built
+  uint32_t    size = 0;
+};
+
 struct SharedDecl {
   std::string decl;        // "float tile[4][5]", as written, minus __shared__
   std::string name;        // "tile"
@@ -472,6 +487,106 @@ bool split_param(const std::string& decl_in, Param* out) {
   return true;
 }
 
+// File-scope __device__ and __constant__ VARIABLES.
+//
+// Distinguished from a __device__ function by what follows the declaration: a
+// `{` opens a function body, anything reaching a `;` first is a variable. That
+// is the same test find_device_only makes, and the two have to agree -- a
+// variable dropped from the host pass takes its address with it, and
+// cudaMemcpyToSymbol has nothing to name.
+std::vector<DeviceVar> find_device_vars(const std::string& src) {
+  std::vector<DeviceVar> out;
+  size_t i = 0;
+  while (i < src.size()) {
+    const size_t skipped = skip_noncode(src, i);
+    if (skipped != i) { i = skipped; continue; }
+
+    bool is_const = false;
+    size_t kw_len = 0;
+    if (src.compare(i, 12, "__constant__") == 0) { is_const = true; kw_len = 12; }
+    else if (src.compare(i, 10, "__device__") == 0) { kw_len = 10; }
+    if (kw_len == 0 || (i > 0 && ident_char(src[i - 1])) ||
+        (i + kw_len < src.size() && ident_char(src[i + kw_len]))) {
+      ++i;
+      continue;
+    }
+    // Only at file or namespace scope; a __constant__ inside a function body is
+    // not a thing CUDA allows either.
+    if (non_namespace_depth(src, i) != 0) { i += kw_len; continue; }
+
+    size_t j = i + kw_len, end = std::string::npos;
+    bool is_function = false;
+    while (j < src.size()) {
+      const size_t sk = skip_noncode(src, j);
+      if (sk != j) { j = sk; continue; }
+      if (src[j] == '(') {          // a parameter list: this is a function
+        is_function = true;
+        break;
+      }
+      if (src[j] == '{' || src[j] == ';') {
+        // A brace here is an initializer (`= {1, 2, 3}`), not a body, because
+        // a function's `(` would have been seen first.
+        end = j;
+        break;
+      }
+      ++j;
+    }
+    if (is_function || end == std::string::npos) { i += kw_len; continue; }
+
+    const size_t semi = find_code_char(src, i + kw_len, ';');
+    if (semi == std::string::npos) { i += kw_len; continue; }
+
+    DeviceVar v;
+    v.is_constant = is_const;
+    v.line = line_of(src, i);
+    // The name is the identifier before the first '[', '=' or ';'.
+    {
+      const std::string decl = src.substr(i + kw_len, semi - (i + kw_len));
+      size_t e = decl.size();
+      for (char c : {'[', '='}) {
+        const size_t at = decl.find(c);
+        if (at != std::string::npos && at < e) e = at;
+      }
+      while (e > 0 && !ident_char(decl[e - 1])) --e;
+      size_t b = e;
+      while (b > 0 && ident_char(decl[b - 1])) --b;
+      v.name = decl.substr(b, e - b);
+    }
+    if (!v.name.empty()) out.push_back(v);
+    i = semi + 1;
+  }
+  return out;
+}
+
+// The first place the file says something only the device understands:
+// __global__, __device__ or __constant__, whichever comes first.
+//
+// This is what the device headers have to be inserted before. "Before the first
+// __global__" is not enough -- a file routinely writes
+//
+//     __constant__ float c_filter[7];
+//     #define CUDA_CHECK(call) ...
+//     __global__ void convolve(...) { ... }
+//
+// and inserting after the LAST directive before the kernel puts the headers
+// after the __constant__, which then does not name a type.
+size_t first_device_token(const std::string& src) {
+  static const char* kToks[] = {"__global__", "__device__", "__constant__"};
+  size_t i = 0;
+  while (i < src.size()) {
+    const size_t skipped = skip_noncode(src, i);
+    if (skipped != i) { i = skipped; continue; }
+    for (const char* t : kToks) {
+      const size_t n = std::strlen(t);
+      if (src.compare(i, n, t) == 0 && (i == 0 || !ident_char(src[i - 1])) &&
+          (i + n >= src.size() || !ident_char(src[i + n])))
+        return i;
+    }
+    ++i;
+  }
+  return src.size();
+}
+
 // Spans of `__device__`-only code, to be dropped from the HOST pass.
 //
 // A CUDA file routinely puts a device helper above its kernels:
@@ -536,14 +651,21 @@ std::vector<Span> find_device_only(const std::string& src) {
     // Find the end: a `{` opens a definition, a `;` ends a declaration.
     size_t j = i + 10;
     size_t end = std::string::npos;
+    bool is_function = false;
     while (j < src.size()) {
       const size_t sk = skip_noncode(src, j);
       if (sk != j) { j = sk; continue; }
+      // A '(' before any '{' or ';' means a parameter list, so this is a
+      // function. Without that test a `__device__ float g[4] = {1,2,3,4};`
+      // reads as a definition and gets dropped from the host pass, taking the
+      // address cudaMemcpyToSymbol needs with it.
+      if (src[j] == '(') { is_function = true; ++j; continue; }
       if (src[j] == '{') { end = match_bracket(src, j); break; }
       if (src[j] == ';') { end = j + 1; break; }
       if (src.compare(j, 10, "__host__") == 0) { end = 0; break; }
       ++j;
     }
+    if (!is_function) { i += 10; continue; }          // a variable: keep it
     if (end == 0) { i += 10; continue; }              // __device__ __host__
     if (end == std::string::npos) { i += 10; continue; }
     out.push_back({start, end});
@@ -1112,6 +1234,7 @@ std::string emit_host_stub(const Kernel& k) {
 // TU of its own: the stub and its parameter types are already in scope here,
 // and a separate TU would have to redeclare both.
 std::string emit_registration(const std::vector<Kernel>& kernels,
+                              const std::vector<DeviceVar>& vars,
                               const std::string& fatbin_symbol) {
   std::string s;
   s += "\n// ---- generated by grxcc: fat binary registration ----\n";
@@ -1146,6 +1269,12 @@ std::string emit_registration(const std::vector<Kernel>& kernels,
          "u, (uint32_t)sizeof(" + st + "), " + static_smem + ", " +
          std::to_string(k.num_regs) + ", " + bounds + ", 0u };\n";
   }
+  for (const DeviceVar& v : vars) {
+    if (v.vma == 0) continue;   // not found in the ELF; see the caller
+    s += "const grx_var_desc __grx_v_" + v.name + " = { \"" + v.name +
+         "\", " + std::to_string(v.vma) + "ull, " + std::to_string(v.size) +
+         "u, " + (v.is_constant ? "1u" : "0u") + " };\n";
+  }
   s += "struct __grx_registrar {\n";
   s += "  void** handle;\n";
   s += "  __grx_registrar() {\n";
@@ -1153,6 +1282,11 @@ std::string emit_registration(const std::vector<Kernel>& kernels,
   for (const Kernel& k : kernels) {
     s += "    __grxRegisterKernelDesc(handle, (const char*)(const void*)&" +
          k.qualified() + ", &__grx_d_" + k.name + ");\n";
+  }
+  for (const DeviceVar& v : vars) {
+    if (v.vma == 0) continue;
+    s += "    __grxRegisterVar(handle, (const void*)&" + v.name +
+         ", &__grx_v_" + v.name + ");\n";
   }
   s += "  }\n";
   s += "  ~__grx_registrar() { __grxUnregisterFatBinary(handle); }\n";
@@ -1585,6 +1719,7 @@ int main(int argc, char** argv) {
   // rewritten one by finding each body again. Simpler and more robust than
   // threading offsets through the rewrite: kernel bodies are unique text.
   Parsed relocated = find_kernels(lr.output);
+  std::vector<DeviceVar> device_vars = find_device_vars(lr.output);
   if (relocated.kernels.size() != parsed.kernels.size()) {
     std::fprintf(stderr,
                  "grxcc: internal error: %zu kernels before the launch rewrite "
@@ -1638,7 +1773,7 @@ int main(int argc, char** argv) {
         relocated.kernels.empty()
             ? lr.output.size()
             : top_level_boundary_before(lr.output,
-                                        relocated.kernels.front().decl_start);
+                                        first_device_token(lr.output));
     device_head.assign(lr.output, 0, device_start);
 
     // `__device__`-only definitions are dropped from the host pass; the device
@@ -1690,7 +1825,16 @@ int main(int argc, char** argv) {
              "inline grxError_t push(dim3_t g, dim3_t b, size_t s, grxStream_t st) {\n"
              "  return __grxPushCallConfiguration(g, b, s, st);\n"
              "}\n}}\n"
-             "#define __GRX_HOST_PASS__ 1\n" + host_src;
+             "#define __GRX_HOST_PASS__ 1\n"
+             // A __device__ or __constant__ VARIABLE is declared on both
+             // sides: the device gets the storage, the host gets an object of
+             // the same name whose address is the key cudaMemcpyToSymbol
+             // passes. So the host pass keeps the declaration and needs the
+             // qualifiers to mean nothing. __device__ FUNCTIONS are a
+             // different case and are dropped entirely.
+             "#define __device__\n"
+             "#define __constant__\n"
+             "#define __forceinline__ inline\n" + host_src;
 
   // WHAT THE DEVICE PASS INCLUDES, AND WHY IT IS MORE THAN ONE HEADER.
   //
@@ -1829,6 +1973,52 @@ int main(int argc, char** argv) {
               count_registers(funcs, {"__vx_kentry_" + k.name, k.name});
       }
     }
+
+    // Device variables: address and size, from the ELF's own symbol table.
+    //
+    // A __constant__ or __device__ declaration gives grxcc a NAME; only the
+    // linker knows where it ended up and how big it is. llvm-nm prints both,
+    // and the format relied on is minimal -- `<addr> <size> <type> <name>`.
+    //
+    // A variable that is declared but never referenced by a kernel is dropped
+    // by --gc-sections and simply is not in the table. It gets no registration,
+    // and grxMemcpyToSymbol on it reports grxErrorInvalidSymbol -- which is the
+    // truth: there is no device symbol to copy to.
+    if (!device_vars.empty()) {
+      const std::string elf = vxbin_path.substr(0, vxbin_path.size() - 6) + ".elf";
+      const std::string nm = tooldir + "/llvm-vortex/bin/llvm-nm";
+      std::string text;
+      struct stat sb;
+      if (::stat(nm.c_str(), &sb) != 0) {
+        std::fprintf(stderr,
+                     "grxcc: no %s, so __device__/__constant__ symbols cannot "
+                     "be registered; grxMemcpyToSymbol will not find them\n",
+                     nm.c_str());
+      } else if (run_capture(nm + " --print-size --defined-only " + elf +
+                             " 2>/dev/null", &text, verbose)) {
+        for (DeviceVar& v : device_vars) {
+          size_t pos = 0;
+          while (pos <= text.size()) {
+            size_t nl = text.find('\n', pos);
+            if (nl == std::string::npos) nl = text.size();
+            const std::string line = text.substr(pos, nl - pos);
+            pos = nl + 1;
+            if (line.size() < 20) continue;
+            const size_t sp = line.rfind(' ');
+            if (sp == std::string::npos || line.substr(sp + 1) != v.name) continue;
+            v.vma  = std::strtoull(line.c_str(), nullptr, 16);
+            v.size = (uint32_t)std::strtoull(line.c_str() + 17, nullptr, 16);
+            break;
+          }
+          if (v.vma == 0)
+            std::fprintf(stderr,
+                         "%s:%d: warning: `%s` is not in the device image -- "
+                         "declared but never used by a kernel, so the linker "
+                         "dropped it. grxMemcpyToSymbol will not find it.\n",
+                         source.c_str(), v.line, v.name.c_str());
+        }
+      }
+    }
   }
 
   // ---- 3. fat binary + registration ----------------------------------------
@@ -1840,7 +2030,8 @@ int main(int argc, char** argv) {
       return 1;
     }
     host_src += emit_fatbin_array(vxbin, "__grx_fatbin_data", 0);
-    host_src += emit_registration(relocated.kernels, "__grx_fatbin_data");
+    host_src += emit_registration(relocated.kernels, device_vars,
+                                  "__grx_fatbin_data");
     if (!write_file(host_path, host_src)) {
       std::fprintf(stderr, "grxcc: cannot rewrite %s\n", host_path.c_str());
       return 2;

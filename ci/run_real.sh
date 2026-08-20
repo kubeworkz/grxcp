@@ -562,7 +562,49 @@ else
 fi
 
 echo
-echo "==> CUDA SAMPLES GATE: ten CUDA programs, compiled unmodified"
+echo "==> HOST MATRIX GATE: grxcc targets a host that is not this one"
+# GRX-G100 hangs off a GRX930, which is a RISC-V64 SoC -- so the host half of a
+# GRXCP program has to compile for riscv64-linux-gnu, not only for the x86 box
+# the simulator happens to run on. grxcc shells its host pass out to $CXX, so
+# targeting another host is a matter of setting it; this gate is what says that
+# is true rather than assumed.
+#
+# COMPILE, not link and not run. The driver in this container is built for
+# x86_64, so there is nothing for a riscv64 object to link against here. What
+# is proved is that the code grxcc GENERATES carries no x86 dependency.
+# ci/build_mock.sh --host riscv64-linux-gnu proves the stronger thing about the
+# runtime itself -- it cross-builds the whole mock stack and RUNS it under
+# qemu-user, and a planted __builtin_ia32_rdtsc was watched failing there.
+HOST_TRIPLE_ALT="${HOST_TRIPLE_ALT:-riscv64-linux-gnu}"
+if [[ -z "$GRXGPU" || ! -d "$TOOLDIR/llvm-vortex" ]]; then
+  echo "SKIPPED: needs --grxgpu <path> and a device toolchain in $TOOLDIR."
+elif ! command -v "$HOST_TRIPLE_ALT-g++" >/dev/null 2>&1; then
+  echo "SKIPPED: no $HOST_TRIPLE_ALT-g++ (Debian/Ubuntu: g++-$HOST_TRIPLE_ALT)."
+else
+  CXX="$HOST_TRIPLE_ALT-g++" "$BUILD/grxcc" \
+    --grxgpu "$GRXGPU" --tooldir "$TOOLDIR" \
+    --build-kernel "$ROOT/ci/build_kernel.sh" -I "$ROOT/include" -c \
+    "$ROOT/tests/grxcc/vecadd.grx.cpp" -o "$BUILD/vecadd_$HOST_TRIPLE_ALT.o" \
+    > "$BUILD/hostmatrix.log" 2>&1 || {
+      echo "FAIL  the host pass did not compile for $HOST_TRIPLE_ALT:"
+      grep -E "error:" "$BUILD/hostmatrix.log" | head -3 | sed 's/^/        /'
+      exit 1; }
+
+  # And it has to BE that machine. A cross compiler that silently fell back to
+  # the native target would pass a check that only looked at the exit code.
+  machine="$("$HOST_TRIPLE_ALT-readelf" -h "$BUILD/vecadd_$HOST_TRIPLE_ALT.o" \
+             2>/dev/null | sed -n 's/^ *Machine: *//p')"
+  case "$machine" in
+    *RISC-V*|*"$HOST_TRIPLE_ALT"*)
+      echo "  ok    the host pass compiles for $HOST_TRIPLE_ALT ($machine)" ;;
+    *)
+      echo "FAIL  the object claims machine '$machine', not $HOST_TRIPLE_ALT"
+      exit 1 ;;
+  esac
+fi
+
+echo
+echo "==> CUDA SAMPLES GATE: eleven CUDA programs, compiled unmodified"
 # The phase 4 exit gate's second claim. Every file in tests/cuda_samples is
 # ordinary CUDA whose only concession to GRXCP is including grx_cuda_compat.h
 # instead of cuda_runtime.h -- no grx* name appears in any of them, and none

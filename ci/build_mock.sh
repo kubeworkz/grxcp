@@ -20,9 +20,11 @@ BUILD="$ROOT/build-mock"
 
 VORTEX_INCLUDE=""
 VORTEX_CFLAGS=""
+HOST_TRIPLE=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --vortex-include) VORTEX_INCLUDE="$2"; shift 2 ;;
+    --host)           HOST_TRIPLE="$2"; shift 2 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
@@ -55,6 +57,43 @@ if [[ -z "$VORTEX_INCLUDE" || ! -f "$VORTEX_INCLUDE/vortex2.h" ]]; then
   echo "  Set VORTEX_PATH to the installed GRX-G100 sysroot, or pass" >&2
   echo "  --vortex-include <dir containing vortex2.h>." >&2
   exit 1
+fi
+
+# --- host target ------------------------------------------------------------
+#
+# GRXCP's host half has to run on the machine the GPU is attached to, and for
+# the GRX930 that machine is a RISC-V64 SoC rather than an x86 box. A runtime
+# that has only ever been compiled for x86_64 is a runtime nobody has checked
+# for x86-isms, so this script can build and RUN the whole mock stack for
+# another host through a cross compiler and an emulator.
+#
+#   ./ci/build_mock.sh --host riscv64-linux-gnu
+#
+# Running matters more than compiling. A cross compile catches inline asm and
+# __x86_64__ ifdefs; only an execution catches a struct laid out differently, a
+# signed char assumption, or an alignment fault. qemu-user runs the result
+# straight from this container.
+RUN=()
+if [[ -n "$HOST_TRIPLE" ]]; then
+  CXX="$HOST_TRIPLE-g++"
+  BUILD="$ROOT/build-mock-${HOST_TRIPLE%%-*}"
+  if ! command -v "$CXX" >/dev/null 2>&1; then
+    echo "SKIPPED: no $CXX. Install it (Debian/Ubuntu: g++-$HOST_TRIPLE) to"
+    echo "         check that the runtime is not x86-specific."
+    exit 0
+  fi
+  # Native builds need no emulator; anything else does, and saying so beats
+  # producing binaries nobody ran.
+  if [[ "$HOST_TRIPLE" != "$(uname -m)"* ]]; then
+    emu="qemu-${HOST_TRIPLE%%-*}-static"
+    if ! command -v "$emu" >/dev/null 2>&1; then
+      echo "SKIPPED: $CXX is present but $emu is not, so the result could be"
+      echo "         built and not run. Install qemu-user-static."
+      exit 0
+    fi
+    RUN=("$emu" -L "/usr/$HOST_TRIPLE")
+  fi
+  echo "==> host target: $HOST_TRIPLE  (CXX=$CXX${RUN:+, run under ${RUN[0]}})"
 fi
 
 CXX="${CXX:-g++}"
@@ -97,13 +136,13 @@ echo
 echo "==> unit tests (default config)"
 for t in "${TESTS[@]}"; do
   printf -- "--- %s\n" "$t"
-  "$BUILD/$t"
+  "${RUN[@]}" "$BUILD/$t"
 done
 
 echo
 echo "==> unit tests (FPGA backend: managed memory must be gated off)"
 for t in "${TESTS[@]}"; do
-  VORTEX_DRIVER=xrt "$BUILD/$t" > /dev/null || { echo "FAILED on xrt: $t"; exit 1; }
+  VORTEX_DRIVER=xrt "${RUN[@]}" "$BUILD/$t" > /dev/null || { echo "FAILED on xrt: $t"; exit 1; }
 done
 echo "all tests pass on the FPGA backend selection too"
 
@@ -113,19 +152,24 @@ python3 "$ROOT/ci/check_compat_table.py"
 
 echo
 echo "==> conformance report"
-"$BUILD/grx-conform"
+"${RUN[@]}" "$BUILD/grx-conform"
 
 echo
 echo "==> end-to-end: translate a CUDA source, compile it, link it, run it"
-"$BUILD/grxify" --check "$ROOT/tests/conformance/portable_port.cu"
-"$BUILD/grxify" "$ROOT/tests/conformance/portable_port.cu" \
+"${RUN[@]}" "$BUILD/grxify" --check "$ROOT/tests/conformance/portable_port.cu"
+"${RUN[@]}" "$BUILD/grxify" "$ROOT/tests/conformance/portable_port.cu" \
   -o "$BUILD/portable_port.grx.cpp" 2>/dev/null
 $CXX $CXXFLAGS -c "$BUILD/portable_port.grx.cpp" -o "$BUILD/portable_port.o"
 $CXX "${RT_OBJS[@]}" "$BUILD/portable_port.o" -o "$BUILD/portable_port"
-"$BUILD/portable_port"
+"${RUN[@]}" "$BUILD/portable_port"
 
 echo
 echo "==> grx-prof against the mock: no counters, and no invented ones"
+if [[ ${#RUN[@]} -gt 0 ]]; then
+  echo "SKIPPED on a cross host: grx-prof runs its subject in a CHILD process,"
+  echo "        and qemu-user does not emulate a binary it did not start."
+  echo "        The counter-unavailable path is covered by the native run."
+else
 # The mock refuses vx_device_mpm_query, because it models a control plane and
 # has no pipeline to count. This is the only place in CI that exercises the
 # runtime's counter-unavailable path, and the claim being checked is precise:
@@ -149,17 +193,18 @@ if invented:
     print(" ", invented[0]["args"]); sys.exit(1)
 print(f"  ok    {len(launches)} kernel slices, no fabricated device counters")
 PY
+fi
 
 echo
 echo "==> grxify reports the unmappable calls in an awkward port"
-if "$BUILD/grxify" --check "$ROOT/tests/conformance/sample_port.cu" 2>&1; then
+if "${RUN[@]}" "$BUILD/grxify" --check "$ROOT/tests/conformance/sample_port.cu" 2>&1; then
   echo "FAILED: grxify should have reported unmappable calls"; exit 1
 fi
 echo "(the diagnostics above are the expected result)"
 
 echo
 echo "==> grx-smi (default config)"
-"$BUILD/grx-smi"
+"${RUN[@]}" "$BUILD/grx-smi"
 
 echo "==> grx-smi (flagship G100 preset)"
 VORTEX_DRIVER=rtlsim \
@@ -169,6 +214,6 @@ GRXMOCK_SOCKET_SIZE=4 GRXMOCK_ISSUE_WIDTH=4 \
 GRXMOCK_LOCAL_MEM=262144 GRXMOCK_GLOBAL_MEM=137438953472 \
 GRXMOCK_MEM_BANKS=8 GRXMOCK_MEM_BANK_SIZE=17179869184 \
 GRXMOCK_CLOCK_MHZ=2000 GRXMOCK_PEAK_BW_MBS=6400000 \
-  "$BUILD/grx-smi"
+  "${RUN[@]}" "$BUILD/grx-smi"
 
 echo "all mock checks passed"

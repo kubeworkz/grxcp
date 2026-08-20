@@ -194,7 +194,15 @@ kernel that is not at namespace scope, and two kernels sharing an unqualified
 name — the last because the device entry point comes from the unqualified name,
 so they would be one symbol on the device.
 
-The **CUDA SAMPLES GATE** builds and runs `tests/cuda_samples/`: ten CUDA
+The **HOST MATRIX GATE** compiles a grxcc program's host pass for
+`riscv64-linux-gnu`, because GRX-G100 hangs off a GRX930 and that is a RISC-V
+SoC. It compiles and does not link: the driver in the container is x86_64, so a
+riscv64 object has nothing to link against. The stronger claim about the runtime
+belongs to `ci/build_mock.sh --host riscv64-linux-gnu`, which cross-builds the
+whole mock stack and RUNS it under qemu-user — a planted
+`__builtin_ia32_rdtsc` was watched passing the native build and failing that one.
+
+The **CUDA SAMPLES GATE** builds and runs `tests/cuda_samples/`: eleven CUDA
 programs whose only concession to GRXCP is including `grx_cuda_compat.h`. It is
 the phase 4 exit gate's second claim, and its value is entirely in what the
 first pass found — eleven failures out of eleven, listed in that directory's

@@ -763,6 +763,62 @@ candidates on the other side make `threadIdx.x % warpSize` ambiguous.
 them. Without that, a device helper above the kernels reaches a host compiler
 that has never heard of `warpSize` or `__shfl_down_sync`.
 
+### 7.23 `cudaMemcpyToSymbol` works for `__constant__` and refuses `__device__` — **DRV, structural**
+
+CUDA's `cudaMemcpyToSymbol(c_filter, taps, sizeof(taps))` takes the HOST address
+of a `__constant__` variable and writes the device one. GRXCP now does that, and
+the shape of what it does not do is forced by one measured fact.
+
+**The driver gives the host no handle for a loaded module's memory.** After
+`vx_module_load_bytes`, `vx_buffer_reserve` over any address inside the image
+answers:
+
+```
+address range overlaps with existing allocation -
+requested=[0x1800017e0-0x1800027e0], existing=[0x180000000, 0x180002000]
+```
+
+So there is no way to write a symbol where it lives. What the runtime does
+instead is edit **its own copy of the image** — `grxcc` embeds the fat binary as
+a `const` array, and `__grxRegisterFatBinary` copies it to a writable buffer for
+exactly this reason — and then reload the module.
+
+That divides the feature cleanly:
+
+| | write | read back |
+|---|---|---|
+| `__constant__` | patch the image; reload if already loaded | **exact** — the device cannot write it, so the host copy is authoritative |
+| `__device__` | patch the image; reload if already loaded | **refused** — a kernel can write it, and nothing here can see what it wrote |
+
+Returning the host copy for a `__device__` symbol would answer with the value it
+had before the kernel ran. That is a wrong answer rather than a missing feature,
+so `grxMemcpyFromSymbol` returns `grxErrorNotSupported` and says why.
+
+**`grxcc` supplies the link.** A declaration gives it a name; only the linker
+knows the address and the size, so after the device compile `grxcc` reads them
+out of the ELF with `llvm-nm` and registers them against the host stand-in's
+address. A variable that no kernel references is dropped by `--gc-sections` and
+is not in the table — `grxcc` warns, and `grxMemcpyToSymbol` on it reports
+`grxErrorInvalidSymbol`, which is the truth: there is no device symbol.
+
+**The cost is a module reload**, and it is worth knowing where it falls. A write
+before the first launch is free — the module has not been loaded, so patching
+the image is all there is to do, and that is where a CUDA program sets its
+constants. A write afterwards releases every kernel handle from that image and
+reloads it on the next launch. `tests/cuda_samples/12_constant_memory.cu` does
+both, and the second was watched failing with the invalidation removed: the
+first write still landed and the second silently did not.
+
+`grxGetSymbolAddress` returns the link address, which is where the loader puts
+it. It is usable as a kernel argument and **not** usable with `grxMemcpy`, which
+refuses an address its allocation map does not own — and the map cannot own this
+one, which is the same fact this section opened with.
+
+This also gives §7.2's `__constant__` its point. The lowering is still read-only
+global memory with no broadcast path, and `constantMemoryIsGlobal` still reports
+that — but the variable is now reachable from the host, which is what made
+`__constant__` worth writing in the first place.
+
 ---
 
 ## 8. Where GRX-G100 is *ahead* of the reference

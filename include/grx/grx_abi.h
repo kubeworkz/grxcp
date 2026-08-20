@@ -77,6 +77,27 @@ typedef struct {
   uint8_t  reserved[3];
 } grx_kernel_param;
 
+// ---------------------------------------------------------------------------
+// Device variable descriptors
+//
+// CUDA's cudaMemcpyToSymbol takes the HOST address of a `__device__` or
+// `__constant__` variable and finds the device one. grxcc supplies the link:
+// it reads the address and size out of the device ELF it just built and
+// registers them against the host stand-in's address.
+//
+// `device_vma` is the symbol's link address, which for GRX-G100 is also where
+// it lands -- every image links at STARTUP_ADDR and is loaded there. The
+// runtime still computes the payload offset as (vma - min_vma) rather than
+// trusting that, so the day a loader relocates, one subtraction changes.
+// ---------------------------------------------------------------------------
+
+typedef struct {
+  const char* device_name;   // as it appears in the device ELF's symbol table
+  uint64_t    device_vma;    // link address of the symbol
+  uint32_t    size;          // bytes
+  uint32_t    is_constant;   // 1 for __constant__, 0 for __device__
+} grx_var_desc;
+
 typedef struct {
   const char*             device_name;   // entry name in the .vxbin symbol table
   const grx_kernel_param* params;

@@ -37,6 +37,10 @@ typedef enum {
   grxErrorDeviceLost              = 14,
   grxErrorTimeout                 = 15,
   grxErrorFileNotFound            = 16,
+  // A __device__ or __constant__ symbol the runtime has no registration for --
+  // usually a program that named a host variable which is not a device one, or
+  // one compiled without grxcc, which is what does the registering.
+  grxErrorInvalidSymbol           = 17,
   grxErrorUnknown                 = 999
 } grxError_t;
 

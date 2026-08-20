@@ -66,6 +66,7 @@ const char* grxGetErrorName(grxError_t e) {
     case grxErrorDeviceLost:             return "grxErrorDeviceLost";
     case grxErrorTimeout:                return "grxErrorTimeout";
     case grxErrorFileNotFound:           return "grxErrorFileNotFound";
+    case grxErrorInvalidSymbol:          return "grxErrorInvalidSymbol";
     case grxErrorUnknown:                return "grxErrorUnknown";
   }
   return "grxErrorUnknown";
@@ -90,6 +91,7 @@ const char* grxGetErrorString(grxError_t e) {
     case grxErrorDeviceLost:             return "device or backend became unreachable";
     case grxErrorTimeout:                return "wait timed out";
     case grxErrorFileNotFound:           return "no such file";
+    case grxErrorInvalidSymbol:          return "not a registered device symbol";
     case grxErrorUnknown:                return "unknown error";
   }
   return "unknown error";

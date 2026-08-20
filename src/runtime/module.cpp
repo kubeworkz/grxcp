@@ -58,9 +58,25 @@ struct FunctionState {
 // A fat binary registered by a host program's static initializers. Modules are
 // loaded per device on first use: a four-device process loads each image once
 // per device, not once per launch.
+//
+// The image is COPIED rather than pointed at. grxcc emits it as a `const`
+// array, so it lands in .rodata and writing to it would fault -- and
+// grxMemcpyToSymbol has to write to it, because the driver gives the host no
+// handle for a loaded module's memory (see the symbol section at the bottom of
+// this file). One copy per fat binary, made once at registration.
 struct FatBinary {
-  const void*                image = nullptr;
+  std::vector<uint8_t>       shadow;      // the writable image
+  const void*                image = nullptr;   // -> shadow.data()
   std::map<int, vx_module_h> modules;
+};
+
+// A __device__ or __constant__ variable, keyed by its HOST stand-in's address.
+struct Variable {
+  FatBinary*  fatbin = nullptr;
+  std::string device_name;
+  uint64_t    vma = 0;
+  uint32_t    size = 0;
+  bool        is_constant = false;
 };
 
 struct Registration {
@@ -111,6 +127,9 @@ std::map<const void*, Registration>& g_registry() {   // host stub -> kernel
 }
 std::vector<FatBinary*>& g_fatbins() {
   static std::vector<FatBinary*> v; return v;
+}
+std::map<const void*, Variable>& g_variables() {   // host address -> symbol
+  static std::map<const void*, Variable> m; return m;
 }
 
 // Select the device image to load. Preference order: images the device can run,
@@ -423,8 +442,21 @@ grxError_t grxModuleGetFunction(grxFunction_t* func, grxModule_t module,
 // ---------------------------------------------------------------------------
 
 void** __grxRegisterFatBinary(void* fatCubin) {
-  auto* fb  = new grxcp::FatBinary();
-  fb->image = fatCubin;
+  auto* fb = new grxcp::FatBinary();
+  // Copy it. The registered array is const, and grxMemcpyToSymbol writes here.
+  if (fatCubin) {
+    grx_fatbin_header header{};
+    std::memcpy(&header, fatCubin, sizeof(header));
+    const size_t size = (header.magic == GRX_FATBIN_MAGIC)
+                            ? (size_t)header.total_size : 0;
+    if (size >= sizeof(header)) {
+      fb->shadow.assign((const uint8_t*)fatCubin,
+                        (const uint8_t*)fatCubin + size);
+      fb->image = fb->shadow.data();
+    } else {
+      fb->image = fatCubin;   // not a container; nothing to patch either
+    }
+  }
   std::lock_guard<std::mutex> lock(grxcp::g_module_mutex());
   grxcp::g_fatbins().push_back(fb);
   return reinterpret_cast<void**>(fb);
@@ -444,6 +476,12 @@ void __grxUnregisterFatBinary(void** handle) {
     }
   }
   for (auto& kv : fb->modules) vx_module_release(kv.second);
+
+  for (auto it = grxcp::g_variables().begin();
+       it != grxcp::g_variables().end();) {
+    if (it->second.fatbin == fb) it = grxcp::g_variables().erase(it);
+    else ++it;
+  }
 
   auto pos = std::find(grxcp::g_fatbins().begin(), grxcp::g_fatbins().end(), fb);
   if (pos != grxcp::g_fatbins().end()) grxcp::g_fatbins().erase(pos);
@@ -478,13 +516,167 @@ void __grxRegisterKernelDesc(void** handle, const char* hostStub,
   reg.has_layout  = true;
 }
 
-void __grxRegisterVar(void** handle, const char* hostVar,
-                      const char* deviceName, size_t size, int isConstant) {
-  (void)handle; (void)hostVar; (void)deviceName; (void)size; (void)isConstant;
-  // __device__ and __constant__ variable registration needs a device symbol
-  // table the .vxbin footer does not carry yet. Recording the request without
-  // being able to honour grxMemcpyToSymbol would be worse than not accepting
-  // it: this is a no-op until the symbol path exists.
+void __grxRegisterVar(void** handle, const void* hostVar,
+                      const grx_var_desc* desc) {
+  if (!handle || !hostVar || !desc || !desc->device_name) return;
+  std::lock_guard<std::mutex> lock(grxcp::g_module_mutex());
+  grxcp::Variable& v = grxcp::g_variables()[hostVar];
+  v.fatbin      = reinterpret_cast<grxcp::FatBinary*>(handle);
+  v.device_name = desc->device_name;
+  v.vma         = desc->device_vma;
+  v.size        = desc->size;
+  v.is_constant = desc->is_constant != 0;
+}
+
+// ---------------------------------------------------------------------------
+// Device variables
+// ---------------------------------------------------------------------------
+//
+// THE MECHANISM, because it explains every limit below.
+//
+// GRX-G100's driver has no host-side handle for a loaded module's memory.
+// Measured, not assumed: after vx_module_load_bytes, vx_buffer_reserve over any
+// address inside the image answers
+//
+//   address range overlaps with existing allocation -
+//   requested=[0x1800017e0-0x1800027e0], existing=[0x180000000, 0x180002000]
+//
+// So there is no way to write a symbol where it lives. What GRXCP does instead
+// is edit its own copy of the image and reload the module -- which is exact for
+// a __constant__ symbol, because the device cannot write one, and WRONG for a
+// __device__ symbol, because a kernel that wrote one would leave this copy
+// stale. The second case is refused rather than approximated.
+//
+// A write before the first launch costs nothing: the module has not been loaded
+// yet, so patching the image is all there is to do. A write afterwards costs a
+// module reload, which is a real cost and is the reason CUDA programs set their
+// constants once during setup.
+
+namespace {
+
+// Where `vma` lives inside the fat binary's payload, or npos.
+//
+//   [grx_fatbin_header][entries][.vxbin: min_vma(8) max_vma(8) payload...]
+//
+// The offset within the .vxbin payload is (vma - min_vma) + 16, which is the
+// same arithmetic src/runtime/sanitize.cpp uses to patch its anchor. Sharing
+// the formula rather than the code because they patch different things for
+// different reasons; sharing a comment is what keeps them honest.
+size_t symbol_offset(const grxcp::FatBinary& fb, uint64_t vma, uint32_t size) {
+  if (fb.shadow.size() < sizeof(grx_fatbin_header)) return (size_t)-1;
+  grx_fatbin_header header{};
+  std::memcpy(&header, fb.shadow.data(), sizeof(header));
+  if (header.magic != GRX_FATBIN_MAGIC || header.num_entries == 0)
+    return (size_t)-1;
+
+  grx_fatbin_entry entry{};
+  std::memcpy(&entry, fb.shadow.data() + sizeof(header), sizeof(entry));
+  if (entry.kind != GRX_IMAGE_VXBIN || entry.offset + 16 > fb.shadow.size())
+    return (size_t)-1;
+
+  uint64_t min_vma = 0, max_vma = 0;
+  std::memcpy(&min_vma, fb.shadow.data() + entry.offset, 8);
+  std::memcpy(&max_vma, fb.shadow.data() + entry.offset + 8, 8);
+  if (vma < min_vma || vma + size > max_vma) return (size_t)-1;
+
+  const size_t off = (size_t)entry.offset + 16 + (size_t)(vma - min_vma);
+  if (off + size > fb.shadow.size()) return (size_t)-1;
+  return off;
+}
+
+// Drop every loaded module and resolved kernel belonging to this image, so the
+// next launch reloads it with the edit applied. Caller holds the lock.
+void invalidate_fatbin(grxcp::FatBinary* fb) {
+  for (auto& kv : grxcp::g_registry()) {
+    if (kv.second.fatbin != fb) continue;
+    for (auto& rk : kv.second.resolved) vx_kernel_release(rk.second);
+    kv.second.resolved.clear();
+  }
+  for (auto& kv : fb->modules) vx_module_release(kv.second);
+  fb->modules.clear();
+}
+
+// Find a registered symbol and validate the caller's window into it.
+grxError_t find_symbol(const void* symbol, size_t count, size_t offset,
+                       grxcp::Variable** out, size_t* payload_off) {
+  if (!symbol) return grxErrorInvalidValue;
+  auto it = grxcp::g_variables().find(symbol);
+  if (it == grxcp::g_variables().end()) return grxErrorInvalidSymbol;
+  grxcp::Variable& v = it->second;
+  if (offset > v.size || count > v.size - offset) return grxErrorInvalidValue;
+  if (!v.fatbin) return grxErrorInvalidKernelImage;
+
+  const size_t base = symbol_offset(*v.fatbin, v.vma, v.size);
+  if (base == (size_t)-1) return grxErrorInvalidKernelImage;
+  *out = &v;
+  *payload_off = base + offset;
+  return grxSuccess;
+}
+
+}  // namespace
+
+grxError_t grxMemcpyToSymbol(const void* symbol, const void* src, size_t count,
+                             size_t offset, grxMemcpyKind kind) {
+  if (!src) return grxcp::set_error(grxErrorInvalidValue);
+  if (kind != grxMemcpyHostToDevice && kind != grxMemcpyDefault)
+    return grxcp::set_error(grxErrorInvalidMemcpyDirection);
+  if (count == 0) return grxSuccess;
+
+  std::lock_guard<std::mutex> lock(grxcp::g_module_mutex());
+  grxcp::Variable* v = nullptr;
+  size_t off = 0;
+  grxError_t e = find_symbol(symbol, count, offset, &v, &off);
+  if (e != grxSuccess) return grxcp::set_error(e);
+
+  std::memcpy(v->fatbin->shadow.data() + off, src, count);
+  invalidate_fatbin(v->fatbin);
+  return grxSuccess;
+}
+
+grxError_t grxMemcpyFromSymbol(void* dst, const void* symbol, size_t count,
+                               size_t offset, grxMemcpyKind kind) {
+  if (!dst) return grxcp::set_error(grxErrorInvalidValue);
+  if (kind != grxMemcpyDeviceToHost && kind != grxMemcpyDefault)
+    return grxcp::set_error(grxErrorInvalidMemcpyDirection);
+  if (count == 0) return grxSuccess;
+
+  std::lock_guard<std::mutex> lock(grxcp::g_module_mutex());
+  grxcp::Variable* v = nullptr;
+  size_t off = 0;
+  grxError_t e = find_symbol(symbol, count, offset, &v, &off);
+  if (e != grxSuccess) return grxcp::set_error(e);
+
+  // A __device__ symbol is writable BY THE DEVICE, and nothing here can see
+  // what it wrote. Returning the host copy would answer with the value the
+  // symbol had before the kernel ran, which is a wrong answer rather than a
+  // missing feature -- so it is refused, and says why.
+  if (!v->is_constant) return grxcp::set_error(grxErrorNotSupported);
+
+  std::memcpy(dst, v->fatbin->shadow.data() + off, count);
+  return grxSuccess;
+}
+
+grxError_t grxGetSymbolAddress(void** devPtr, const void* symbol) {
+  if (!devPtr) return grxcp::set_error(grxErrorInvalidValue);
+  std::lock_guard<std::mutex> lock(grxcp::g_module_mutex());
+  auto it = grxcp::g_variables().find(symbol);
+  if (it == grxcp::g_variables().end())
+    return grxcp::set_error(grxErrorInvalidSymbol);
+  // The link address, which is where the loader puts it. Useful for a kernel
+  // argument; NOT useful for grxMemcpy, which refuses an address its allocation
+  // map does not know -- and the map cannot know this one.
+  *devPtr = (void*)(uintptr_t)it->second.vma;
+  return grxSuccess;
+}
+
+grxError_t grxGetSymbolSize(size_t* size, const void* symbol) {
+  if (!size) return grxcp::set_error(grxErrorInvalidValue);
+  std::lock_guard<std::mutex> lock(grxcp::g_module_mutex());
+  auto it = grxcp::g_variables().find(symbol);
+  if (it == grxcp::g_variables().end())
+    return grxcp::set_error(grxErrorInvalidSymbol);
+  *size = it->second.size;
+  return grxSuccess;
 }
 
 }  // extern "C"
