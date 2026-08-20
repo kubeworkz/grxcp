@@ -419,8 +419,16 @@ grxError_t grxFuncGetAttributes(grxFuncAttributes* attr, const void* func) {
   attr->maxThreadsPerBlock = (k.max_threads_per_block > 0)
                                  ? (int)k.max_threads_per_block
                                  : d->prop.maxThreadsPerBlock;
-  // Reported as unknown until grxcc emits register metadata into the .vxbin
-  // footer. A fabricated number here would be worse than -1: code tunes on it.
+  // The count grxcc measured from the device ELF: distinct architectural
+  // registers, integer and floating-point together, touched anywhere in the
+  // kernel's directly-reachable call graph. -1 when it could not be measured --
+  // an indirect call, a module loaded from a .vxbin rather than compiled by
+  // grxcc, or no llvm-objdump at build time. A fabricated number would be worse
+  // than -1, because code tunes on it.
+  //
+  // Unlike CUDA, this number does NOT bound occupancy here: see
+  // resident_blocks_per_sm below, which deliberately has no register term.
+  // cuda_mapping.md section 7.21.
   attr->numRegs       = k.num_regs;
   attr->ptxVersion    = -1;   // GRXCP has no PTX analogue by design
   attr->binaryVersion = 1;

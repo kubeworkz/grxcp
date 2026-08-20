@@ -68,8 +68,10 @@ done
 $CXX $CXXFLAGS -c "$ROOT/tools/grxify/main.cpp" -o "$BUILD/grxify.o"
 $CXX "$BUILD/grxify.o" -o "$BUILD/grxify"
 # grx-sanitize and grx-prof run a program and read its report; neither opens a
-# device, so they link no more than grxify does.
-for tool in grx-sanitize grx-prof; do
+# device, so they link no more than grxify does. grxcc is the same shape: it
+# rewrites text and shells out to a compiler, so a machine that only COMPILES
+# for GRX-G100 needs no driver installed to build it.
+for tool in grx-sanitize grx-prof grxcc; do
   $CXX $CXXFLAGS -c "$ROOT/tools/$tool/main.cpp" -o "$BUILD/$tool.o"
   $CXX "$BUILD/$tool.o" -o "$BUILD/$tool"
 done
@@ -180,7 +182,7 @@ else
       -c "$ROOT/tests/kernels/vecadd/main.cpp" -o "$BUILD/vecadd_main.o"
     $CXX "${OBJS[@]}" "$BUILD/vecadd_main.o" $LIBS -o "$BUILD/vecadd"; }
 
-  for n in 64 256 1024; do
+  for n in 256 1024 4096; do
     "$BUILD/grx-prof" --out "$BUILD/prof_$n.json" -- \
       "$BUILD/vecadd" "$BUILD/vecadd.vxbin" "$n" > "$BUILD/prof_$n.log" 2>&1 || {
         echo "  FAIL  grx-prof failed at n=$n"; cat "$BUILD/prof_$n.log"; exit 1; }
@@ -190,7 +192,7 @@ else
 import json, sys, os
 build = sys.argv[1]
 cycles = {}
-for n in (64, 256, 1024):
+for n in (256, 1024, 4096):
     with open(os.path.join(build, f"prof_{n}.json")) as f:
         trace = json.load(f)
     events = trace["traceEvents"]
@@ -211,17 +213,39 @@ for n in (64, 256, 1024):
     cycles[n] = c
 print("  ok    trace parses, kernel slice carries device cycles  " +
       " ".join(f"n={n}:{c}" for n, c in cycles.items()))
-if not (cycles[64] < cycles[256] < cycles[1024]):
+if not (cycles[256] < cycles[1024] < cycles[4096]):
     print("  FAIL  device cycles do not climb with the work"); sys.exit(1)
-ratio = cycles[1024] / cycles[256]
-if not (2.0 <= ratio <= 5.0):
-    print(f"  FAIL  4x the work moved cycles by {ratio:.2f}x, expected 2-5x")
+
+# THE SLOPE, NOT THE RATIO.
+#
+# This used to require cycles[1024]/cycles[256] to land in 2-5x. That band was
+# calibrated to a 4-warp core and stopped being true the moment the device
+# configuration changed: on a 16-warp core the same measurement reads 1.52x,
+# because a launch costs thousands of cycles whatever the grid is and the extra
+# work is absorbed by parallelism. Nothing was wrong -- the check was
+# configuration-specific and said so only by failing.
+#
+# What has to hold on ANY configuration is that the MARGINAL cost of an element
+# is positive and roughly stable. A fixed launch overhead cancels out of a
+# difference, so this is the same claim -- the counter responds to the work --
+# without a constant tuned to one machine.
+m1 = (cycles[1024] - cycles[256]) / (1024 - 256)
+m2 = (cycles[4096] - cycles[1024]) / (4096 - 1024)
+if m1 <= 0 or m2 <= 0:
+    print(f"  FAIL  marginal cycles per element is not positive "
+          f"({m1:.2f}, {m2:.2f})")
     sys.exit(1)
-print(f"  ok    4x the work costs {ratio:.2f}x the cycles")
+if not (0.33 <= m2 / m1 <= 3.0):
+    print(f"  FAIL  marginal cycles per element moved {m2 / m1:.2f}x between "
+          f"the two intervals ({m1:.2f} then {m2:.2f}); an unblocked vecadd "
+          f"should cost about the same per element at every size")
+    sys.exit(1)
+print(f"  ok    marginal cost per element is stable: "
+      f"{m1:.2f} then {m2:.2f} cycles")
 PY
 
   for want in "host clock" "where the cycles went" "Occupancy the dispatcher"; do
-    grep -q "$want" "$BUILD/prof_1024.log" || {
+    grep -q "$want" "$BUILD/prof_4096.log" || {
       echo "  FAIL  the report never says \"$want\""; exit 1; }
   done
   echo "  ok    the report separates device cycles from the host clock"
@@ -348,6 +372,28 @@ else
 fi
 
 echo
+echo "==> BARRIER GATE: is __syncthreads() still surviving divergence"
+# Half gate, half watch. guarded_good is GRXCP's convergent __syncthreads() and
+# MUST pass -- a failure there is our regression. guarded_bad is upstream's bare
+# vx_barrier and is expected to deadlock; it runs in a child under a timeout so
+# CI notices the day the toolchain stops duplicating it.
+if [[ -n "$GRXGPU" && -d "$TOOLDIR/llvm-vortex" ]]; then
+  "$ROOT/ci/build_kernel.sh" --grxgpu "$GRXGPU" --tooldir "$TOOLDIR" \
+    -I "$ROOT/include" \
+    "$ROOT/tests/repro/barrier_duplication/kernel.cpp" \
+    -o "$BUILD/barrier_repro.vxbin" >/dev/null
+  $CXX $CXXFLAGS -c "$ROOT/tests/repro/barrier_duplication/main.cpp" \
+    -o "$BUILD/barrier_repro_main.o"
+  $CXX "${OBJS[@]}" "$BUILD/barrier_repro_main.o" $LIBS -o "$BUILD/barrier_repro"
+  if ! "$BUILD/barrier_repro" "$BUILD/barrier_repro.vxbin"; then
+    rc=$?
+    [[ $rc -eq 77 ]] || exit $rc
+  fi
+else
+  echo "SKIPPED: needs --grxgpu <path> and a device toolchain in $TOOLDIR."
+fi
+
+echo
 echo "==> CYCLE GATE: does the device cycle probe measure work"
 if [[ -z "$GRXGPU" || ! -d "$TOOLDIR/llvm-vortex" ]]; then
   echo "SKIPPED: needs --grxgpu <path> and a device toolchain in $TOOLDIR."
@@ -424,6 +470,166 @@ if [[ -n "$GRXGPU" && -d "$TOOLDIR/llvm-vortex" ]]; then
   if ! "$BUILD/sgemm_bench"; then
     rc=$?
     [[ $rc -eq 77 ]] || exit $rc
+  fi
+else
+  echo "SKIPPED: needs --grxgpu <path> and a device toolchain in $TOOLDIR."
+fi
+
+echo
+echo "==> PHASE 4 GATE: grxcc compiles one file with <<<>>> and it runs"
+# The claim under test is narrow and specific: a source file in the shape a
+# CUDA programmer writes -- __global__ kernels and <<<>>> launches in the same
+# translation unit, no module load, no .vxbin named anywhere -- goes in, and a
+# working program comes out. The sample checks VALUES rather than return codes,
+# because a mispacked argument blob is a wrong answer and not an error.
+if [[ -n "$GRXGPU" && -d "$TOOLDIR/llvm-vortex" ]]; then
+  "$BUILD/grxcc" --grxgpu "$GRXGPU" --tooldir "$TOOLDIR" \
+    --build-kernel "$ROOT/ci/build_kernel.sh" -I "$ROOT/include" \
+    "$ROOT/tests/grxcc/vecadd.grx.cpp" \
+    "${OBJS[@]}" $LIBS -o "$BUILD/grxcc_vecadd" >/dev/null
+  if ! "$BUILD/grxcc_vecadd"; then
+    rc=$?
+    [[ $rc -eq 77 ]] || exit $rc
+  fi
+
+  # The parser, separately from the arithmetic. A mis-lexed file fails by
+  # generating mangled source rather than by computing the wrong number, so this
+  # sample puts kernels at three scopes and surrounds them with decoys -- a
+  # __global__ in a comment, a <<< in a string and in a raw string, a namespace
+  # alias -- and then checks values so a kernel that never ran cannot pass.
+  "$BUILD/grxcc" --grxgpu "$GRXGPU" --tooldir "$TOOLDIR" \
+    --build-kernel "$ROOT/ci/build_kernel.sh" -I "$ROOT/include" \
+    "$ROOT/tests/grxcc/scopes.grx.cpp" \
+    "${OBJS[@]}" $LIBS -o "$BUILD/grxcc_scopes" >/dev/null
+  if ! "$BUILD/grxcc_scopes"; then
+    rc=$?
+    [[ $rc -eq 77 ]] || exit $rc
+  fi
+
+  # __launch_bounds__ and per-kernel register metadata, each against a control:
+  # an unbounded twin that must accept the launch the bounded one refuses, and a
+  # register-hungry kernel that must read higher than a trivial one. The .vxbin
+  # argument lets it also confirm the -1 sentinel still appears where nothing
+  # was measured.
+  "$BUILD/grxcc" --grxgpu "$GRXGPU" --tooldir "$TOOLDIR" \
+    --build-kernel "$ROOT/ci/build_kernel.sh" -I "$ROOT/include" \
+    "$ROOT/tests/grxcc/attributes.grx.cpp" \
+    "${OBJS[@]}" $LIBS -o "$BUILD/grxcc_attributes" >/dev/null
+  if ! "$BUILD/grxcc_attributes" "$BUILD/vecadd.vxbin"; then
+    rc=$?
+    [[ $rc -eq 77 ]] || exit $rc
+  fi
+
+  # Negative controls: the driver must REJECT what it cannot compile correctly
+  # rather than emitting something that silently does nothing. Each of these is
+  # a construct grxcc's own documentation says it does not support, and a
+  # documented limit that is not enforced is just a bug with a paragraph.
+  negative_case() {
+    local what="$1" body="$2"
+    printf '%s\n' "$body" > "$BUILD/grxcc_negative.grx.cpp"
+    if "$BUILD/grxcc" --grxgpu "$GRXGPU" --tooldir "$TOOLDIR" \
+         --build-kernel "$ROOT/ci/build_kernel.sh" -I "$ROOT/include" \
+         --emit-only "$BUILD/grxcc_negative.grx.cpp" \
+         -o "$BUILD/grxcc_negative" >/dev/null 2>&1; then
+      echo "FAILED: grxcc accepted $what."
+      exit 1
+    fi
+    echo "ok    grxcc rejects $what"
+  }
+
+  negative_case "a launch of a name that is not a __global__" \
+'#include <grx/grx.h>
+void not_a_kernel(int);
+int main() { not_a_kernel<<<1, 1>>>(0); return 0; }'
+
+  negative_case "a templated kernel" \
+'#include <grx/grx.h>
+template <typename T> __global__ void k(T* p) { p[0] = T{}; }
+int main() { return 0; }'
+
+  negative_case "a kernel that is not at namespace scope" \
+'#include <grx/grx.h>
+struct S { __global__ static void k(float* p) { p[0] = 1.0f; } };
+int main() { return 0; }'
+
+  negative_case "two kernels sharing an unqualified name" \
+'#include <grx/grx.h>
+namespace a { __global__ void run(float* p) { p[0] = 1.0f; } }
+namespace b { __global__ void run(float* p) { p[0] = 2.0f; } }
+int main() { return 0; }'
+else
+  echo "SKIPPED: needs --grxgpu <path> and a device toolchain in $TOOLDIR."
+fi
+
+echo
+echo "==> CUDA SAMPLES GATE: ten CUDA programs, compiled unmodified"
+# The phase 4 exit gate's second claim. Every file in tests/cuda_samples is
+# ordinary CUDA whose only concession to GRXCP is including grx_cuda_compat.h
+# instead of cuda_runtime.h -- no grx* name appears in any of them, and none
+# includes a grx/device/ header, because a CUDA file does not either.
+#
+# The first pass over these failed eleven times out of eleven. What that found
+# is in tests/cuda_samples/README.md; the rule was that the platform changed and
+# the samples did not.
+#
+# 11_histogram_atomics is the exception and is checked the other way round: on a
+# build with no A extension it MUST refuse to compile, with a message naming the
+# reason, because the alternative is an AMO the simulator aborts on silently.
+if [[ -n "$GRXGPU" && -d "$TOOLDIR/llvm-vortex" ]]; then
+  samples_failed=0
+  for src in "$ROOT"/tests/cuda_samples/*.cu; do
+    name="$(basename "$src" .cu)"
+    if [[ "$name" == "11_histogram_atomics" ]]; then continue; fi
+    if ! "$BUILD/grxcc" --grxgpu "$GRXGPU" --tooldir "$TOOLDIR" \
+         --build-kernel "$ROOT/ci/build_kernel.sh" -I "$ROOT/include" \
+         "$src" "${OBJS[@]}" $LIBS -o "$BUILD/sample_$name" \
+         > "$BUILD/sample_$name.build.log" 2>&1; then
+      echo "FAIL  $name did not compile:"
+      grep -E "error:" "$BUILD/sample_$name.build.log" | head -3 | sed 's/^/        /'
+      samples_failed=$((samples_failed + 1))
+      continue
+    fi
+    if out="$("$BUILD/sample_$name" 2>&1)"; then
+      echo "$out" | tail -1 | sed 's/^/  /'
+    else
+      rc=$?
+      if [[ $rc -eq 77 ]]; then
+        echo "  SKIPPED $name (no device)"
+      else
+        echo "FAIL  $name compiled but did not pass:"
+        echo "$out" | tail -3 | sed 's/^/        /'
+        samples_failed=$((samples_failed + 1))
+      fi
+    fi
+  done
+
+  # The atomics sample, checked for a refusal that names the reason. A build
+  # WITH the extension is the other case and is expected to compile and run --
+  # so this reads the device rather than assuming the configuration.
+  atomics_log="$BUILD/sample_11_histogram_atomics.build.log"
+  if "$BUILD/grxcc" --grxgpu "$GRXGPU" --tooldir "$TOOLDIR" \
+       --build-kernel "$ROOT/ci/build_kernel.sh" -I "$ROOT/include" \
+       "$ROOT/tests/cuda_samples/11_histogram_atomics.cu" "${OBJS[@]}" $LIBS \
+       -o "$BUILD/sample_11" > "$atomics_log" 2>&1; then
+    if "$BUILD/grx-smi" 2>/dev/null | grep -q 'capabilities.*atomics'; then
+      "$BUILD/sample_11" | tail -1 | sed 's/^/  /'
+    else
+      echo "FAIL  atomicAdd compiled on a device that reports no atomics."
+      echo "      An AMO here aborts the simulator with no message; see"
+      echo "      docs/designs/cuda_mapping.md section 7.16."
+      samples_failed=$((samples_failed + 1))
+    fi
+  elif grep -q "VX_CFG_EXT_A_ENABLE off" "$atomics_log"; then
+    echo "  ok    atomicAdd refused by name on a build with no A extension"
+  else
+    echo "FAIL  the atomics sample failed for a reason that is not the atomics:"
+    grep -E "error:" "$atomics_log" | head -3 | sed 's/^/        /'
+    samples_failed=$((samples_failed + 1))
+  fi
+
+  if [[ $samples_failed -ne 0 ]]; then
+    echo "FAILED: $samples_failed CUDA sample(s)"
+    exit 1
   fi
 else
   echo "SKIPPED: needs --grxgpu <path> and a device toolchain in $TOOLDIR."

@@ -671,6 +671,99 @@ compiler research — VOLT already lowers SIMT kernels; `vxbin.py` already
 builds multi-entry binaries; the CUDA host-side lowering pattern is public
 and well understood.
 
+**Progress — the first increment is closed.** `tools/grxcc` is an orchestrator:
+it locates `__global__` definitions and `<<<>>>` launches by text, emits a
+device pass and a host pass, shells the device pass out to `ci/build_kernel.sh`
+(the same recipe the library kernels use, deliberately — a kernel built by
+`grxcc` and one built by hand must come from one set of flags), embeds the
+`.vxbin` as a fat-binary array, and links. `tests/grxcc/vecadd.grx.cpp` compiles
+and runs correctly on `simx`; it is the PHASE 4 GATE in `ci/run_real.sh`.
+
+Three things that had to be settled to get there, each now a rule rather than an
+accident:
+
+- **The device pass stops at the last kernel.** A frontend compiles the whole
+  file for the device and simply never diagnoses host-only bodies it does not
+  need. An orchestrator has no such option — `main`'s `std::printf` is an error
+  for a bare-metal target whether or not the device would run it. So "device
+  code first, host code after" is a rule of `grxcc`, and it fails visibly (an
+  undeclared name at the device compile) rather than quietly.
+- **The device header goes in just before the first kernel, not at the top.**
+  It defines `printf` and `assert` as macros, which is what lets a kernel call
+  them, and those macros poison `<cstdio>` if the standard header is parsed
+  afterwards.
+- **Registration state cannot be a file-scope global.** `__grxRegisterFatBinary`
+  runs from a static initializer in the user's translation unit, and the order
+  against the runtime's own globals is the linker's choice. The first program
+  `grxcc` built segfaulted in `_Rb_tree_decrement` before printing anything;
+  `src/runtime/module.cpp` now holds those tables in function-local statics,
+  which also fixes the mirror-image problem at exit.
+
+That work also surfaced a silent-deadlock defect in the toolchain that had been
+invisible for three phases, because every kernel gate before it launched one
+warp per CTA over an evenly-dividing grid: `__syncthreads()` is duplicated
+across a divergent branch and a diverged warp arrives at the barrier twice. See
+`cuda_mapping.md` section 7.20 and `tests/repro/barrier_duplication/`.
+
+**`__launch_bounds__` and register metadata are done, with one correction to
+the plan.** The scope line said "per-kernel register metadata into the `.vxbin`
+footer". It does not go in the footer: `grxcc` measures the count from the
+device ELF and emits it into the kernel descriptor the host TU already carries,
+which needs no format change and works for any image `grxcc` builds. A `.vxbin`
+loaded by `grxModuleLoad` still reports -1, correctly — nobody measured it.
+
+Both landed with the semantics stated rather than assumed. `maxThreadsPerBlock`
+is enforced; `minBlocksPerMultiprocessor` has nothing to trade against on this
+hardware and draws a note instead of silence; and `numRegs` does not bound
+occupancy here the way it does on CUDA, because the CTA dispatcher does not gate
+admission on register count. `cuda_mapping.md` section 7.21.
+
+**The ten CUDA samples compile unmodified, and run.** `tests/cuda_samples/`
+holds eleven programs written as CUDA is written — `cudaMalloc`, `__shared__`,
+`__syncthreads`, `__shfl_down_sync`, `cooperative_groups`, streams and events —
+whose only concession to GRXCP is including `grx_cuda_compat.h` instead of
+`cuda_runtime.h`. No `grx*` name appears in any of them.
+
+**The first pass failed eleven times out of eleven,** and the rule was that the
+platform changed and the samples did not. What that produced:
+
+- **Static `__shared__` works** (five of eleven needed it). `grxcc` collects a
+  kernel's declarations into a struct over the CTA's local-memory slot and puts
+  its size in `static_smem` — a descriptor field the runtime had been adding to
+  `lmem_size` since phase 1 that nothing had ever set. Gap register 7.10 is
+  closed.
+- **`grx_atomic.h`**, refusing by name on a build without the A extension rather
+  than leaving `atomicAdd` undeclared — or worse, emitting an AMO the simulator
+  aborts on with no message (7.16).
+- **The device pass supplies what a CUDA frontend supplies**: `grx_warp.h`,
+  `grx_cg.h`, `grx_atomic.h`, `warpSize`, `<cooperative_groups.h>`, `<math.h>`
+  through the compat header, and `__device__`-only functions dropped from the
+  host pass the way `nvcc` drops them (7.22).
+- **The `printf` poisoning is fixed at its source** rather than dodged by
+  insertion order, which stopped working the moment a file's own include order
+  put a GRX header above `<cstdio>`.
+
+**Two gates moved when the device did, and both were the device telling the
+truth.** The samples needed a configuration that can run standard CUDA block
+sizes, so the sysroot went from 4 warps per core to 16 —
+`maxThreadsPerBlock` 16 → 64.
+
+- The **prof gate** required `cycles[1024]/cycles[256]` to land in 2–5× and read
+  1.52×. That band was calibrated to a 4-warp core: a launch costs thousands of
+  cycles whatever the grid is, and a wider core absorbs the extra work into
+  parallelism. It now measures the **marginal** cycles per element, which a
+  fixed overhead cancels out of — 8.43 then 8.32 on the wide core.
+- The **phase 3 exit gate** read 4.80× at 16×16×16 against a 5× threshold. Cause:
+  the tensor kernel's parallelism is bounded by its output tile count (8 tiles
+  for 16 warp slots) while sgemm has one thread per element and saturates. The
+  threshold now applies where both kernels fill the core, and the starved shapes
+  are printed with their speedups and the reason rather than dropped. The tile
+  bound is itself a consequence of the single-CTA workaround for the tensor
+  unit's multi-CTA deadlock, so it goes when that is fixed.
+
+**Remaining in this phase:** the host target matrix (`x86_64-linux-gnu` and
+`riscv64-linux-gnu`), and the measurable conformance improvement.
+
 ---
 
 ## Phase 5 — Concurrency and asynchrony (≈3 engineer-months, gated externally)

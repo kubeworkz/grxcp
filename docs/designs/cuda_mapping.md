@@ -315,7 +315,7 @@ hardcodes 16 has to be edited; a kernel written against
 Absorbing the tiling difference is library-level work — grxBLAS — which is
 where it belongs.
 
-### 7.10 Static `__shared__` — **NEW (toolchain), was silently wrong**
+### 7.10 Static `__shared__` — **CLOSED: grxcc carves the slot**
 
 CUDA's `__shared__ float tile[64];` needs the toolchain to carve a per-CTA slot
 of local memory at link time. Nothing in this stack does that: the device link
@@ -329,11 +329,45 @@ yet. The first one that did was the DXA gate, where the engine wrote to local
 memory while the kernel read the symbol from the image; the tile came back as
 the poison value it had been pre-filled with.
 
-`__shared__` is now `__attribute__((unavailable(...)))`, so using it is a
-compile error naming the alternative. Dynamic shared memory works and is the
-supported route: `grx::shared_memory<T>()` returns this CTA's slot, sized by the
-launch's `sharedMem` argument — that is CUDA's `extern __shared__`, and porting
-a static declaration means moving it there.
+`__shared__` became `__attribute__((unavailable(...)))` — a compile error naming
+the alternative, which was the honest replacement for a silent lie.
+
+**That refusal is now lifted, because `grxcc` carves the slot.** The missing
+piece was never a link-time section; it was somebody computing a per-kernel size
+and a per-variable offset, and a source-to-source driver is in exactly the right
+place to do it. `grxcc` collects a kernel's static declarations into one struct,
+places it over the CTA's local-memory slot, and replaces each declaration with a
+reference to a member:
+
+```cpp
+__shared__ float As[BLOCK][BLOCK];      // what the author wrote
+auto& As = ((__grx_smem_k*)::grx::shared_memory<void>())->As;   // what compiles
+```
+
+The compiler computes every size and offset from the author's own declaration
+text, so `float tile[TILE][TILE + 1]` works without `grxcc` knowing what `TILE`
+is. `sizeof` the struct goes into the kernel descriptor's `static_smem`, which
+`src/runtime/launch.cpp` has added to `lmem_size` since phase 1:
+
+```cpp
+info.lmem_size = (uint32_t)(shared + k.static_smem);
+```
+
+Nothing had ever set that field. Dynamic shared memory — `extern __shared__` —
+lands after the static block, so a kernel with both gets both in that order.
+
+Five of the eleven programs in `tests/cuda_samples` failed on this before it was
+implemented, which is the measure of how central the construct is: a CUDA
+tutorial reaches for a static `__shared__` tile in its second example.
+
+**Still refused:** a `__shared__` inside a nested scope. `grxcc` hoists these
+into one per-kernel block and cannot do that for a declaration whose scope is an
+`if` or a loop body, so it is diagnosed rather than silently hoisted — silently
+hoisting one would change its lifetime.
+
+**Only through `grxcc`.** A kernel compiled by hand with `ci/build_kernel.sh`
+sees the unavailable attribute, correctly: nothing in that path computes the
+offsets.
 
 ### 7.11 Tensor maps are device slots, not values — **HW, structural**
 
@@ -550,6 +584,184 @@ what "yes" would look like tends to conclude the whole tensor path is missing.
 The consequence for the roadmap: int8 GEMM is implementable but needs a sysroot
 built with the flag, and it cannot be gated until one exists. bf16 GEMM is not
 implementable at all and has been struck rather than deferred.
+
+### 7.20 `__syncthreads()` does not survive divergence — **TOOLCHAIN, silent deadlock**
+
+`vx_barrier()` in `sw/kernel/include/vx_intrinsics.h` is
+
+```c
+__asm__ volatile (".insn r %0, 4, 0, x0, %1, %2" :: "i"(RISCV_CUSTOM0),
+                  "r"(barried_id), "r"(num_warps) : "memory");
+```
+
+and `__syncthreads()` in `vx_spawn2.h` is that and nothing else. `volatile`
+means the barrier may not be deleted and may not be reordered against other
+volatile operations. It does **not** mean the barrier may not be **duplicated**.
+LLVM spells that with the `convergent` and `noduplicate` function attributes,
+and an asm statement carries neither.
+
+So at `-O3` the optimizer tail-duplicates the block holding the barrier into
+both arms of a preceding divergent branch. From
+
+```c
+if (i < n) s[t] = in[i];
+__syncthreads();
+if (i < n) out[i] = s[blockDim.x - 1 - t];
+```
+
+VOLT emits
+
+```
+vx_split_n a0, a7          # diverge on (i < n)
+beqz  a7, .else
+  ... ; vx_bar a5, a7      # copy 1
+  j .join
+.else:
+  vx_bar a1, a2            # copy 2
+.join:
+vx_join a0
+```
+
+On a split/join reconvergence stack a **diverged** warp executes both arms, so
+it arrives at the barrier **twice**. A CTA of two warps then posts three
+arrivals against a barrier expecting two: the first two release, and the third
+opens a generation nobody will ever join. The kernel hangs, with no error, no
+diagnostic, and no wrong answer to notice.
+
+**Why it stayed hidden for three phases.** The extra arrival needs a warp to
+actually diverge *and* needs more than one warp per CTA — a single-warp CTA's
+barrier is satisfied by its own first arrival. Every GRXCP kernel gate before
+phase 4 launched one warp per CTA over a grid that divided evenly. The first
+program `grxcc` ever compiled had a ragged tail and two warps per CTA, and hung.
+The failure is data-dependent: the same kernel passes on `n = 48` and hangs on
+`n = 43`.
+
+**What GRXCP does.** `include/grx/device/grx_device.h` `#undef`s the upstream
+`__syncthreads()` and redefines it over a wrapper marked
+`convergent, noduplicate`; `grx_cg.h` routes `cluster_group::sync()` and
+`grid_group::sync()` through the same wrapper for `vortex::group_barrier` and
+`vortex::gbarrier`. Measured by counting `vx_bar` in the kernel above:
+
+| attributes on the wrapper | `vx_bar` in the kernel |
+|---|---|
+| *(none)* | **2** — the bug |
+| `convergent` | 1 |
+| `noduplicate` | 1 |
+| `noinline, convergent, noduplicate` | 1 |
+
+Either attribute alone is sufficient on this compiler; both are kept because
+which one a future optimizer respects is not a promise anyone has made.
+`noinline` is not what makes it work — the wrapper is inlined anyway at `-O3`.
+
+**This fixes GRXCP's kernels, not the tree.** Anything else calling
+`vx_barrier`, `vx_barrier_arrive` or `vx_barrier_wait` through the upstream
+headers has the same exposure, including `vortex::barrier` used directly.
+`tests/repro/barrier_duplication/` runs both spellings — GRXCP's must pass, and
+upstream's is expected to deadlock under a timeout — so CI reports the day it is
+fixed. The upstream fix is the same three words on `vx_barrier` and friends, so
+callers do not each have to know.
+
+### 7.21 `numRegs` is a fact about the code, not an occupancy input — **SEMANTIC**
+
+`grxFuncGetAttributes.numRegs` reported -1 from phase 1 to phase 4, because
+nothing in the toolchain emitted a per-kernel register count: there is no
+`ptxas -v` here to print one, and the `.vxbin` footer carries entry points and
+nothing else.
+
+It is now a number, measured rather than declared. `grxcc` disassembles the
+device ELF it just built, walks each kernel's reachable call graph, and counts
+distinct architectural registers. The definition is narrow, and worth stating
+because a CUDA programmer will assume the CUDA one:
+
+- Integer and floating-point registers are counted **together**. A GRX-G100
+  thread has one file of each, and CUDA's single number has nowhere to put two.
+- `x0` (`zero`) is excluded. It is a wire, not storage.
+- The count covers the entry point and everything reachable from it by a
+  **direct** call.
+- An **indirect** call (`jalr`), or a direct call to a symbol not in the image,
+  makes the count unknowable, and the kernel reports **-1** rather than a lower
+  bound dressed up as a measurement.
+- A module loaded from a `.vxbin` that `grxcc` did not build reports -1, because
+  nobody measured it. The gate checks that too — the sentinel has to keep
+  working after the number arrives, or "unmeasured" quietly becomes "zero".
+
+**What it does not do.** On CUDA hardware, register count bounds occupancy: the
+SM's register file is a shared budget and a hungry kernel fits fewer blocks.
+Here it does not. `resident_blocks_per_sm` in `src/runtime/launch.cpp` bounds
+occupancy by warp slots, CTA slots and shared memory, and deliberately has no
+register term, because the CTA dispatcher does not gate admission on register
+count. A register bound added to look familiar would report an occupancy the
+hardware does not enforce.
+
+The same asymmetry gives `__launch_bounds__` a split answer:
+
+| argument | CUDA | GRXCP |
+|---|---|---|
+| `maxThreadsPerBlock` | caps the block, informs the compiler | **enforced** — a larger block is `grxErrorLaunchOutOfResources`, and `grxFuncGetAttributes` reports the bound |
+| `minBlocksPerMultiprocessor` | asks the compiler to spill until N blocks fit | **nothing to do** — occupancy has no register term, so there is nothing to trade against |
+
+`grxcc` emits a note on the second rather than accepting it silently, because an
+author who wrote it is expecting a spill that will not happen. The maximum is
+kept as the **source expression** the author wrote, not a parsed integer:
+`__launch_bounds__(kBlock * 2)` is legal CUDA, `grxcc` has no constant
+evaluator, and the host compiler does. Same principle as `grx_launch_shim.h`'s
+`as_dim` overloads — hand the job to the compiler that already has the answer.
+
+### 7.22 What a CUDA file gets without asking — **COMPAT SURFACE**
+
+A `.cu` file writes `__shfl_down_sync`, `cooperative_groups::reduce`,
+`atomicAdd`, `warpSize` and `fabsf` without including anything for them: the
+CUDA frontend and `cuda_runtime.h` supply those names. `grxcc` has no frontend,
+so it supplies them itself, and the list is not a convenience — it is the
+difference between "compiles unmodified" and "compiles after you add four
+includes".
+
+The device pass includes `grx_device.h`, `grx_warp.h`, `grx_cg.h` and
+`grx_atomic.h`. It does **not** include `grx_wmma.h`, `grx_pipeline.h` or
+`grx_cycles.h`: those are GRX APIs with no CUDA spelling a source file would
+already be using, so including them would only slow every device compile down.
+
+Three things had to be built for this to hold, and each was found by a sample
+rather than predicted:
+
+**`grx_cuda_compat.h` includes `<math.h>`,** because `cuda_runtime.h` does. Three
+samples call `fabsf` without including `<cmath>`, and they are right to.
+
+**`<cooperative_groups.h>` and `<cooperative_groups/reduce.h>` exist,** as
+forwarding headers onto `grx_cg.h` — which already ends with
+`namespace cooperative_groups = grx::cg;`, so nothing is papered over and the
+documented differences (tile width, grid-barrier scope, `map_shared_rank`) apply
+unchanged. They are guarded to the device pass: `grx_cg.h` bottoms out in the
+CTA CSRs, and the host half of the same file must still compile. The host gets
+an empty `namespace cooperative_groups {}`, which is enough to make a file-scope
+`namespace cg = cooperative_groups;` legal — the actual uses are inside kernel
+bodies, which the host pass replaces with launch stubs. That is CUDA's
+`__CUDA_ARCH__` fence with grxcc's spelling.
+
+**`grx_device.h` includes `<cstdio>` and `<cassert>` before defining `printf`
+and `assert` as macros.** The macros are what let a kernel call them; they also
+poison the standard headers if those are parsed afterwards:
+
+```
+cstdio:127:11: error: no member named 'printf' in the global namespace
+```
+
+`grxcc` used to dodge that by choosing where to insert the header, and the dodge
+worked only while `grxcc` controlled the order. It does not: a file writing
+`#include <cooperative_groups.h>` above `#include <cstdio>` pulls the device
+header in through the first and hits the poison on the second. Pulling the
+standard headers in first makes the ordering irrelevant — a later `#include
+<cstdio>` is a no-op, so there is nothing left to poison.
+
+`warpSize` is an object with a single `operator int()`, not a macro. It is also
+a member of `grxDeviceProp_t`, and a macro would rewrite `prop.warpSize` in any
+translation unit that saw both. One conversion operator and not two, because
+`threadIdx.x` is itself a struct with a user-defined conversion and two
+candidates on the other side make `threadIdx.x % warpSize` ambiguous.
+
+`__device__`-only functions are dropped from the host pass, the way `nvcc` drops
+them. Without that, a device helper above the kernels reaches a host compiler
+that has never heard of `warpSize` or `__shfl_down_sync`.
 
 ---
 

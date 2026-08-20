@@ -14,6 +14,9 @@
   allocator's own map
 - [grx-prof](designs/grx_prof.md) — the kernel timeline and the performance
   counters, and why the host clock and device cycles are never mixed
+- [grxcc](designs/grxcc.md) — the single-source driver: why it orchestrates
+  rather than parses, where the two passes are cut, and exactly what a
+  text-level rewriter cannot see
 
 ## Reports
 

@@ -19,6 +19,13 @@
 
 #include "grx.h"
 
+// <cuda_runtime.h> pulls in the C math library, so a CUDA program that calls
+// fabsf or sqrtf without including <cmath> compiles. Three of the samples in
+// tests/cuda_samples do exactly that, and they are right to: it is what the
+// header they are replacing does. Matching it here costs nothing and removes a
+// whole class of "port failed on line 74" that has nothing to do with the GPU.
+#include <math.h>
+
 // --- errors ---------------------------------------------------------------
 #define cudaError_t                     grxError_t
 #define cudaSuccess                     grxSuccess

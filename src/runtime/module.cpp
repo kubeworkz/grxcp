@@ -75,11 +75,43 @@ struct Registration {
   std::map<int, vx_kernel_h>    resolved;   // device -> kernel
 };
 
-std::mutex g_module_mutex;
-std::map<grxModule_t, ModuleState*>     g_modules;
-std::map<grxFunction_t, FunctionState*> g_functions;
-std::map<const void*, Registration>     g_registry;   // host stub -> kernel
-std::vector<FatBinary*>                 g_fatbins;
+// THESE ARE FUNCTION-LOCAL STATICS, not file-scope globals, and that is not a
+// style choice.
+//
+// __grxRegisterFatBinary and __grxRegisterKernelDesc are called from a STATIC
+// INITIALIZER in the user's translation unit -- that is the whole mechanism by
+// which a grxcc-compiled program knows its own kernels. Static initializers
+// across translation units run in an order the linker chooses, and a linker
+// that puts the user's object before this one runs the registrar's constructor
+// before the runtime's std::map has been constructed. The observed failure is
+// a SIGSEGV inside _Rb_tree_decrement on a tree whose header nodes are still
+// zero: the first program grxcc ever built crashed this way before it printed
+// anything.
+//
+// A function-local static is constructed on first use, so the first
+// registration builds the map it is about to insert into. It also fixes the
+// mirror-image problem at exit: because the map finishes construction inside
+// the registrar's constructor, it is destroyed AFTER the registrar, so
+// __grxUnregisterFatBinary never walks a destroyed container.
+//
+// std::mutex would in fact be safe as a global here (libstdc++ gives it a
+// constexpr default constructor, so it is constant-initialized before any code
+// runs), but it is wrapped the same way rather than resting on a guarantee the
+// standard does not make.
+std::mutex& g_module_mutex() { static std::mutex m; return m; }
+
+std::map<grxModule_t, ModuleState*>& g_modules() {
+  static std::map<grxModule_t, ModuleState*> m; return m;
+}
+std::map<grxFunction_t, FunctionState*>& g_functions() {
+  static std::map<grxFunction_t, FunctionState*> m; return m;
+}
+std::map<const void*, Registration>& g_registry() {   // host stub -> kernel
+  static std::map<const void*, Registration> m; return m;
+}
+std::vector<FatBinary*>& g_fatbins() {
+  static std::vector<FatBinary*> v; return v;
+}
 
 // Select the device image to load. Preference order: images the device can run,
 // most-demanding first, so a tensor-core build wins over a portable one on
@@ -186,9 +218,9 @@ grxError_t resolve_registration(Registration& reg, int device,
 }  // namespace
 
 bool lookup_registration(const void* stub, int device, KernelBinding* out) {
-  std::lock_guard<std::mutex> lock(g_module_mutex);
-  auto it = g_registry.find(stub);
-  if (it == g_registry.end()) return false;
+  std::lock_guard<std::mutex> lock(g_module_mutex());
+  auto it = g_registry().find(stub);
+  if (it == g_registry().end()) return false;
 
   vx_kernel_h kernel = nullptr;
   if (resolve_registration(it->second, device, &kernel) != grxSuccess)
@@ -255,17 +287,17 @@ grxError_t load_module_tracked(grxModule_t* module, const void* image,
 
   auto handle = reinterpret_cast<grxModule_t>(s);
   {
-    std::lock_guard<std::mutex> lock(g_module_mutex);
-    g_modules[handle] = s;
+    std::lock_guard<std::mutex> lock(g_module_mutex());
+    g_modules()[handle] = s;
   }
   *module = handle;
   return grxSuccess;
 }
 
 bool lookup_function(grxFunction_t func, KernelBinding* out) {
-  std::lock_guard<std::mutex> lock(g_module_mutex);
-  auto it = g_functions.find(func);
-  if (it == g_functions.end()) return false;
+  std::lock_guard<std::mutex> lock(g_module_mutex());
+  auto it = g_functions().find(func);
+  if (it == g_functions().end()) return false;
   if (out) {
     out->kernel      = it->second->kernel;
     out->params      = nullptr;
@@ -325,19 +357,19 @@ grxError_t grxModuleLoad(grxModule_t* module, const char* path) {
 grxError_t grxModuleUnload(grxModule_t module) {
   grxcp::ModuleState* s = nullptr;
   {
-    std::lock_guard<std::mutex> lock(grxcp::g_module_mutex);
-    auto it = grxcp::g_modules.find(module);
-    if (it == grxcp::g_modules.end())
+    std::lock_guard<std::mutex> lock(grxcp::g_module_mutex());
+    auto it = grxcp::g_modules().find(module);
+    if (it == grxcp::g_modules().end())
       return grxcp::set_error(grxErrorInvalidResourceHandle);
     s = it->second;
-    grxcp::g_modules.erase(it);
+    grxcp::g_modules().erase(it);
 
     // Functions resolved from this module become invalid with it.
-    for (auto fit = grxcp::g_functions.begin(); fit != grxcp::g_functions.end();) {
+    for (auto fit = grxcp::g_functions().begin(); fit != grxcp::g_functions().end();) {
       if (fit->second->owner == s) {
         vx_kernel_release(fit->second->kernel);
         delete fit->second;
-        fit = grxcp::g_functions.erase(fit);
+        fit = grxcp::g_functions().erase(fit);
       } else {
         ++fit;
       }
@@ -354,9 +386,9 @@ grxError_t grxModuleGetFunction(grxFunction_t* func, grxModule_t module,
 
   grxcp::ModuleState* s = nullptr;
   {
-    std::lock_guard<std::mutex> lock(grxcp::g_module_mutex);
-    auto it = grxcp::g_modules.find(module);
-    if (it == grxcp::g_modules.end())
+    std::lock_guard<std::mutex> lock(grxcp::g_module_mutex());
+    auto it = grxcp::g_modules().find(module);
+    if (it == grxcp::g_modules().end())
       return grxcp::set_error(grxErrorInvalidResourceHandle);
     s = it->second;
   }
@@ -379,8 +411,8 @@ grxError_t grxModuleGetFunction(grxFunction_t* func, grxModule_t module,
 
   auto handle = reinterpret_cast<grxFunction_t>(fs);
   {
-    std::lock_guard<std::mutex> lock(grxcp::g_module_mutex);
-    grxcp::g_functions[handle] = fs;
+    std::lock_guard<std::mutex> lock(grxcp::g_module_mutex());
+    grxcp::g_functions()[handle] = fs;
   }
   *func = handle;
   return grxSuccess;
@@ -393,28 +425,28 @@ grxError_t grxModuleGetFunction(grxFunction_t* func, grxModule_t module,
 void** __grxRegisterFatBinary(void* fatCubin) {
   auto* fb  = new grxcp::FatBinary();
   fb->image = fatCubin;
-  std::lock_guard<std::mutex> lock(grxcp::g_module_mutex);
-  grxcp::g_fatbins.push_back(fb);
+  std::lock_guard<std::mutex> lock(grxcp::g_module_mutex());
+  grxcp::g_fatbins().push_back(fb);
   return reinterpret_cast<void**>(fb);
 }
 
 void __grxUnregisterFatBinary(void** handle) {
   if (!handle) return;
   auto* fb = reinterpret_cast<grxcp::FatBinary*>(handle);
-  std::lock_guard<std::mutex> lock(grxcp::g_module_mutex);
+  std::lock_guard<std::mutex> lock(grxcp::g_module_mutex());
 
-  for (auto it = grxcp::g_registry.begin(); it != grxcp::g_registry.end();) {
+  for (auto it = grxcp::g_registry().begin(); it != grxcp::g_registry().end();) {
     if (it->second.fatbin == fb) {
       for (auto& kv : it->second.resolved) vx_kernel_release(kv.second);
-      it = grxcp::g_registry.erase(it);
+      it = grxcp::g_registry().erase(it);
     } else {
       ++it;
     }
   }
   for (auto& kv : fb->modules) vx_module_release(kv.second);
 
-  auto pos = std::find(grxcp::g_fatbins.begin(), grxcp::g_fatbins.end(), fb);
-  if (pos != grxcp::g_fatbins.end()) grxcp::g_fatbins.erase(pos);
+  auto pos = std::find(grxcp::g_fatbins().begin(), grxcp::g_fatbins().end(), fb);
+  if (pos != grxcp::g_fatbins().end()) grxcp::g_fatbins().erase(pos);
   delete fb;
 }
 
@@ -423,8 +455,8 @@ void __grxRegisterFunction(void** handle, const char* hostStub,
                            int maxThreads) {
   (void)minBlocks;
   if (!handle || !hostStub || !deviceName) return;
-  std::lock_guard<std::mutex> lock(grxcp::g_module_mutex);
-  auto& reg = grxcp::g_registry[(const void*)hostStub];
+  std::lock_guard<std::mutex> lock(grxcp::g_module_mutex());
+  auto& reg = grxcp::g_registry()[(const void*)hostStub];
   reg.device_name = deviceName;
   reg.fatbin      = reinterpret_cast<grxcp::FatBinary*>(handle);
   if (maxThreads > 0) reg.max_threads_per_block = (uint32_t)maxThreads;
@@ -433,8 +465,8 @@ void __grxRegisterFunction(void** handle, const char* hostStub,
 void __grxRegisterKernelDesc(void** handle, const char* hostStub,
                              const grx_kernel_desc* desc) {
   if (!handle || !hostStub || !desc) return;
-  std::lock_guard<std::mutex> lock(grxcp::g_module_mutex);
-  auto& reg = grxcp::g_registry[(const void*)hostStub];
+  std::lock_guard<std::mutex> lock(grxcp::g_module_mutex());
+  auto& reg = grxcp::g_registry()[(const void*)hostStub];
   reg.fatbin = reinterpret_cast<grxcp::FatBinary*>(handle);
   if (desc->device_name) reg.device_name = desc->device_name;
   reg.params.assign(desc->params, desc->params + desc->num_params);

@@ -48,6 +48,30 @@ namespace cg {
 // inside CTA 0's range -- so cooperative groups take the top two numbers and a
 // kernel picking its own counts up from 1.
 
+namespace detail {
+
+// The cross-CTA barriers go through the same convergent wrapper as
+// __syncthreads(), and for the same reason: vortex::group_barrier and
+// vortex::gbarrier bottom out in the same unmarked `volatile` inline asm, so
+// an optimizer is free to duplicate them across a divergent branch and hang
+// the kernel. grx_device.h has the disassembly of the failure.
+//
+// This is the only place these two forms are called from, so wrapping here
+// covers cooperative groups entirely.
+__attribute__((noinline, convergent, noduplicate))
+inline void group_barrier_wait(uint32_t bar_no, uint32_t participants) {
+  vortex::group_barrier bar(bar_no, participants);
+  bar.arrive_and_wait();
+}
+
+__attribute__((noinline, convergent, noduplicate))
+inline void grid_barrier_wait(uint32_t bar_no, uint32_t participants) {
+  vortex::gbarrier bar(bar_no, participants);
+  bar.arrive_and_wait();
+}
+
+}  // namespace detail
+
 // ---------------------------------------------------------------------------
 // thread_block
 // ---------------------------------------------------------------------------
@@ -334,8 +358,8 @@ public:
   __forceinline__ void sync() const {
     const uint32_t n = num_blocks();
     if (n <= 1) { __syncthreads(); return; }
-    vortex::group_barrier bar(grx::kClusterBarrierNo, grx::warps_per_cta() * n);
-    bar.arrive_and_wait();
+    detail::group_barrier_wait(grx::kClusterBarrierNo,
+                               grx::warps_per_cta() * n);
   }
 
   // A peer CTA's shared-memory base.
@@ -406,8 +430,7 @@ public:
   // across the device is VX_CSR_NUM_CORES, and using it here would wait for
   // arrivals the cluster's own mask cannot even represent.
   __forceinline__ void sync() const {
-    vortex::gbarrier bar(grx::kGridBarrierNo, VX_CFG_NUM_CORES);
-    bar.arrive_and_wait();
+    detail::grid_barrier_wait(grx::kGridBarrierNo, VX_CFG_NUM_CORES);
   }
 #else
   __attribute__((unavailable(

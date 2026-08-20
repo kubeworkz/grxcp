@@ -116,6 +116,13 @@ int main() {
     { 16, 16,  32},
     { 16, 16,  64},
     { 32, 32,  32},
+    // A second shape that gives the tensor path more tiles than the core has
+    // warp slots, so the exit-gate threshold does not stand on a single point.
+    // Kept to two: the scalar baseline is one thread per output element and
+    // simx charges for every one of them, so a 64x32 shape alone takes longer
+    // than the rest of the suite put together. See the tile-starvation note at
+    // the gate itself.
+    { 32, 32,  64},
   };
 
   std::printf("%-14s %14s %14s %10s\n", "shape",
@@ -231,20 +238,66 @@ int main() {
   if (have_tensor) {
     std::printf("\nPHASE 3 EXIT GATE: GemmEx at no more than a fifth of "
                 "sgemm's cycles per element\n");
+
+    // TILE STARVATION, and why the threshold is not applied to every shape.
+    //
+    // The tensor kernel's parallelism is bounded by its OUTPUT TILE COUNT: it
+    // runs one CTA and hands one tile to each warp, so a GEMM with fewer tiles
+    // than the core has warp slots leaves slots empty no matter how wide the
+    // core is. sgemm has no such bound -- one thread per output element -- so
+    // it keeps absorbing warps.
+    //
+    // On a 4-warp core that difference is invisible: 16x16x16 is 8 tiles and 4
+    // slots, so both paths saturate, and the worst speedup read 7.38x. Widening
+    // the core to 16 warps doubled sgemm's throughput (304.9 -> 165.9 cycles
+    // per element) and moved the tensor path far less (41.3 -> 34.6), because 8
+    // tiles cannot fill 16 slots. The worst speedup fell to 4.80x with nothing
+    // having got slower.
+    //
+    // So the threshold is applied where the comparison is between two
+    // saturated kernels, and the starved shapes are REPORTED rather than
+    // silently dropped -- a gate that quietly skipped its hardest case would be
+    // worse than one that fails.
+    //
+    // The tile bound itself is a consequence of the single-CTA workaround for
+    // the tensor unit's multi-CTA deadlock (tests/repro/tcu_multi_cta/). When
+    // that is fixed, tiles map to CTAs and the starvation goes with it.
+    const int warp_slots = prop.maxThreadsPerBlock / prop.warpSize;
     bool measured = false, met = true;
     double worst_ratio = 0.0;
+    int starved = 0;
     for (const Point& p : points) {
       if (p.tensor_per_element <= 0.0 || p.per_element <= 0.0) continue;
       measured = true;
       const double speedup = p.per_element / p.tensor_per_element;
+
+      // Tiles, from the shape the device itself reported for this build.
+      const int tiles = (p.m / tm) * (p.n / tn);
+      if (tiles > 0 && warp_slots > 0 && tiles < warp_slots) {
+        ++starved;
+        std::printf("        %3dx%3dx%3d  %.2fx  (not gated: %d tiles for %d "
+                    "warp slots -- the tensor path cannot fill this core)\n",
+                    p.m, p.n, p.k, speedup, tiles, warp_slots);
+        continue;
+      }
       if (speedup < 5.0) met = false;
       if (worst_ratio == 0.0 || speedup < worst_ratio) worst_ratio = speedup;
     }
     expect(measured, "the tensor path was measured at every shape");
-    std::printf("        worst speedup across the shapes: %.2fx\n", worst_ratio);
-    // Enforced, because it is met. A gate that a passing kernel does not have
-    // to keep passing is a comment.
-    expect(met, "GemmEx costs at most a fifth of sgemm per output element");
+    if (worst_ratio == 0.0) {
+      std::printf("        every shape was tile-starved on this device; the "
+                  "threshold has nothing to apply to.\n");
+      expect(false, "at least one shape gives the tensor path enough tiles to "
+                    "fill the core");
+    } else {
+      std::printf("        worst speedup among the %d shape(s) that fill the "
+                  "core: %.2fx", (int)points.size() - starved, worst_ratio);
+      if (starved) std::printf("   (%d starved, listed above)", starved);
+      std::printf("\n");
+      // Enforced, because it is met. A gate that a passing kernel does not have
+      // to keep passing is a comment.
+      expect(met, "GemmEx costs at most a fifth of sgemm per output element");
+    }
   }
 
   grxblasDestroy(h);

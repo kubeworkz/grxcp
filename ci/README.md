@@ -151,6 +151,59 @@ the same bug in an **uninstrumented** build must be reported as *unchecked*
 rather than as clean — otherwise every build that forgot `--sanitize` would
 pass this gate forever. See `docs/designs/grx_sanitize.md`.
 
+The **BARRIER GATE** (`tests/repro/barrier_duplication/`) is half gate and half
+watch, because it covers a defect GRXCP works around rather than owns. Two
+kernels do the same work behind a divergent branch: one calls GRXCP's
+`__syncthreads()`, one calls upstream's bare `vx_barrier`. The first **must**
+pass — it is the workaround, and a regression there is ours. The second is
+expected to deadlock, and runs in a child under a timeout so CI reports the day
+the toolchain stops duplicating it instead of hanging the run. `cuda_mapping.md`
+section 7.20 has the disassembly and the attribute ablation.
+
+The **PHASE 4 GATE** compiles `tests/grxcc/vecadd.grx.cpp` with `grxcc` and runs
+it. One file, `__global__` kernels and `<<<>>>` launches in the same translation
+unit, no module load and no `.vxbin` named anywhere. The sample checks computed
+VALUES rather than return codes, because a mispacked argument blob produces a
+wrong answer and not an error — a gate that only checked `grxSuccess` would pass
+a driver that put every argument at offset zero.
+
+`tests/grxcc/scopes.grx.cpp` covers the parser, which fails differently: a
+mis-lexed file produces mangled generated source, usually with an error naming
+something the author never wrote. It puts kernels at three scopes — file,
+anonymous namespace, nested named namespace — and surrounds them with decoys: a
+`__global__` in a comment, a `<<<` in a string and in a raw string, a namespace
+alias. It too checks values, so a kernel that was parsed but never registered
+cannot pass.
+
+`tests/grxcc/attributes.grx.cpp` covers `__launch_bounds__` and the register
+metadata, and both are checked against controls rather than against themselves.
+A bounded kernel must REFUSE an oversized block *and* an otherwise identical
+unbounded twin must ACCEPT the same launch — without the second half, a runtime
+that refused every large launch would pass. A register-hungry kernel must report
+MORE registers than a trivial one — without that, a driver returning any
+constant would pass, which is exactly the failure the -1 sentinel existed to
+prevent. Both ablations were run and both fail the gate. It also loads a
+`.vxbin` nobody measured and requires -1 back, so "unmeasured" cannot quietly
+become "zero"; that check runs FIRST, because only one module can be resident at
+a time and touching the file's own kernels takes the slot.
+
+Four negative controls follow, one per documented limit, because a limit that is
+written down but not enforced is a bug with a paragraph attached. `grxcc` must
+REJECT a launch of a name that is not a `__global__`, a templated kernel, a
+kernel that is not at namespace scope, and two kernels sharing an unqualified
+name — the last because the device entry point comes from the unqualified name,
+so they would be one symbol on the device.
+
+The **CUDA SAMPLES GATE** builds and runs `tests/cuda_samples/`: ten CUDA
+programs whose only concession to GRXCP is including `grx_cuda_compat.h`. It is
+the phase 4 exit gate's second claim, and its value is entirely in what the
+first pass found — eleven failures out of eleven, listed in that directory's
+README. The eleventh sample, `11_histogram_atomics.cu`, is checked the other way
+round: on a build with no A extension it must REFUSE to compile with a message
+naming the reason, because the alternative is an AMO the simulator aborts on
+silently. On a build with the extension it is expected to compile and run, and
+the gate reads the device's own capability bits to decide which it is.
+
 Without a toolchain, `run_real.sh` **skips** that gate and says so, rather than
 reporting a pass over work that never ran. The grxBLAS gate behaves the same
 way: no kernels built means it exits 77 (skip), because "nobody compiled it"
@@ -200,3 +253,24 @@ Three things keep that from happening:
 The right long-term fix belongs upstream: the sysroot should describe its own
 configuration, ideally through `vortex-kernel.pc`. Item 1 is shaped so that
 switching to an upstream mechanism is a one-line change.
+
+### The configuration this project builds against
+
+```
+./ci/build_sysroot.sh --grxgpu <path> --tooldir <path> \
+  --configs "-DVX_CFG_EXT_TCU_ENABLE -DVX_CFG_EXT_DXA_ENABLE \
+             -DVX_CFG_TCU_INT8_ENABLE -DVX_CFG_NUM_WARPS=16"
+```
+
+`VX_CFG_NUM_WARPS=16` is the one that is not about a hardware unit, and it is
+here because of `tests/cuda_samples/`. The toml default of 4 warps over a 4-lane
+warp gives `maxThreadsPerBlock` **16**, and five of the CUDA samples hard-code a
+32-thread block — as CUDA programs do, because no CUDA device has ever had a
+maximum block that small. Sixteen warps gives 64, and the samples run.
+
+It is worth knowing that widening the core moved two gates, because both moves
+were the device being more truthful rather than anything getting worse: the prof
+gate's cycles-ratio band was calibrated to a narrow core and is now a marginal
+cost, and the phase 3 GEMM gate exposed that the tensor path's parallelism is
+bounded by its output tile count. `docs/designs/grxcp_roadmap.md`'s phase 4
+progress note has both.

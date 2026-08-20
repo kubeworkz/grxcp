@@ -218,7 +218,16 @@ typedef struct {
   size_t constSizeBytes;
   size_t localSizeBytes;
   int    maxThreadsPerBlock;
-  int    numRegs;              // -1 until grxcc emits register metadata (phase 4)
+  // Distinct architectural registers -- integer and floating-point together,
+  // x0 excluded -- touched anywhere in the kernel's directly-reachable call
+  // graph, measured by grxcc from the device ELF. -1 when it could not be
+  // measured: an indirect call, or a module loaded from a .vxbin nobody
+  // compiled with grxcc.
+  //
+  // It does not bound occupancy on this hardware the way CUDA's does; the CTA
+  // dispatcher does not gate admission on register count. See
+  // docs/designs/cuda_mapping.md section 7.21.
+  int    numRegs;
   int    ptxVersion;           // -1: GRXCP has no PTX analogue by design
   int    binaryVersion;
   uint64_t deviceEntryPC;      // vx_kernel_address
