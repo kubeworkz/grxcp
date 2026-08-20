@@ -63,13 +63,22 @@ grxblasStatus_t grxblasGetStream(grxblasHandle_t handle, grxStream_t* stream);
 //
 //   C = alpha * A * B + beta * C,  A m x k, B k x n, C m x n, all column major
 //
-// WHAT THIS ACCEPTS. All four transpose combinations. Atype and Btype must be
-// GRX_R_16F and Ctype GRX_R_32F -- which is what this device's tensor unit
-// has; ask grxblasGetTensorTypes rather than assuming, because the type set is
-// a build-time choice. A type it cannot do returns
-// GRXBLAS_STATUS_NOT_SUPPORTED rather than falling back to the scalar kernel:
-// a silent fallback would turn "the tensor path does not handle this" into "the
-// tensor path is slow", and the caller would have no way to tell.
+// WHAT THIS ACCEPTS. All four transpose combinations, and two type pairings:
+//
+//   Atype = Btype = GRX_R_16F, Ctype = GRX_R_32F   fp16 in, fp32 accumulate
+//   Atype = Btype = GRX_R_8I,  Ctype = GRX_R_32I   int8 in, int32 accumulate
+//
+// The second is available only where the device's tensor unit was built with
+// int8 -- a build-time choice, so ask grxblasGetTensorTypes rather than
+// assuming. A pairing it cannot do returns GRXBLAS_STATUS_NOT_SUPPORTED rather
+// than falling back to the scalar kernel: a silent fallback would turn "the
+// tensor path does not handle this" into "the tensor path is slow", and the
+// caller would have no way to tell.
+//
+// alpha and beta are floats in both cases, because one signature cannot have
+// two scalar types. For the int8 pairing they must hold exactly representable
+// integers -- 2.0f is fine, 2.5f returns GRXBLAS_STATUS_INVALID_VALUE. Rounding
+// it silently would be a wrong answer the caller could not see happen.
 //
 // Leading dimensions bound op()'s STORAGE, not its logical shape: a transposed
 // A is stored k x m, so lda >= k.

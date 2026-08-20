@@ -94,12 +94,26 @@
 
 namespace w = grx::wmma;
 
-using elem = w::half;
-using tile = w::tile<elem>;
+// Two element pairings, one body.
+//
+// fp16 in / fp32 out and int8 in / int32 out are the same algorithm over
+// different tiles -- the int8 tile is twice as deep, because a register holds
+// four int8 where it holds two fp16. Templating rather than copying is the
+// point: the tuning below was measured once, and two files would let the
+// measured kernel and its sibling drift apart without anything noticing.
+//
+// What genuinely differs is derived here and nowhere else: the tile, the
+// fragment types, the staging sizes, and how the epilogue scales.
+template <typename In, typename Acc>
+struct cfg {
+  using elem = In;
+  using acc_t = Acc;
+  using tile = w::tile<In>;
 
-using frag_a   = w::fragment<w::matrix_a, tile::m, tile::n, tile::k, elem, w::row_major>;
-using frag_b   = w::fragment<w::matrix_b, tile::m, tile::n, tile::k, elem, w::col_major>;
-using frag_acc = w::fragment<w::accumulator, tile::m, tile::n, tile::k, float>;
+  using frag_a   = w::fragment<w::matrix_a, tile::m, tile::n, tile::k, In, w::row_major>;
+  using frag_b   = w::fragment<w::matrix_b, tile::m, tile::n, tile::k, In, w::col_major>;
+  using frag_acc = w::fragment<w::accumulator, tile::m, tile::n, tile::k, Acc>;
+};
 
 namespace {
 
@@ -121,29 +135,37 @@ namespace {
 constexpr uint32_t kTilesM = 1;
 constexpr uint32_t kTilesN = 1;
 
-constexpr uint32_t kBlockM = kTilesM * tile::m;   // rows of C per warp
-constexpr uint32_t kBlockN = kTilesN * tile::n;   // columns of C per warp
+template <typename In, typename Acc>
+struct smem_layout {
+  using tile = typename cfg<In, Acc>::tile;
+  static constexpr uint32_t blockM = kTilesM * tile::m;   // rows of C per warp
+  static constexpr uint32_t blockN = kTilesN * tile::n;   // columns per warp
 
-constexpr uint32_t kSmemA = kBlockM * tile::k * sizeof(uint16_t);
-constexpr uint32_t kSmemB = kBlockN * tile::k * sizeof(uint16_t);
-constexpr uint32_t kSmemC = tile::m * tile::n * sizeof(float);
-constexpr uint32_t kSmemTotal = kSmemA + kSmemB + kSmemC;
+  static constexpr uint32_t a = blockM * tile::k * sizeof(In);
+  static constexpr uint32_t b = blockN * tile::k * sizeof(In);
+  static constexpr uint32_t c = tile::m * tile::n * sizeof(Acc);
+  static constexpr uint32_t total = a + b + c;
+};
 
 }  // namespace
 
-__global__ void hgemm_tcu_shape(grxblas_hgemm_shape_args* __UNIFORM__ arg) {
-  if (arg->abi_version != GRXBLAS_HGEMM_ABI_VERSION) return;
+namespace {
+
+template <typename In, typename Acc>
+__forceinline__ void shape_body(grxblas_hgemm_shape_args* arg) {
+  using tile = typename cfg<In, Acc>::tile;
+  using sm   = smem_layout<In, Acc>;
   uint32_t* out = reinterpret_cast<uint32_t*>(arg->out);
   if (threadIdx.x != 0) return;
   out[GRXBLAS_HGEMM_SHAPE_M]    = (uint32_t)tile::m;
   out[GRXBLAS_HGEMM_SHAPE_N]    = (uint32_t)tile::n;
   out[GRXBLAS_HGEMM_SHAPE_K]    = (uint32_t)tile::k;
   out[GRXBLAS_HGEMM_SHAPE_WARP] = (uint32_t)VX_CFG_NUM_THREADS;
-  out[GRXBLAS_HGEMM_SHAPE_SMEM] = kSmemTotal;
+  out[GRXBLAS_HGEMM_SHAPE_SMEM] = sm::total;
   // The host has to program descriptor tiles that match what this kernel
   // stages, so it is told rather than left to derive it.
-  out[GRXBLAS_HGEMM_SHAPE_BLOCK_M] = kBlockM;
-  out[GRXBLAS_HGEMM_SHAPE_BLOCK_N] = kBlockN;
+  out[GRXBLAS_HGEMM_SHAPE_BLOCK_M] = sm::blockM;
+  out[GRXBLAS_HGEMM_SHAPE_BLOCK_N] = sm::blockN;
 
   // What this tensor unit can actually be fed. Reported rather than assumed:
   // a caller asking for int8 on a build without it should be told no by the
@@ -174,8 +196,32 @@ __global__ void hgemm_tcu_shape(grxblas_hgemm_shape_args* __UNIFORM__ arg) {
   out[GRXBLAS_HGEMM_SHAPE_TYPES] = types;
 }
 
-__global__ void hgemm_tcu(grxblas_hgemm_args* __UNIFORM__ arg) {
+}  // namespace
+
+__global__ void hgemm_tcu_shape(grxblas_hgemm_shape_args* __UNIFORM__ arg) {
   if (arg->abi_version != GRXBLAS_HGEMM_ABI_VERSION) return;
+  shape_body<w::half, float>(arg);
+}
+
+#if VX_CFG_TCU_INT8_ENABLED
+__global__ void igemm_tcu_shape(grxblas_hgemm_shape_args* __UNIFORM__ arg) {
+  if (arg->abi_version != GRXBLAS_HGEMM_ABI_VERSION) return;
+  shape_body<int8_t, int32_t>(arg);
+}
+#endif
+
+namespace {
+
+template <typename In, typename Acc>
+__forceinline__ void gemm_body(grxblas_hgemm_args* arg) {
+  using conf = cfg<In, Acc>;
+  using tile = typename conf::tile;
+  using sm   = smem_layout<In, Acc>;
+  using frag_a   = typename conf::frag_a;
+  using frag_b   = typename conf::frag_b;
+  using frag_acc = typename conf::frag_acc;
+  constexpr uint32_t kBlockM = sm::blockM;
+  constexpr uint32_t kBlockN = sm::blockN;
 
   grx::cycle_probe probe(reinterpret_cast<grxCycleSlot*>(arg->cycles));
 
@@ -187,18 +233,24 @@ __global__ void hgemm_tcu(grxblas_hgemm_args* __UNIFORM__ arg) {
   const uint32_t warps = grx::warps_per_cta();
   const uint32_t lane  = grx::lane_id();
 
-  uint8_t*  smem = grx::shared_memory<uint8_t>() + warp * kSmemTotal;
-  uint16_t* sA   = reinterpret_cast<uint16_t*>(smem);
-  uint16_t* sB   = reinterpret_cast<uint16_t*>(smem + kSmemA);
-  float*    sC   = reinterpret_cast<float*>(smem + kSmemA + kSmemB);
+  uint8_t* smem = grx::shared_memory<uint8_t>() + warp * sm::total;
+  In*      sA   = reinterpret_cast<In*>(smem);
+  In*      sB   = reinterpret_cast<In*>(smem + sm::a);
+  Acc*     sC   = reinterpret_cast<Acc*>(smem + sm::a + sm::b);
 
   grx::barrier    bar(arg->barrier + warp, /*num_warps=*/1);
   grx::tensor_map mapA(arg->slot_a);
   grx::tensor_map mapB(arg->slot_b);
 
-  float* C = reinterpret_cast<float*>(arg->c);
+  Acc* C = reinterpret_cast<Acc*>(arg->c);
   const uint32_t m = arg->m, n = arg->n, ldc = arg->ldc;
-  const float alpha = arg->alpha, beta = arg->beta;
+  // The scalars arrive as floats whatever the output type, because the public
+  // entry point takes floats. For an integer GEMM the host has already checked
+  // that they are exactly representable integers -- a non-integral alpha on an
+  // int32 output is refused there rather than rounded here, where the caller
+  // could not see it happen.
+  const Acc alpha = (Acc)arg->alpha;
+  const Acc beta  = (Acc)arg->beta;
 
   for (uint32_t b = warp; b < arg->tiles; b += warps) {
     const uint32_t block_row = b % arg->m_tiles;
@@ -209,7 +261,7 @@ __global__ void hgemm_tcu(grxblas_hgemm_args* __UNIFORM__ arg) {
     frag_acc acc[kTilesM][kTilesN];
     for (uint32_t i = 0; i < kTilesM; ++i)
       for (uint32_t j = 0; j < kTilesN; ++j)
-        w::fill_fragment(acc[i][j], 0.0f);
+        w::fill_fragment(acc[i][j], (Acc)0);
 
     for (uint32_t step = 0; step < arg->k_steps; ++step) {
       const uint32_t k0 = step * (uint32_t)tile::k;
@@ -251,9 +303,9 @@ __global__ void hgemm_tcu(grxblas_hgemm_args* __UNIFORM__ arg) {
       if (k_valid < (uint32_t)tile::k) {
         const uint32_t W = grx::warp_size();
         for (uint32_t i = lane; i < kBlockM * (uint32_t)tile::k; i += W)
-          if ((i % (uint32_t)tile::k) >= k_valid) sA[i] = 0;
+          if ((i % (uint32_t)tile::k) >= k_valid) sA[i] = In{};
         for (uint32_t i = lane; i < kBlockN * (uint32_t)tile::k; i += W)
-          if ((i % (uint32_t)tile::k) >= k_valid) sB[i] = 0;
+          if ((i % (uint32_t)tile::k) >= k_valid) sB[i] = In{};
         __syncwarp();
       }
 
@@ -264,11 +316,11 @@ __global__ void hgemm_tcu(grxblas_hgemm_args* __UNIFORM__ arg) {
       frag_b fb[kTilesN];
       for (uint32_t i = 0; i < kTilesM; ++i)
         w::load_matrix_sync(
-            fa[i], reinterpret_cast<const elem*>(sA + i * tile::m * tile::k),
+            fa[i], reinterpret_cast<const In*>(sA + i * tile::m * tile::k),
             tile::k);
       for (uint32_t j = 0; j < kTilesN; ++j)
         w::load_matrix_sync(
-            fb[j], reinterpret_cast<const elem*>(sB + j * tile::n * tile::k),
+            fb[j], reinterpret_cast<const In*>(sB + j * tile::n * tile::k),
             tile::k);
 
       for (uint32_t i = 0; i < kTilesM; ++i)
@@ -297,12 +349,12 @@ __global__ void hgemm_tcu(grxblas_hgemm_args* __UNIFORM__ arg) {
           const uint32_t col = base_col + idx % (uint32_t)tile::n;
           if (row >= m || col >= n) continue;
 
-          const float value = sC[idx];
-          float* dst = &C[row + col * ldc];
+          const Acc value = sC[idx];
+          Acc* dst = &C[row + col * ldc];
           // Reading C when beta is zero would be wrong as well as wasteful:
           // the caller may pass uninitialised memory, and 0 * NaN is NaN.
-          *dst = (beta == 0.0f) ? (alpha * value)
-                                : (alpha * value + beta * *dst);
+          *dst = (beta == (Acc)0) ? (Acc)(alpha * value)
+                                  : (Acc)(alpha * value + beta * *dst);
         }
         __syncwarp();
       }
@@ -311,3 +363,20 @@ __global__ void hgemm_tcu(grxblas_hgemm_args* __UNIFORM__ arg) {
 
   probe.finish();
 }
+
+}  // namespace
+
+__global__ void hgemm_tcu(grxblas_hgemm_args* __UNIFORM__ arg) {
+  if (arg->abi_version != GRXBLAS_HGEMM_ABI_VERSION) return;
+  gemm_body<w::half, float>(arg);
+}
+
+// The int8 sibling. Same body, a tile twice as deep, and an epilogue that
+// scales in int32 -- see cfg<> at the top of this file for everything that
+// differs between them, which is deliberately all in one place.
+#if VX_CFG_TCU_INT8_ENABLED
+__global__ void igemm_tcu(grxblas_hgemm_args* __UNIFORM__ arg) {
+  if (arg->abi_version != GRXBLAS_HGEMM_ABI_VERSION) return;
+  gemm_body<int8_t, int32_t>(arg);
+}
+#endif

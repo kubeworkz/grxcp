@@ -602,8 +602,43 @@ tolerance at all** — not even the "chosen so it is exact" kind the fp16 gate
 needs. Watched failing: declaring B `row_major` instead of `col_major` makes all
 32 elements wrong.
 
-Still open in phase 3: int8 through `grxblasGemmEx`, autotuned tile selection,
-and the WGMMA warp-group forms.
+**Progress — int8 GEMM through `grxblasGemmEx`, and phase 3 v1 is done.**
+
+`Atype = Btype = GRX_R_8I` with `Ctype = GRX_R_32I`, all four transpose
+combinations, ragged shapes and padded leading dimensions, checked against an
+integer reference with no tolerance at all.
+
+The tensor GEMM kernel is now one templated body instantiated twice rather than
+two files. The two pairings are the same algorithm over different tiles — int8
+is 8x4x16 where fp16 is 8x4x8 — and everything that genuinely differs (the
+tile, the fragment types, the staging sizes, how the epilogue scales) is
+derived in one `cfg<In, Acc>` at the top of the file. Two files would have let
+the measured kernel and its sibling drift apart with nothing noticing.
+
+`alpha` and `beta` stay floats, because one signature cannot carry two scalar
+types. For the integer pairing they must *be* integers: `2.5f` is refused
+rather than rounded, since rounding it would be a wrong answer the caller never
+sees happen.
+
+The library asks the device for the int8 geometry separately instead of scaling
+the fp16 one, and checks that the two tiles share m and n — if they ever stop
+sharing it the blocking scheme is not shared either, and this is the place that
+would notice.
+
+**What remains of phase 3, and why it is not being done now.**
+
+*Autotuned tile selection.* The tuning sweep in `kernels/hgemm_tcu.cpp` was run
+and recorded: double buffering came out 21% worse, and 1x2, 2x1 and 2x2
+blocking 8-23% worse, so 1x1 single-buffer shipped. An autotuner needs a set of
+candidates worth choosing between; today the search has one winner and the
+sweep is in the file. It becomes worth building when a second configuration
+wins somewhere — most likely once the multi-CTA deadlock lifts and the launch
+shape stops being fixed.
+
+*WGMMA warp groups.* A build-time option, and turning it on does not help yet:
+the multi-CTA tensor deadlock survives it (cuda_mapping.md 7.12), so a
+warp-group kernel would still be confined to one CTA.
+`tests/repro/tcu_multi_cta/` is the standing watch.
 ---
 
 ## Phase 4 — `grxcc` single-source driver (≈5–6 engineer-months)

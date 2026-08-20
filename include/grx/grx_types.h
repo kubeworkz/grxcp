@@ -116,6 +116,17 @@ typedef struct {
 typedef enum {
   GRX_R_16F = 2,   // IEEE binary16
   GRX_R_32F = 0    // IEEE binary32
+  ,
+  // Integer formats, for the tensor unit's int8 path. int8 in, int32
+  // accumulate and out -- the only integer pairing the hardware provides, so
+  // there is no enumerator for an int8 output or an int16 anything.
+  //
+  // Whether this device HAS int8 is a build-time property of its tensor unit,
+  // not of the architecture: ask grxblasGetTensorTypes. The enumerators exist
+  // because a kernel can consume these formats, which is the bar for being
+  // listed here.
+  GRX_R_8I  = 3,
+  GRX_R_32I = 10
 } grxDataType_t;
 
 // ---------------------------------------------------------------------------

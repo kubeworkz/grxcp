@@ -74,6 +74,12 @@ struct Context {
   grxFunction_t hgemm_fn = nullptr;
   uint32_t      tile_m = 0, tile_n = 0, tile_k = 0, tile_smem = 0;
   uint32_t      tcu_types = 0;   // GRXBLAS_TENSOR_* the device build supports
+  // The int8 sibling. Its tile is a DIFFERENT shape -- same m and n, twice the
+  // depth -- so it gets its own geometry rather than a scaled copy of the fp16
+  // one, for the same reason the fp16 geometry is asked for instead of assumed.
+  grxFunction_t igemm_fn = nullptr;
+  uint32_t      i8_tile_k = 0, i8_smem = 0;
+  uint32_t      i8_block_m = 0, i8_block_n = 0;
   // What one warp produces per pass, which is a multiple of the tile: the
   // kernel blocks several tiles together to reuse a staged region.
   uint32_t      block_m = 0, block_n = 0;
@@ -248,6 +254,51 @@ grxblasStatus_t ensure_hgemm(Context& ctx) {
   ctx.block_n      = shape[GRXBLAS_HGEMM_SHAPE_BLOCK_N];
   if (ctx.block_m == 0 || ctx.block_n == 0)
     return GRXBLAS_STATUS_INTERNAL_ERROR;
+
+  // The int8 path, if this module and this device have one. Absent is a
+  // configuration rather than a failure: the fp16 path still works, and
+  // grxblasGemmEx refuses an int8 call with a message that says which types
+  // the device does have.
+  if ((ctx.tcu_types & GRXBLAS_TCU_INT8) != 0) {
+    grxFunction_t ifn = nullptr, ishape = nullptr;
+    if (grxModuleGetFunction(&ifn, ctx.module, "igemm_tcu") == grxSuccess &&
+        grxModuleGetFunction(&ishape, ctx.module, "igemm_tcu_shape") ==
+            grxSuccess) {
+      void* dsh = nullptr;
+      if (grxMalloc(&dsh, GRXBLAS_HGEMM_SHAPE_COUNT * sizeof(uint32_t)) ==
+          grxSuccess) {
+        grxMemset(dsh, 0, GRXBLAS_HGEMM_SHAPE_COUNT * sizeof(uint32_t));
+        grxblas_hgemm_shape_args ia{};
+        ia.abi_version = GRXBLAS_HGEMM_ABI_VERSION;
+        ia.out = (uint64_t)(uintptr_t)dsh;
+        uint32_t ish[GRXBLAS_HGEMM_SHAPE_COUNT] = {0};
+        if (grxLaunchFunction(ishape, dim3_t{1, 1, 1},
+                              dim3_t{(unsigned)prop.warpSize, 1, 1}, &ia,
+                              sizeof(ia), 0, nullptr) == grxSuccess &&
+            grxDeviceSynchronize() == grxSuccess &&
+            grxMemcpy(ish, dsh, sizeof(ish), grxMemcpyDefault) == grxSuccess &&
+            ish[GRXBLAS_HGEMM_SHAPE_K] != 0) {
+          // Same m and n as fp16 or the two paths cannot share a blocking
+          // scheme, and this is the place that would notice.
+          if (ish[GRXBLAS_HGEMM_SHAPE_M] == ctx.tile_m &&
+              ish[GRXBLAS_HGEMM_SHAPE_N] == ctx.tile_n) {
+            ctx.igemm_fn   = ifn;
+            ctx.i8_tile_k  = ish[GRXBLAS_HGEMM_SHAPE_K];
+            ctx.i8_smem    = ish[GRXBLAS_HGEMM_SHAPE_SMEM];
+            ctx.i8_block_m = ish[GRXBLAS_HGEMM_SHAPE_BLOCK_M];
+            ctx.i8_block_n = ish[GRXBLAS_HGEMM_SHAPE_BLOCK_N];
+          } else {
+            std::fprintf(stderr,
+                         "grxblas: the int8 tile is %ux%u and the fp16 tile is "
+                         "%ux%u; they must share m and n. Ignoring int8.\n",
+                         ish[GRXBLAS_HGEMM_SHAPE_M], ish[GRXBLAS_HGEMM_SHAPE_N],
+                         ctx.tile_m, ctx.tile_n);
+          }
+        }
+        grxFree(dsh);
+      }
+    }
+  }
   return GRXBLAS_STATUS_SUCCESS;
 }
 
@@ -377,21 +428,37 @@ grxblasStatus_t grxblasGemmEx(grxblasHandle_t handle,
   // this device actually has instead of only what it does not. "not supported"
   // with no further information is how a caller ends up assuming the whole
   // tensor path is missing when one type is.
-  if (Atype != GRX_R_16F || Btype != GRX_R_16F || Ctype != GRX_R_32F) {
+  const bool fp16_pair = (Atype == GRX_R_16F && Btype == GRX_R_16F &&
+                          Ctype == GRX_R_32F);
+  const bool int8_pair = (Atype == GRX_R_8I && Btype == GRX_R_8I &&
+                          Ctype == GRX_R_32I);
+  if (!fp16_pair && !(int8_pair && ctx->igemm_fn != nullptr)) {
     static bool said = false;
     if (!said) {
       said = true;
       char have[128];
       describe_tensor_types(ctx->tcu_types, have, sizeof(have));
       std::fprintf(stderr,
-                   "grxblas: grxblasGemmEx wants fp16 in and fp32 out; this "
-                   "device's tensor unit accepts %s.\n"
-                   "         Types are a build-time choice on GRX-G100 -- "
-                   "query them with grxblasGetTensorTypes.\n",
+                   "grxblas: grxblasGemmEx does fp16 in / fp32 out, and int8 in "
+                   "/ int32 out where the\n         device has int8. This one "
+                   "accepts %s. Types are a build-time choice on\n"
+                   "         GRX-G100 -- query them with "
+                   "grxblasGetTensorTypes.\n",
                    have);
     }
     return GRXBLAS_STATUS_NOT_SUPPORTED;
   }
+
+  // One signature cannot carry two scalar types, so alpha and beta are floats
+  // for both pairings. For the integer one they have to BE integers: rounding
+  // 2.5 to 2 would be a wrong answer the caller never sees happen.
+  if (int8_pair) {
+    const float a = *alpha, b = *beta;
+    if (a != (float)(int32_t)a || b != (float)(int32_t)b)
+      return GRXBLAS_STATUS_INVALID_VALUE;
+  }
+
+  const uint32_t elem_bytes = int8_pair ? 1u : 2u;
 
   grxDeviceProp_t prop{};
   grxError_t e = grxGetDeviceProperties(&prop, 0);
@@ -399,8 +466,9 @@ grxblasStatus_t grxblasGemmEx(grxblasHandle_t handle,
 
   // The kernel walks BLOCKS, each several WMMA tiles wide and tall, so the
   // descriptor tiles have to cover a block rather than a tile.
-  const uint32_t tk = ctx->tile_k;
-  const uint32_t bm = ctx->block_m, bn = ctx->block_n;
+  const uint32_t tk = int8_pair ? ctx->i8_tile_k : ctx->tile_k;
+  const uint32_t bm = int8_pair ? ctx->i8_block_m : ctx->block_m;
+  const uint32_t bn = int8_pair ? ctx->i8_block_n : ctx->block_n;
   const uint32_t m_tiles = ((uint32_t)m + bm - 1) / bm;
   const uint32_t n_tiles = ((uint32_t)n + bn - 1) / bn;
   const uint32_t k_steps = ((uint32_t)k + tk - 1) / tk;
@@ -433,8 +501,8 @@ grxblasStatus_t grxblasGemmEx(grxblasHandle_t handle,
   da.slot = ctx->slot_a;
   da.base = const_cast<void*>(A);
   da.rank = 2;
-  da.strideBytes[0] = (unsigned)lda * 2u;
-  da.elementBytes = 2;
+  da.strideBytes[0] = (unsigned)lda * elem_bytes;
+  da.elementBytes = elem_bytes;
   if (!ta) {
     da.size[0] = (unsigned)m;            da.size[1] = (unsigned)(k ? k : 1);
     da.tile[0] = bm;                     da.tile[1] = tk;
@@ -449,8 +517,8 @@ grxblasStatus_t grxblasGemmEx(grxblasHandle_t handle,
   db.slot = ctx->slot_b;
   db.base = const_cast<void*>(B);
   db.rank = 2;
-  db.strideBytes[0] = (unsigned)ldb * 2u;
-  db.elementBytes = 2;
+  db.strideBytes[0] = (unsigned)ldb * elem_bytes;
+  db.elementBytes = elem_bytes;
   if (!tb) {
     db.size[0] = (unsigned)(k ? k : 1);  db.size[1] = (unsigned)n;
     db.tile[0] = tk;                     db.tile[1] = bn;
@@ -500,9 +568,10 @@ grxblasStatus_t grxblasGemmEx(grxblasHandle_t handle,
     args.cycles = (uint64_t)(uintptr_t)ctx->probe;
   }
 
-  e = grxLaunchFunction(ctx->hgemm_fn, dim3_t{1, 1, 1},
+  e = grxLaunchFunction(int8_pair ? ctx->igemm_fn : ctx->hgemm_fn, dim3_t{1, 1, 1},
                         dim3_t{warps * (unsigned)prop.warpSize, 1, 1}, &args,
-                        sizeof(args), (size_t)ctx->tile_smem * warps,
+                        sizeof(args),
+                        (size_t)(int8_pair ? ctx->i8_smem : ctx->tile_smem) * warps,
                         ctx->stream);
   return from_grx(e);
 }

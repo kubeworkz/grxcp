@@ -241,6 +241,107 @@ int main() {
   check(all, "every transposed GemmEx case matches the reference exactly");
   check(all, "every GemmEx case matches the reference exactly");
 
+  section("GemmEx, int8 in and int32 out");
+  {
+    unsigned types = 0;
+    grxblasGetTensorTypes(h, &types);
+    if (!(types & GRXBLAS_TENSOR_INT8)) {
+      std::printf("  SKIPPED: this device's tensor unit has no int8 "
+                  "(rebuild with -DVX_CFG_TCU_INT8_ENABLE)\n");
+    } else {
+      // Integers, so every comparison is EXACT -- no tolerance, not even the
+      // "values chosen so it comes out exact" kind the fp16 cases need.
+      auto int8_case = [&](bool ta, bool tb, int m, int n, int k, float alpha,
+                           float beta, int pad, const char* label) -> bool {
+        const int kk = k ? k : 1;
+        const int a_rows = ta ? kk : m, a_cols = ta ? m : kk;
+        const int b_rows = tb ? n : kk, b_cols = tb ? kk : n;
+        const int lda = a_rows + pad, ldb = b_rows + pad, ldc = m + pad;
+
+        std::vector<int8_t>  A((size_t)lda * a_cols), B((size_t)ldb * b_cols);
+        std::vector<int32_t> C((size_t)ldc * n);
+        for (size_t i = 0; i < A.size(); ++i) A[i] = (int8_t)((int)(i * 7 % 15) - 7);
+        for (size_t i = 0; i < B.size(); ++i) B[i] = (int8_t)((int)(i * 5 % 13) - 6);
+        for (size_t i = 0; i < C.size(); ++i) C[i] = (int32_t)(i * 3 % 41) - 20;
+
+        std::vector<int32_t> want = C;
+        const int32_t ai = (int32_t)alpha, bi = (int32_t)beta;
+        for (int j = 0; j < n; ++j)
+          for (int i = 0; i < m; ++i) {
+            int32_t acc = 0;
+            for (int l = 0; l < k; ++l) {
+              const int32_t av = ta ? A[(size_t)l + (size_t)i * lda]
+                                    : A[(size_t)i + (size_t)l * lda];
+              const int32_t bv = tb ? B[(size_t)j + (size_t)l * ldb]
+                                    : B[(size_t)l + (size_t)j * ldb];
+              acc += av * bv;
+            }
+            const size_t ci = (size_t)i + (size_t)j * ldc;
+            want[ci] = (bi == 0) ? (ai * acc) : (ai * acc + bi * want[ci]);
+          }
+
+        void *dA = nullptr, *dB = nullptr, *dC = nullptr;
+        if (grxMalloc(&dA, A.empty() ? 1 : A.size()) != grxSuccess ||
+            grxMalloc(&dB, B.empty() ? 1 : B.size()) != grxSuccess ||
+            grxMalloc(&dC, C.size() * sizeof(int32_t)) != grxSuccess) {
+          std::printf("  FAIL  %s (allocation)\n", label); return false;
+        }
+        if (!A.empty()) grxMemcpy(dA, A.data(), A.size(), grxMemcpyDefault);
+        if (!B.empty()) grxMemcpy(dB, B.data(), B.size(), grxMemcpyDefault);
+        grxMemcpy(dC, C.data(), C.size() * sizeof(int32_t), grxMemcpyDefault);
+
+        const grxblasStatus_t st = grxblasGemmEx(
+            h, ta ? GRXBLAS_OP_T : GRXBLAS_OP_N, tb ? GRXBLAS_OP_T : GRXBLAS_OP_N,
+            m, n, k, &alpha, dA, GRX_R_8I, lda, dB, GRX_R_8I, ldb, &beta,
+            dC, GRX_R_32I, ldc);
+        if (st != GRXBLAS_STATUS_SUCCESS) {
+          std::printf("  FAIL  %s (%s)\n", label, grxblasGetStatusString(st));
+          grxFree(dA); grxFree(dB); grxFree(dC); return false;
+        }
+        grxDeviceSynchronize();
+        std::vector<int32_t> got(C.size(), 0);
+        grxMemcpy(got.data(), dC, got.size() * sizeof(int32_t), grxMemcpyDefault);
+        grxFree(dA); grxFree(dB); grxFree(dC);
+
+        int bad = 0, stray = 0;
+        for (size_t idx = 0; idx < C.size(); ++idx) {
+          const int i = (int)(idx % (size_t)ldc), j = (int)(idx / (size_t)ldc);
+          if (got[idx] == want[idx]) continue;
+          if (bad + stray < 3)
+            std::printf("        %s(%d,%d) got %d want %d\n",
+                        (i < m && j < n) ? "" : "padding ", i, j, got[idx],
+                        want[idx]);
+          if (i < m && j < n) ++bad; else ++stray;
+        }
+        if (bad || stray) {
+          std::printf("  FAIL  %s (%d wrong, %d stray)\n", label, bad, stray);
+          return false;
+        }
+        std::printf("  ok    %s\n", label);
+        return true;
+      };
+
+      bool ok = true;
+      ok &= int8_case(false, false, tm, tn, 16, 1.0f, 0.0f, 0, "one tile, one k step");
+      ok &= int8_case(false, false, 16, 16, 32, 1.0f, 0.0f, 0, "16x16x32");
+      ok &= int8_case(false, false, 5, 3, 7, 1.0f, 0.0f, 0, "5x3x7 -- ragged, and k < the tile depth");
+      ok &= int8_case(false, false, 17, 9, 29, 2.0f, -1.0f, 3, "17x9x29 ragged, alpha/beta, padded lds");
+      ok &= int8_case(true, false, 13, 7, 19, 1.0f, 0.0f, 0, "TN");
+      ok &= int8_case(false, true, 13, 7, 19, 1.0f, 0.0f, 0, "NT");
+      ok &= int8_case(true, true, 13, 7, 19, 1.0f, 1.0f, 0, "TT with beta");
+      check(ok, "every int8 case matches an integer reference exactly");
+
+      const float half_alpha = 2.5f, zero2 = 0.0f;
+      void* d = nullptr;
+      grxMalloc(&d, 4096);
+      check(grxblasGemmEx(h, GRXBLAS_OP_N, GRXBLAS_OP_N, 8, 4, 16, &half_alpha,
+                          d, GRX_R_8I, 8, d, GRX_R_8I, 16, &zero2, d,
+                          GRX_R_32I, 8) == GRXBLAS_STATUS_INVALID_VALUE,
+            "a non-integral alpha is refused rather than rounded");
+      grxFree(d);
+    }
+  }
+
   section("what the tensor path refuses");
   {
     const float one = 1.0f, zero = 0.0f;
