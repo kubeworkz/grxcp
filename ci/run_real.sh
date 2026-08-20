@@ -387,7 +387,7 @@ echo
 echo "==> grxBLAS: library builds"
 $CXX $CXXFLAGS -c "$ROOT/src/libs/grxblas/grxblas.cpp" -o "$BUILD/grxblas.o"
 
-echo "==> GRXBLAS GATES: sgemm and GemmEx against a CPU reference"
+echo "==> GRXBLAS GATES: level 1, level 2, sgemm and GemmEx vs a CPU reference"
 if [[ -n "$GRXGPU" && -d "$TOOLDIR/llvm-vortex" ]]; then
   # One module with every kernel. Each .vxbin links at the same load address,
   # so two of them cannot be resident at once and a library that needs both
@@ -401,7 +401,7 @@ if [[ -n "$GRXGPU" && -d "$TOOLDIR/llvm-vortex" ]]; then
   "$ROOT/ci/build_kernel.sh" --grxgpu "$GRXGPU" --tooldir "$TOOLDIR" \
     "$KSRC" -o "$BUILD/grxblas_kernels.vxbin" >/dev/null
 
-  for t in test_grxblas test_grxblas_ex; do
+  for t in test_grxblas test_grxblas_l12 test_grxblas_ex; do
     $CXX $CXXFLAGS -I"$ROOT/tests/unit" -c "$ROOT/tests/libs/$t.cpp" \
       -o "$BUILD/$t.o"
     $CXX "${OBJS[@]}" "$BUILD/grxblas.o" "$BUILD/$t.o" $LIBS -o "$BUILD/$t"

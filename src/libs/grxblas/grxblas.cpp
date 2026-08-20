@@ -18,6 +18,7 @@
 #include <unistd.h>   // readlink, for the executable-relative kernel search
 
 #include "hgemm_abi.h"
+#include "blas12_abi.h"
 #include "sgemm_abi.h"
 
 namespace {
@@ -61,12 +62,18 @@ struct Context {
   grxModule_t   module = nullptr;
   grxFunction_t sgemm_fn = nullptr;
   std::string   sgemm_path;   // which file actually got loaded
+  // Level 1 and 2, resolved from the same module. Absent in an older module,
+  // which is why they are looked up lazily and reported rather than assumed.
+  grxFunction_t axpy_fn = nullptr;
+  grxFunction_t scal_fn = nullptr;
+  grxFunction_t gemv_fn = nullptr;
   grxCycleSlot* probe = nullptr;
   int           probe_capacity = 0;
 
   // Tensor path, resolved from the same module when it carries the entries.
   grxFunction_t hgemm_fn = nullptr;
   uint32_t      tile_m = 0, tile_n = 0, tile_k = 0, tile_smem = 0;
+  uint32_t      tcu_types = 0;   // GRXBLAS_TENSOR_* the device build supports
   // What one warp produces per pass, which is a multiple of the tile: the
   // kernel blocks several tiles together to reuse a staged region.
   uint32_t      block_m = 0, block_n = 0;
@@ -109,6 +116,12 @@ grxblasStatus_t ensure_module_locked(Context& ctx) {
       ctx.module     = mod;
       ctx.sgemm_fn   = fn;
       ctx.sgemm_path = path;
+      // Best effort: a module built before these existed still serves sgemm,
+      // and the level-1/2 calls report NOT_SUPPORTED instead of the whole
+      // library refusing to initialise.
+      grxModuleGetFunction(&ctx.axpy_fn, mod, "saxpy");
+      grxModuleGetFunction(&ctx.scal_fn, mod, "sscal");
+      grxModuleGetFunction(&ctx.gemv_fn, mod, "sgemv");
       return GRXBLAS_STATUS_SUCCESS;
     }
   }
@@ -121,6 +134,25 @@ grxblasStatus_t ensure_module_locked(Context& ctx) {
                "         Set GRXBLAS_KERNEL_PATH or call grxblasSetKernelPath.\n",
                grxGetErrorString(last));
   return GRXBLAS_STATUS_NOT_INITIALIZED;
+}
+
+// Format a tensor-type mask for a human. Says "nothing" rather than printing
+// an empty list, because an empty list reads like a formatting bug.
+void describe_tensor_types(uint32_t mask, char* out, size_t cap) {
+  static const struct { uint32_t bit; const char* name; } kNames[] = {
+    {0x01u, "fp16"}, {0x02u, "tf32"}, {0x04u, "fp8"},
+    {0x08u, "fp4"},  {0x10u, "int8"}, {0x20u, "int4"},
+  };
+  out[0] = '\0';
+  size_t used = 0;
+  for (const auto& n : kNames) {
+    if (!(mask & n.bit)) continue;
+    const int wrote = std::snprintf(out + used, cap - used, "%s%s",
+                                    used ? ", " : "", n.name);
+    if (wrote <= 0 || (size_t)wrote >= cap - used) break;
+    used += (size_t)wrote;
+  }
+  if (used == 0) std::snprintf(out, cap, "no input types at all");
 }
 
 grxblasStatus_t ensure_sgemm(Context& ctx) {
@@ -211,6 +243,7 @@ grxblasStatus_t ensure_hgemm(Context& ctx) {
   ctx.tile_n       = shape[GRXBLAS_HGEMM_SHAPE_N];
   ctx.tile_k       = shape[GRXBLAS_HGEMM_SHAPE_K];
   ctx.tile_smem    = shape[GRXBLAS_HGEMM_SHAPE_SMEM];
+  ctx.tcu_types    = shape[GRXBLAS_HGEMM_SHAPE_TYPES];
   ctx.block_m      = shape[GRXBLAS_HGEMM_SHAPE_BLOCK_M];
   ctx.block_n      = shape[GRXBLAS_HGEMM_SHAPE_BLOCK_N];
   if (ctx.block_m == 0 || ctx.block_n == 0)
@@ -284,6 +317,17 @@ grxblasStatus_t grxblasSetTensorMapSlots(grxblasHandle_t handle,
   return GRXBLAS_STATUS_SUCCESS;
 }
 
+grxblasStatus_t grxblasGetTensorTypes(grxblasHandle_t handle,
+                                      unsigned* typeMask) {
+  if (!handle) return GRXBLAS_STATUS_NOT_INITIALIZED;
+  if (!typeMask) return GRXBLAS_STATUS_INVALID_VALUE;
+  auto* ctx = reinterpret_cast<Context*>(handle);
+  const grxblasStatus_t s = ensure_hgemm(*ctx);
+  if (s != GRXBLAS_STATUS_SUCCESS) return s;
+  *typeMask = (unsigned)ctx->tcu_types;
+  return GRXBLAS_STATUS_SUCCESS;
+}
+
 grxblasStatus_t grxblasGetTensorTile(grxblasHandle_t handle, int* m, int* n,
                                      int* k) {
   if (!handle) return GRXBLAS_STATUS_NOT_INITIALIZED;
@@ -316,8 +360,6 @@ grxblasStatus_t grxblasGemmEx(grxblasHandle_t handle,
   // Refused rather than emulated. A fallback to the scalar kernel here would
   // report success for a call the tensor path cannot do, and the caller would
   // read the resulting speed as the tensor unit's.
-  if (Atype != GRX_R_16F || Btype != GRX_R_16F || Ctype != GRX_R_32F)
-    return GRXBLAS_STATUS_NOT_SUPPORTED;
   if (transa != GRXBLAS_OP_N || transb != GRXBLAS_OP_N)
     return GRXBLAS_STATUS_NOT_SUPPORTED;
 
@@ -326,6 +368,26 @@ grxblasStatus_t grxblasGemmEx(grxblasHandle_t handle,
   auto* ctx = reinterpret_cast<Context*>(handle);
   const grxblasStatus_t s = ensure_hgemm(*ctx);
   if (s != GRXBLAS_STATUS_SUCCESS) return s;
+
+  // The type check comes AFTER the module is up, so the refusal can say what
+  // this device actually has instead of only what it does not. "not supported"
+  // with no further information is how a caller ends up assuming the whole
+  // tensor path is missing when one type is.
+  if (Atype != GRX_R_16F || Btype != GRX_R_16F || Ctype != GRX_R_32F) {
+    static bool said = false;
+    if (!said) {
+      said = true;
+      char have[128];
+      describe_tensor_types(ctx->tcu_types, have, sizeof(have));
+      std::fprintf(stderr,
+                   "grxblas: grxblasGemmEx wants fp16 in and fp32 out; this "
+                   "device's tensor unit accepts %s.\n"
+                   "         Types are a build-time choice on GRX-G100 -- "
+                   "query them with grxblasGetTensorTypes.\n",
+                   have);
+    }
+    return GRXBLAS_STATUS_NOT_SUPPORTED;
+  }
 
   grxDeviceProp_t prop{};
   grxError_t e = grxGetDeviceProperties(&prop, 0);
@@ -433,6 +495,141 @@ grxblasStatus_t grxblasGetLoadedKernelPath(grxblasHandle_t handle,
   std::lock_guard<std::mutex> lock(ctx->mutex);
   *path = ctx->sgemm_path.empty() ? nullptr : ctx->sgemm_path.c_str();
   return GRXBLAS_STATUS_SUCCESS;
+}
+
+// ---------------------------------------------------------------------------
+// Level 1 and level 2
+// ---------------------------------------------------------------------------
+
+grxblasStatus_t grxblasSaxpy(grxblasHandle_t handle, int n, const float* alpha,
+                             const float* x, int incx, float* y, int incy) {
+  if (!handle) return GRXBLAS_STATUS_NOT_INITIALIZED;
+  if (!alpha)  return GRXBLAS_STATUS_INVALID_VALUE;
+  if (n < 0)   return GRXBLAS_STATUS_INVALID_VALUE;
+  if (n == 0)  return GRXBLAS_STATUS_SUCCESS;
+  if (!x || !y) return GRXBLAS_STATUS_INVALID_VALUE;
+  if (incx == 0 || incy == 0) return GRXBLAS_STATUS_INVALID_VALUE;
+
+  auto* ctx = reinterpret_cast<Context*>(handle);
+  const grxblasStatus_t s = ensure_sgemm(*ctx);
+  if (s != GRXBLAS_STATUS_SUCCESS) return s;
+  if (!ctx->axpy_fn) return GRXBLAS_STATUS_NOT_SUPPORTED;
+
+  grxDeviceProp_t prop{};
+  grxError_t e = grxGetDeviceProperties(&prop, 0);
+  if (e != grxSuccess) return from_grx(e);
+
+  grxblas_axpy_args args{};
+  args.abi_version = GRXBLAS_BLAS12_ABI_VERSION;
+  args.n = (uint32_t)n;
+  args.incx = incx; args.incy = incy;
+  args.alpha = *alpha;
+  args.x = (uint64_t)(uintptr_t)x;
+  args.y = (uint64_t)(uintptr_t)y;
+
+  const unsigned block = (unsigned)prop.warpSize;
+  const unsigned grid  = ((unsigned)n + block - 1) / block;
+  if (ctx->probe) {
+    if (ctx->probe_capacity < (int)grid) return GRXBLAS_STATUS_INVALID_VALUE;
+    args.cycles = (uint64_t)(uintptr_t)ctx->probe;
+  }
+  e = grxLaunchFunction(ctx->axpy_fn, dim3_t{grid, 1, 1}, dim3_t{block, 1, 1},
+                        &args, sizeof(args), 0, ctx->stream);
+  return from_grx(e);
+}
+
+grxblasStatus_t grxblasSscal(grxblasHandle_t handle, int n, const float* alpha,
+                             float* x, int incx) {
+  if (!handle) return GRXBLAS_STATUS_NOT_INITIALIZED;
+  if (!alpha)  return GRXBLAS_STATUS_INVALID_VALUE;
+  if (n < 0)   return GRXBLAS_STATUS_INVALID_VALUE;
+  if (n == 0)  return GRXBLAS_STATUS_SUCCESS;
+  if (!x)      return GRXBLAS_STATUS_INVALID_VALUE;
+  // BLAS itself requires a positive increment for scal, so this is the
+  // reference behaviour rather than a restriction of ours.
+  if (incx <= 0) return GRXBLAS_STATUS_INVALID_VALUE;
+
+  auto* ctx = reinterpret_cast<Context*>(handle);
+  const grxblasStatus_t s = ensure_sgemm(*ctx);
+  if (s != GRXBLAS_STATUS_SUCCESS) return s;
+  if (!ctx->scal_fn) return GRXBLAS_STATUS_NOT_SUPPORTED;
+
+  grxDeviceProp_t prop{};
+  grxError_t e = grxGetDeviceProperties(&prop, 0);
+  if (e != grxSuccess) return from_grx(e);
+
+  grxblas_scal_args args{};
+  args.abi_version = GRXBLAS_BLAS12_ABI_VERSION;
+  args.n = (uint32_t)n;
+  args.incx = incx;
+  args.alpha = *alpha;
+  args.x = (uint64_t)(uintptr_t)x;
+
+  const unsigned block = (unsigned)prop.warpSize;
+  const unsigned grid  = ((unsigned)n + block - 1) / block;
+  if (ctx->probe) {
+    if (ctx->probe_capacity < (int)grid) return GRXBLAS_STATUS_INVALID_VALUE;
+    args.cycles = (uint64_t)(uintptr_t)ctx->probe;
+  }
+  e = grxLaunchFunction(ctx->scal_fn, dim3_t{grid, 1, 1}, dim3_t{block, 1, 1},
+                        &args, sizeof(args), 0, ctx->stream);
+  return from_grx(e);
+}
+
+grxblasStatus_t grxblasSgemv(grxblasHandle_t handle, grxblasOperation_t trans,
+                             int m, int n, const float* alpha,
+                             const void* A, int lda,
+                             const void* x, int incx,
+                             const float* beta,
+                             void* y, int incy) {
+  if (!handle) return GRXBLAS_STATUS_NOT_INITIALIZED;
+  if (!alpha || !beta) return GRXBLAS_STATUS_INVALID_VALUE;
+  if (m < 0 || n < 0)  return GRXBLAS_STATUS_INVALID_VALUE;
+  if (m == 0 || n == 0) return GRXBLAS_STATUS_SUCCESS;
+  if (!A || !x || !y)  return GRXBLAS_STATUS_INVALID_VALUE;
+  if (incx == 0 || incy == 0) return GRXBLAS_STATUS_INVALID_VALUE;
+  if (lda < m) return GRXBLAS_STATUS_INVALID_VALUE;
+
+  auto* ctx = reinterpret_cast<Context*>(handle);
+  const grxblasStatus_t s = ensure_sgemm(*ctx);
+  if (s != GRXBLAS_STATUS_SUCCESS) return s;
+  if (!ctx->gemv_fn) return GRXBLAS_STATUS_NOT_SUPPORTED;
+
+  grxDeviceProp_t prop{};
+  grxError_t e = grxGetDeviceProperties(&prop, 0);
+  if (e != grxSuccess) return from_grx(e);
+
+  // m and n describe A as stored. op(A) is m x n untransposed and n x m
+  // transposed, so the output length and the reduction length swap.
+  const bool tr = (trans == GRXBLAS_OP_T);
+  const uint32_t rows  = tr ? (uint32_t)n : (uint32_t)m;
+  const uint32_t depth = tr ? (uint32_t)m : (uint32_t)n;
+
+  grxblas_gemv_args args{};
+  args.abi_version = GRXBLAS_BLAS12_ABI_VERSION;
+  args.m = (uint32_t)m; args.n = (uint32_t)n;
+  args.lda = (uint32_t)lda;
+  args.trans = tr ? GRXBLAS_ABI_OP_T : GRXBLAS_ABI_OP_N;
+  args.rows = rows; args.depth = depth;
+  args.incx = incx; args.incy = incy;
+  args.alpha = *alpha; args.beta = *beta;
+  args.a = (uint64_t)(uintptr_t)A;
+  args.x = (uint64_t)(uintptr_t)x;
+  args.y = (uint64_t)(uintptr_t)y;
+
+  // Two launch shapes for two traversals -- see the comment at the top of
+  // kernels/blas12.cpp. Untransposed: one thread per output. Transposed: one
+  // warp per output, so the lanes read down a column together.
+  const unsigned warp = (unsigned)prop.warpSize;
+  const unsigned block = warp;
+  const unsigned grid  = tr ? rows : ((rows + block - 1) / block);
+  if (ctx->probe) {
+    if (ctx->probe_capacity < (int)grid) return GRXBLAS_STATUS_INVALID_VALUE;
+    args.cycles = (uint64_t)(uintptr_t)ctx->probe;
+  }
+  e = grxLaunchFunction(ctx->gemv_fn, dim3_t{grid, 1, 1}, dim3_t{block, 1, 1},
+                        &args, sizeof(args), 0, ctx->stream);
+  return from_grx(e);
 }
 
 grxblasStatus_t grxblasSgemm(grxblasHandle_t handle,

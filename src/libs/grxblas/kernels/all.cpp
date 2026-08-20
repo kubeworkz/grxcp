@@ -15,4 +15,5 @@
 // falls back to it and reports the tensor path as unavailable.
 
 #include "sgemm.cpp"       // NOLINT(bugprone-suspicious-include)
+#include "blas12.cpp"      // NOLINT(bugprone-suspicious-include)
 #include "hgemm_tcu.cpp"   // NOLINT(bugprone-suspicious-include)

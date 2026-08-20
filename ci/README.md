@@ -98,6 +98,14 @@ disagreement there means the module and the runtime came from different
 configurations, which is the failure "configuration provenance" below exists to
 prevent. It skips when the device reports no tensor unit.
 
+`tests/libs/test_grxblas_l12.cpp` is the level-1/level-2 gate: saxpy, sscal and
+sgemv, with every comparison EXACT. The values are small integers held in
+floats, so every summation order gives the same bits and no tolerance is
+available to hide a wrong answer behind — unlike the sgemm gate, which needs
+one because the device accumulates in a different order. It has been watched
+failing: reverting sgemv's transposed load to the classic wrong index makes all
+five transposed cases fail and leaves the untransposed ones passing.
+
 `tests/kernels/cg/` is the cooperative-groups gate: `thread_block`,
 `thread_block_tile` at two widths, `coalesced_group` taken inside a divergent
 branch, the cluster, and `this_grid().sync()` through a cooperative launch, all

@@ -164,7 +164,7 @@ Status legend:
 
 | CUDA | GRXCP | Notes |
 |---|---|---|
-| cuBLAS | grxBLAS | TCU + DXA staging; also the NPU's entry point |
+| cuBLAS | grxBLAS | level 1 (`Saxpy`, `Sscal`) and level 2 (`Sgemv`) are scalar kernels; `Sgemm` scalar; `GemmEx` on TCU + DXA staging; also the NPU's entry point |
 | cuDNN | grxDNN | implicit-GEMM conv, attention |
 | cuFFT | grxFFT | |
 | cuRAND | grxRAND | Philox/XORWOW, no HW dependency |
@@ -500,6 +500,35 @@ argument is required rather than defaulted.
 
 The fix is a one-register addition on the device side: expose the per-CTA LMEM
 stride the way `VX_CSR_CTA_LMEM_ADDR` exposes the base.
+
+### 7.19 The tensor unit has no bf16, and its type set is a build option — **HW / CONFIG**
+
+The roadmap's phase 3 line says "GEMM (fp32/fp16/bf16/int8)". Two thirds of that
+turned out to be wrong about this hardware, and the difference between the two
+wrong parts matters.
+
+**bf16 does not exist.** There is no `VX_CFG_TCU_BF16` knob to enable, in any
+configuration — the tensor unit's type list is fp16, tf32, fp8, fp4, int8, int4
+and the MX formats. bf16 is not switched off, it is absent. So `grxblas` has no
+bf16 entry point and `grxblasTensorType_t` has no bit for one: a bit that is
+always zero reads like a build option somebody forgot to turn on, which is the
+opposite of the truth.
+
+**int8 exists but is a build-time choice.** `VX_CFG_TCU_INT8_ENABLE` is off in
+the sysroot this project builds against, along with tf32, fp8, fp4, int4,
+WGMMA and the sparse variants. A different sysroot of the same hardware would
+answer differently, which means no host-side table can be right.
+
+So the answer comes from the device. `hgemm_tcu_shape` — the kernel that
+already reports the WMMA tile shape, for exactly the same reason — also reports
+the enabled type set, and `grxblasGetTensorTypes` returns it. `grxblasGemmEx`
+refusing a type it cannot do now says which types the device *does* accept
+rather than only "not supported", because a caller told "no" without being told
+what "yes" would look like tends to conclude the whole tensor path is missing.
+
+The consequence for the roadmap: int8 GEMM is implementable but needs a sysroot
+built with the flag, and it cannot be gated until one exists. bf16 GEMM is not
+implementable at all and has been struck rather than deferred.
 
 ---
 

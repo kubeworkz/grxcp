@@ -15,7 +15,7 @@
 // Bumped whenever this struct changes; the kernel refuses to run on a
 // mismatch. See the same mechanism in sgemm_abi.h and the incident that
 // prompted it.
-#define GRXBLAS_HGEMM_ABI_VERSION 2u
+#define GRXBLAS_HGEMM_ABI_VERSION 3u
 
 // Indices into the buffer the shape entry point fills.
 enum {
@@ -26,8 +26,24 @@ enum {
   GRXBLAS_HGEMM_SHAPE_SMEM,    // bytes of shared memory one warp needs
   GRXBLAS_HGEMM_SHAPE_BLOCK_M, // rows of C one warp produces at a time
   GRXBLAS_HGEMM_SHAPE_BLOCK_N, // columns of C one warp produces at a time
+  GRXBLAS_HGEMM_SHAPE_TYPES,   // GRXBLAS_TCU_* bits the build has enabled
   GRXBLAS_HGEMM_SHAPE_COUNT
 };
+
+// Which input types the tensor unit accepts, as the DEVICE BUILD sees them.
+//
+// This has to come from the device side. The types are compile-time
+// configuration (VX_CFG_TCU_*_ENABLED), the driver exposes no capability id
+// for them, and a host-side guess would be a guess. The shape kernel already
+// exists to answer questions of exactly this kind, so it answers this one too.
+//
+// The bit values match grxblasTensorType_t in the public header.
+#define GRXBLAS_TCU_FP16   0x01u
+#define GRXBLAS_TCU_TF32   0x02u
+#define GRXBLAS_TCU_FP8    0x04u
+#define GRXBLAS_TCU_FP4    0x08u
+#define GRXBLAS_TCU_INT8   0x10u
+#define GRXBLAS_TCU_INT4   0x20u
 
 struct grxblas_hgemm_shape_args {
   uint32_t abi_version;

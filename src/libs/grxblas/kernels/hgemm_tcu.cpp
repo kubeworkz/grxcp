@@ -144,6 +144,34 @@ __global__ void hgemm_tcu_shape(grxblas_hgemm_shape_args* __UNIFORM__ arg) {
   // stages, so it is told rather than left to derive it.
   out[GRXBLAS_HGEMM_SHAPE_BLOCK_M] = kBlockM;
   out[GRXBLAS_HGEMM_SHAPE_BLOCK_N] = kBlockN;
+
+  // What this tensor unit can actually be fed. Reported rather than assumed:
+  // a caller asking for int8 on a build without it should be told no by the
+  // device that knows, not by a table on the host that hopes.
+  //
+  // bf16 is absent from this list because it is absent from the hardware --
+  // there is no VX_CFG_TCU_BF16 knob to read. See docs/designs/cuda_mapping.md
+  // section 7.19.
+  uint32_t types = 0;
+#if VX_CFG_TCU_FP16_ENABLED
+  types |= GRXBLAS_TCU_FP16;
+#endif
+#if VX_CFG_TCU_TF32_ENABLED
+  types |= GRXBLAS_TCU_TF32;
+#endif
+#if VX_CFG_TCU_FP8_ENABLED
+  types |= GRXBLAS_TCU_FP8;
+#endif
+#if VX_CFG_TCU_FP4_ENABLED
+  types |= GRXBLAS_TCU_FP4;
+#endif
+#if VX_CFG_TCU_INT8_ENABLED
+  types |= GRXBLAS_TCU_INT8;
+#endif
+#if VX_CFG_TCU_INT4_ENABLED
+  types |= GRXBLAS_TCU_INT4;
+#endif
+  out[GRXBLAS_HGEMM_SHAPE_TYPES] = types;
 }
 
 __global__ void hgemm_tcu(grxblas_hgemm_args* __UNIFORM__ arg) {

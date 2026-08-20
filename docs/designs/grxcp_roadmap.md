@@ -313,9 +313,11 @@ collision with the SPIR-V path's limits.
   sparse variants.
 - `grx::pipeline` / `grx::memcpy_async` over `vx_dxa_issue_*_wg` and
   `vx_barrier_expect_tx`.
-- grxBLAS v1: GEMM (fp32/fp16/bf16/int8), batched GEMM, GEMV, AXPY, with
+- grxBLAS v1: GEMM (fp32/fp16/~~bf16~~/int8), batched GEMM, GEMV, AXPY, with
   autotuned tile selection seeded from the existing `sgemm_tcu_wg_dxa_mcast`
-  reference kernels.
+  reference kernels. **bf16 is struck**: the tensor unit has no bf16 mode in
+  any configuration, and int8 needs a sysroot built with
+  `VX_CFG_TCU_INT8_ENABLE` (cuda_mapping.md 7.19).
 
 **The structural problem, handled deliberately.** Kernels using TCU/DXA
 intrinsics **cannot** go through SPIR-V — the GRX-G100 docs call this out
@@ -489,6 +491,46 @@ test binary passed the old shorter blob, and the kernel read a pointer from past
 the end of the staging area and stored through it. A mismatched .vxbin and
 library is now an obviously wrong answer instead of memory corruption.
 
+**Progress — level 1 and level 2 have landed, and the type list got shorter.**
+
+`grxblasSaxpy`, `grxblasSscal` and `grxblasSgemv` run on `simx` with a gate
+(`tests/libs/test_grxblas_l12.cpp`) whose every comparison is **exact**: the
+values are small integers held in floats, so every summation order gives the
+same bits and there is no tolerance for a wrong answer to hide behind. It
+covers unit, strided and negative increments, padded leading dimensions,
+`beta = 0` against a y pre-filled with NaN (a kernel that multiplies through
+produces NaN and is caught), `n = 0`, single elements, and a reduction longer
+than a warp.
+
+The gate was watched failing before it was believed: reverting `sgemv`'s
+transposed load to the classic wrong index makes all five transposed cases fail
+and leaves every untransposed one passing.
+
+`sgemv` has two traversals rather than one shape with a flag, and the reason is
+the memory system. Untransposed, one thread per output row means consecutive
+lanes read consecutive rows of the same column — adjacent addresses.
+Transposed, one thread per output column would stride the lanes `lda` apart, so
+instead a whole warp takes one column, walks it together, and finishes with a
+`grx::cg::thread_block_tile::reduce` over the lanes. The transposed case is not
+a variant of the untransposed one; it is a different traversal that happens to
+compute a transposed product. It is also the first use of `grx_cg.h` inside the
+library rather than in a test.
+
+**The data-type line was wrong about the hardware, in two different ways.**
+bf16 does not exist on this tensor unit in any configuration — there is no knob
+to enable — so it is struck rather than deferred, and `grxblasTensorType_t` has
+no bit for it. int8 does exist but is a build-time option this sysroot does not
+turn on, along with tf32, fp8, fp4, int4, WGMMA and the sparse variants. Since
+no host-side table can be right about a build-time choice, the answer comes
+from the device: `hgemm_tcu_shape` reports the enabled set and
+`grxblasGetTensorTypes` returns it, which is the same mechanism that already
+reports the WMMA tile shape and for the same reason. `grxblasGemmEx` refusing a
+type now names what the device *does* accept — a caller told "no" without being
+told what "yes" looks like concludes the whole tensor path is missing.
+
+Still open in phase 3: transposed operands for `grxblasGemmEx`, batched GEMM,
+int8 GEMM (needs a sysroot with the flag), autotuned tile selection, and the
+WGMMA warp-group forms (also a build option this sysroot does not enable).
 ---
 
 ## Phase 4 — `grxcc` single-source driver (≈5–6 engineer-months)

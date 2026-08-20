@@ -164,6 +164,29 @@ int main() {
   std::printf("tensor tile %dx%dx%d (fp16 in, fp32 out) on %s\n", tm, tn, tk,
               prop.name);
 
+  section("what the tensor unit accepts, asked rather than assumed");
+  {
+    unsigned types = 0;
+    const grxblasStatus_t qs = grxblasGetTensorTypes(h, &types);
+    check(qs == GRXBLAS_STATUS_SUCCESS, "the input types can be queried");
+
+    static const struct { unsigned bit; const char* name; } kNames[] = {
+      {GRXBLAS_TENSOR_FP16, "fp16"}, {GRXBLAS_TENSOR_TF32, "tf32"},
+      {GRXBLAS_TENSOR_FP8,  "fp8"},  {GRXBLAS_TENSOR_FP4,  "fp4"},
+      {GRXBLAS_TENSOR_INT8, "int8"}, {GRXBLAS_TENSOR_INT4, "int4"},
+    };
+    std::printf("  device accepts:");
+    for (const auto& n : kNames)
+      if (types & n.bit) std::printf(" %s", n.name);
+    std::printf("%s\n", types ? "" : " nothing");
+
+    // GemmEx ran fp16 above, so fp16 must be in the set. A mask that says
+    // otherwise is not a device limitation, it is a broken report -- and a
+    // broken capability report is worse than none, because callers act on it.
+    check((types & GRXBLAS_TENSOR_FP16) != 0,
+          "fp16 is reported, and the GEMM above proves it is really there");
+  }
+
   section("GemmEx against a CPU reference");
   bool all = true;
   all &= run_case(h, tm, tn, tk, 1.0f, 0.0f, 0, "exactly one tile, one k step");

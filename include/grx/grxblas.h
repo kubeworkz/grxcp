@@ -90,6 +90,33 @@ grxblasStatus_t grxblasGemmEx(grxblasHandle_t handle,
                               const float* beta,
                               void* C, grxDataType_t Ctype, int ldc);
 
+// Which input types this device's tensor unit accepts.
+//
+// A bitmask, because the answer is a set and because it is a property of the
+// DEVICE BUILD rather than of the architecture: the tensor unit's type support
+// is compile-time configuration on GRX-G100, so two sysroots of the same
+// hardware can differ. The value comes from the loaded kernel module, which is
+// the only thing that knows -- see src/libs/grxblas/hgemm_abi.h.
+//
+// bf16 is not in this enum. It is not a type this tensor unit has, in any
+// configuration, so a bit for it would be a bit that is always zero and reads
+// like a build option somebody forgot to turn on. See
+// docs/designs/cuda_mapping.md section 7.19.
+typedef enum {
+  GRXBLAS_TENSOR_FP16 = 0x01,
+  GRXBLAS_TENSOR_TF32 = 0x02,
+  GRXBLAS_TENSOR_FP8  = 0x04,
+  GRXBLAS_TENSOR_FP4  = 0x08,
+  GRXBLAS_TENSOR_INT8 = 0x10,
+  GRXBLAS_TENSOR_INT4 = 0x20
+} grxblasTensorType_t;
+
+// The set of input types the tensor unit accepts, as GRXBLAS_TENSOR_* bits.
+// Returns ARCH_MISMATCH on a device with no tensor unit, and like
+// grxblasGetTensorTile it needs the kernels to be loadable to answer.
+grxblasStatus_t grxblasGetTensorTypes(grxblasHandle_t handle,
+                                      unsigned* typeMask);
+
 // Which descriptor slots grxblasGemmEx programs. Defaults to 0 and 1.
 grxblasStatus_t grxblasSetTensorMapSlots(grxblasHandle_t handle,
                                          int slotA, int slotB);
@@ -101,6 +128,45 @@ grxblasStatus_t grxblasSetTensorMapSlots(grxblasHandle_t handle,
 // tensor unit, and the kernels have to be loadable for this to answer.
 grxblasStatus_t grxblasGetTensorTile(grxblasHandle_t handle,
                                      int* m, int* n, int* k);
+
+// ---------------------------------------------------------------------------
+// Level 1 and level 2
+// ---------------------------------------------------------------------------
+//
+// All pointers are device addresses; alpha and beta are read from host memory
+// (cuBLAS host pointer mode). These are memory-bound and use no tensor unit, so
+// they work on any device the runtime can open.
+//
+// INCREMENTS follow BLAS, including the negative case: element i of a length-n
+// vector is at index (inc > 0) ? i*inc : (n-1-i)*(-inc), so a negative
+// increment walks the vector backwards. `sscal` is the exception BLAS itself
+// makes -- it requires incx > 0, and so does this.
+//
+// A zero increment is REFUSED rather than accepted. BLAS leaves it undefined
+// and implementations differ; here every element would alias one address, and
+// the result would depend on the order threads happened to run in.
+
+// y = alpha * x + y
+grxblasStatus_t grxblasSaxpy(grxblasHandle_t handle, int n, const float* alpha,
+                             const float* x, int incx, float* y, int incy);
+
+// x = alpha * x
+grxblasStatus_t grxblasSscal(grxblasHandle_t handle, int n, const float* alpha,
+                             float* x, int incx);
+
+// y = alpha * op(A) * x + beta * y, with A stored column major, m rows by n
+// columns, leading dimension lda >= m.
+//
+// op(A) is m x n for GRXBLAS_OP_N and n x m for GRXBLAS_OP_T, so x has length
+// n and y length m in the first case and the reverse in the second. The
+// dimensions m and n always describe A AS STORED, which is BLAS's convention
+// and the opposite of what most people guess for the transposed case.
+grxblasStatus_t grxblasSgemv(grxblasHandle_t handle, grxblasOperation_t trans,
+                             int m, int n, const float* alpha,
+                             const void* A, int lda,
+                             const void* x, int incx,
+                             const float* beta,
+                             void* y, int incy);
 
 // Single-precision general matrix multiply. All pointers are device addresses.
 // alpha and beta are read from host memory (cuBLAS host pointer mode).
