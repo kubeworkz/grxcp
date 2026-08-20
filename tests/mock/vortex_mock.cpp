@@ -183,6 +183,25 @@ vx_result_t vx_device_memory_info(vx_device_h dev, uint64_t* freeBytes,
   return VX_SUCCESS;
 }
 
+// Performance counters: refused, on purpose.
+//
+// This mock models a device's control plane, not its microarchitecture. There
+// is no pipeline here to stall, no scheduler to idle, and no cycle to count --
+// so there is no number to return that would be a measurement of anything.
+// Returning zeros, or a plausible-looking count derived from the work
+// submitted, would let grx-prof print an IPC figure for hardware that does not
+// exist.
+//
+// Refusing is also the useful thing to do: it is the only place in CI that
+// exercises the runtime's counter-unavailable path, where a missing counter
+// has to stay distinguishable from one measured as zero.
+vx_result_t vx_device_mpm_query(vx_device_h dev, uint32_t /*mpm_class*/,
+                                uint32_t /*addr*/, uint32_t /*core_id*/,
+                                uint64_t* /*out_value*/) {
+  if (!dev) return VX_ERR_INVALID_HANDLE;
+  return VX_ERR_NOT_SUPPORTED;
+}
+
 // ---------------------------------------------------------------------------
 // Buffers
 // ---------------------------------------------------------------------------

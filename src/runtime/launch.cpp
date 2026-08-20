@@ -164,13 +164,24 @@ grxError_t launch_common(const KernelBinding& k, const dim3_t& grid,
   std::vector<vx_event_h> waits;
   collect_wait_events(stream, device, &waits);
 
+  // grx-prof brackets the launch with a device sync on each side so the
+  // performance-counter delta belongs to this kernel and nothing else.
+  ProfileSample sample;
+  const bool profiling = profile_begin(device, &sample);
+
   vx_event_h completion = nullptr;
   vx_result_t r = vx_enqueue_launch(q, &info, (uint32_t)waits.size(),
                                     waits.empty() ? nullptr : waits.data(),
                                     &completion);
-  if (r != VX_SUCCESS) return map_result(r);
+  if (r != VX_SUCCESS) { profile_abandon(&sample); return map_result(r); }
 
   set_stream_last_event(stream, device, completion);
+
+  if (profiling) {
+    uint32_t g[3] = {info.grid_dim[0], info.grid_dim[1], info.grid_dim[2]};
+    uint32_t b[3] = {info.block_dim[0], info.block_dim[1], info.block_dim[2]};
+    profile_end_kernel(&sample, k.name, k.module_path, g, b, shared, stream);
+  }
   return grxSuccess;
 }
 

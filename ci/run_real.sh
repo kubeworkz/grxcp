@@ -67,10 +67,12 @@ for tool in grx-smi grx-conform; do
 done
 $CXX $CXXFLAGS -c "$ROOT/tools/grxify/main.cpp" -o "$BUILD/grxify.o"
 $CXX "$BUILD/grxify.o" -o "$BUILD/grxify"
-# grx-sanitize runs a program and reads its report; it never opens a device, so
-# it links no more than grxify does.
-$CXX $CXXFLAGS -c "$ROOT/tools/grx-sanitize/main.cpp" -o "$BUILD/grx-sanitize.o"
-$CXX "$BUILD/grx-sanitize.o" -o "$BUILD/grx-sanitize"
+# grx-sanitize and grx-prof run a program and read its report; neither opens a
+# device, so they link no more than grxify does.
+for tool in grx-sanitize grx-prof; do
+  $CXX $CXXFLAGS -c "$ROOT/tools/$tool/main.cpp" -o "$BUILD/$tool.o"
+  $CXX "$BUILD/$tool.o" -o "$BUILD/$tool"
+done
 
 echo
 echo "==> PHASE 0 GATE: grx-smi on a real $DRIVER device"
@@ -128,6 +130,87 @@ else
     rc=$?
     [[ $rc -eq 77 ]] || exit $rc
   fi
+fi
+
+echo
+echo "==> PROF GATE: a Perfetto trace, and counters that respond to the work"
+# The phase 2 exit gate asks that grx-prof "produces a Perfetto trace a human
+# can read". Readable is checked three ways: the file parses as a trace, the
+# kernel slice carries the device cycle count, and the report states which of
+# its numbers are host-clock -- a timeline whose axis lies about what it
+# measures is not readable, it is misleading.
+#
+# The fourth check is the one that matters most. A profiler that emits numbers
+# nobody has watched respond to their input is not measuring anything, so the
+# same kernel runs at three sizes and the device cycle count has to climb. It
+# is the same discipline the cycle gate applies to grx::cycle_probe.
+if [[ -z "$GRXGPU" || ! -d "$TOOLDIR/llvm-vortex" ]]; then
+  echo "SKIPPED: needs --grxgpu <path> and a device toolchain in $TOOLDIR."
+else
+  [[ -f "$BUILD/vecadd.vxbin" ]] || \
+    "$ROOT/ci/build_kernel.sh" --grxgpu "$GRXGPU" --tooldir "$TOOLDIR" \
+      "$ROOT/tests/kernels/vecadd/kernel.cpp" -o "$BUILD/vecadd.vxbin" >/dev/null
+  [[ -f "$BUILD/vecadd" ]] || {
+    $CXX $CXXFLAGS -I"$ROOT/tests/kernels/vecadd" \
+      -c "$ROOT/tests/kernels/vecadd/main.cpp" -o "$BUILD/vecadd_main.o"
+    $CXX "${OBJS[@]}" "$BUILD/vecadd_main.o" $LIBS -o "$BUILD/vecadd"; }
+
+  for n in 64 256 1024; do
+    "$BUILD/grx-prof" --out "$BUILD/prof_$n.json" -- \
+      "$BUILD/vecadd" "$BUILD/vecadd.vxbin" "$n" > "$BUILD/prof_$n.log" 2>&1 || {
+        echo "  FAIL  grx-prof failed at n=$n"; cat "$BUILD/prof_$n.log"; exit 1; }
+  done
+
+  python3 - "$BUILD" <<'PY' || exit 1
+import json, sys, os
+build = sys.argv[1]
+cycles = {}
+for n in (64, 256, 1024):
+    with open(os.path.join(build, f"prof_{n}.json")) as f:
+        trace = json.load(f)
+    events = trace["traceEvents"]
+    slices = [e for e in events if e.get("ph") == "X"]
+    launches = [e for e in slices if e.get("cat") == "launch"]
+    if not launches:
+        print(f"  FAIL  n={n}: the trace has no kernel slice"); sys.exit(1)
+    k = launches[0]
+    if k.get("dur", 0) <= 0:
+        print(f"  FAIL  n={n}: the kernel slice has no duration"); sys.exit(1)
+    c = k.get("args", {}).get("device.cycles")
+    if not c:
+        print(f"  FAIL  n={n}: the kernel slice carries no device cycle count")
+        sys.exit(1)
+    if not any(e.get("ph") == "M" and e.get("name") == "process_name"
+               for e in events):
+        print(f"  FAIL  n={n}: the trace names no process"); sys.exit(1)
+    cycles[n] = c
+print("  ok    trace parses, kernel slice carries device cycles  " +
+      " ".join(f"n={n}:{c}" for n, c in cycles.items()))
+if not (cycles[64] < cycles[256] < cycles[1024]):
+    print("  FAIL  device cycles do not climb with the work"); sys.exit(1)
+ratio = cycles[1024] / cycles[256]
+if not (2.0 <= ratio <= 5.0):
+    print(f"  FAIL  4x the work moved cycles by {ratio:.2f}x, expected 2-5x")
+    sys.exit(1)
+print(f"  ok    4x the work costs {ratio:.2f}x the cycles")
+PY
+
+  for want in "host clock" "where the cycles went" "Occupancy the dispatcher"; do
+    grep -q "$want" "$BUILD/prof_1024.log" || {
+      echo "  FAIL  the report never says \"$want\""; exit 1; }
+  done
+  echo "  ok    the report separates device cycles from the host clock"
+
+  # A program that never reaches the GRXCP runtime must be reported as
+  # unprofiled, not as a program that did nothing interesting.
+  if "$BUILD/grx-prof" --no-trace -- /bin/true > "$BUILD/prof_none.log" 2>&1; then
+    echo "  FAIL  reported success for a run it never profiled"
+    cat "$BUILD/prof_none.log"; exit 1
+  fi
+  grep -q "not in profiling mode" "$BUILD/prof_none.log" || {
+    echo "  FAIL  no warning that nothing was profiled"
+    cat "$BUILD/prof_none.log"; exit 1; }
+  echo "  ok    an unprofiled run is reported as unprofiled"
 fi
 
 echo

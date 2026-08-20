@@ -396,23 +396,33 @@ grxError_t enqueue_copy(void* dst, const void* src, size_t count,
   const uint32_t nwait = (uint32_t)waits.size();
   const vx_event_h* wp = waits.empty() ? nullptr : waits.data();
 
+  ProfileSample sample;
+  const bool profiling = profile_begin(device, &sample);
+
   vx_event_h completion = nullptr;
   vx_result_t r;
+  const char* direction;
   if (d.is_device && s.is_device) {
+    direction = "d2d";
     r = vx_enqueue_copy(q, d.map.buffer, d.map.offset,
                         s.map.buffer, s.map.offset, count, nwait, wp,
                         &completion);
   } else if (d.is_device) {
+    direction = "h2d";
     r = vx_enqueue_write(q, d.map.buffer, d.map.offset, src, count, nwait, wp,
                          &completion);
   } else {
+    direction = "d2h";
     r = vx_enqueue_read(q, dst, s.map.buffer, s.map.offset, count, nwait, wp,
                         &completion);
   }
-  if (r != VX_SUCCESS) return map_result(r);
+  if (r != VX_SUCCESS) { profile_abandon(&sample); return map_result(r); }
 
   set_stream_last_event(stream, device, completion);
-  return blocking ? sync_stream(stream, device) : grxSuccess;
+  e = blocking ? sync_stream(stream, device) : grxSuccess;
+  if (profiling)
+    profile_end_transfer(&sample, "memcpy", count, direction, stream);
+  return e;
 }
 
 }  // namespace
@@ -606,6 +616,9 @@ grxError_t grxMemsetAsync(void* dst, int value, size_t count,
   std::vector<vx_event_h> waits;
   grxcp::collect_wait_events(stream, m.device, &waits);
 
+  grxcp::ProfileSample sample;
+  const bool profiling = grxcp::profile_begin(m.device, &sample);
+
   const uint8_t pattern = (uint8_t)value;
   vx_event_h completion = nullptr;
   vx_result_t r = vx_enqueue_fill_buffer(q, m.buffer, m.offset, count,
@@ -613,8 +626,13 @@ grxError_t grxMemsetAsync(void* dst, int value, size_t count,
                                          (uint32_t)waits.size(),
                                          waits.empty() ? nullptr : waits.data(),
                                          &completion);
-  if (r != VX_SUCCESS) return grxcp::set_error(grxcp::map_result(r));
+  if (r != VX_SUCCESS) {
+    grxcp::profile_abandon(&sample);
+    return grxcp::set_error(grxcp::map_result(r));
+  }
   grxcp::set_stream_last_event(stream, m.device, completion);
+  if (profiling)
+    grxcp::profile_end_transfer(&sample, "memset", count, "fill", stream);
   return grxSuccess;
 }
 

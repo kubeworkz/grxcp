@@ -223,8 +223,42 @@ died on its own first finding. It now indexes reports by grid-linear thread,
 and `GRX_CAP_GLOBAL_ATOMICS` reports the capability so nothing else has to
 discover this the same way (cuda_mapping.md 7.16).
 
-Still open in phase 2: `grx_cg.h` (cooperative groups) and `grx-prof`.
-`grxify` v0 already exists.
+**Progress — `grx-prof` v1 is done, and the phase 2 exit gate is MET.**
+
+The gate's three clauses: a `__shfl_down_sync` warp reduction producing correct
+results (met, `tests/kernels/warp/`), `grx-sanitize` finding a planted
+out-of-bounds write and reporting the source line (met, SANITIZE GATE), and
+`grx-prof` producing a Perfetto trace a human can read (met, PROF GATE).
+
+The design question grx-prof had to answer was *which clock*. There are two.
+The host clock orders operations and shows the gaps between them, and on a
+simulator it measures the simulator. The MPM performance counters measure the
+device: `MCYCLE` advances only while the device runs, so its delta across a
+launch is device time on `simx` and on silicon alike. grx-prof builds the
+timeline on the first, annotates every kernel slice with the second, and
+converts neither into the other — the trace's own axis label says which clock
+it is. See [`grx_prof.md`](grx_prof.md).
+
+The PROF GATE checks readability three ways (the trace parses, the kernel slice
+carries device cycles, the report states which numbers are host-clock) and then
+checks the thing that matters most: the same kernel at three sizes, with the
+device cycle count required to climb. A profiler emitting numbers nobody has
+watched respond to their input is not measuring anything — the same discipline
+`tests/kernels/cycles/` applies to `grx::cycle_probe`. Tier 1 adds the
+complementary check: against the mock driver, which refuses
+`vx_device_mpm_query` because it models a control plane and has no pipeline to
+count, **no** device counter may appear on any slice. Absent, not zero.
+
+One planned item changed shape. The roadmap said "Perfetto export reusing
+`ci/perfetto.py`"; that script converts instruction-level simulator logs and
+needs a debug simulator build, which answers "what is this warp doing in cycle
+4,182" rather than "which kernel is expensive and why". grx-prof writes the
+same trace *format* from what the runtime and the counters already know, with
+no special build, and `perfetto.py` remains the next zoom level down
+(`grx_prof.md` section 5).
+
+Still open in phase 2: `grx_cg.h` (cooperative groups). `grxify` v0 already
+exists.
 
 **Note.** `grx-sanitize` lands early on purpose. On a functional simulator
 it is cheap, and it pays for itself across every later phase by catching the

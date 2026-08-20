@@ -12,6 +12,8 @@
 - [grx-sanitize](designs/grx_sanitize.md) — device memory checking: what it
   finds, what it cannot, and how outlined AddressSanitizer callbacks reach the
   allocator's own map
+- [grx-prof](designs/grx_prof.md) — the kernel timeline and the performance
+  counters, and why the host clock and device cycles are never mixed
 
 ## Reports
 

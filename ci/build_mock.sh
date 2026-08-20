@@ -125,6 +125,32 @@ $CXX "${RT_OBJS[@]}" "$BUILD/portable_port.o" -o "$BUILD/portable_port"
 "$BUILD/portable_port"
 
 echo
+echo "==> grx-prof against the mock: no counters, and no invented ones"
+# The mock refuses vx_device_mpm_query, because it models a control plane and
+# has no pipeline to count. This is the only place in CI that exercises the
+# runtime's counter-unavailable path, and the claim being checked is precise:
+# the trace still has its kernel slices, and NONE of them carries a device
+# counter. A zero here would be a number nobody measured.
+$CXX $CXXFLAGS -c "$ROOT/tools/grx-prof/main.cpp" -o "$BUILD/grx-prof.o"
+$CXX "$BUILD/grx-prof.o" -o "$BUILD/grx-prof"
+"$BUILD/grx-prof" --out "$BUILD/prof_mock.json" --quiet -- \
+  "$BUILD/test_launch" > "$BUILD/prof_mock.log" 2>&1
+python3 - "$BUILD/prof_mock.json" <<'PY'
+import json, sys
+trace = json.load(open(sys.argv[1]))
+launches = [e for e in trace["traceEvents"]
+            if e.get("ph") == "X" and e.get("cat") == "launch"]
+if not launches:
+    print("FAILED: the trace has no kernel slice"); sys.exit(1)
+invented = [k for k in launches
+            if any(a.startswith("device.") for a in k.get("args", {}))]
+if invented:
+    print("FAILED: a device counter appeared on a backend that has none:")
+    print(" ", invented[0]["args"]); sys.exit(1)
+print(f"  ok    {len(launches)} kernel slices, no fabricated device counters")
+PY
+
+echo
 echo "==> grxify reports the unmappable calls in an awkward port"
 if "$BUILD/grxify" --check "$ROOT/tests/conformance/sample_port.cu" 2>&1; then
   echo "FAILED: grxify should have reported unmappable calls"; exit 1

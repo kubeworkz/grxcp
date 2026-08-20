@@ -98,6 +98,16 @@ disagreement there means the module and the runtime came from different
 configurations, which is the failure "configuration provenance" below exists to
 prevent. It skips when the device reports no tensor unit.
 
+The **PROF GATE** runs `vecadd` under `grx-prof` at three sizes. Three of its
+checks are about the trace being readable — it parses, the kernel slice carries
+a device cycle count, and the report states which of its numbers are host-clock
+— and the fourth is the one that matters: the device cycle count has to climb
+with the work. A profiler emitting numbers nobody has watched respond to their
+input is not measuring anything, which is the same reason `tests/kernels/cycles/`
+exists. Tier 1 checks the other side: the mock driver refuses
+`vx_device_mpm_query`, and no `device.*` argument may appear on any slice taken
+against it. Absent, not zero. See `docs/designs/grx_prof.md`.
+
 `tests/kernels/sanitize/` is the memory-checking gate. `build_kernel.sh
 --sanitize` compiles it with AddressSanitizer's checks outlined into calls that
 `src/device/grx_sanitize_rt.cpp` answers from the allocator's own map, and the

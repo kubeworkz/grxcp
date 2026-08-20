@@ -176,6 +176,33 @@ void sanitize_drain(int device);
 int  sanitize_findings();
 void sanitize_report_summary();
 
+// ---------------------------------------------------------------------------
+// grx-prof (src/runtime/profile.cpp)
+// ---------------------------------------------------------------------------
+//
+// One measured operation, bracketed. `profile_begin` returns false when
+// profiling is off, which is what lets a call site read as
+//
+//   ProfileSample s;
+//   const bool p = profile_begin(device, &s);
+//   ... do the work ...
+//   if (p) profile_end_kernel(&s, ...);
+//
+// with no cost and no branching on an environment variable at the call site.
+struct ProfileSample {
+  int   device = 0;
+  void* opaque = nullptr;
+};
+
+bool profile_enabled();
+bool profile_begin(int device, ProfileSample* out);
+void profile_end_kernel(ProfileSample* sample, const char* kernel,
+                        const char* module_path, uint32_t grid[3],
+                        uint32_t block[3], size_t shared, const void* stream);
+void profile_end_transfer(ProfileSample* sample, const char* op, uint64_t bytes,
+                          const char* kind, const void* stream);
+void profile_abandon(ProfileSample* sample);
+
 }  // namespace grxcp
 
 #endif  // GRXCP_INTERNAL_H

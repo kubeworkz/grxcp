@@ -1,5 +1,5 @@
 # Tools that link the runtime.
-foreach(tool grx-smi grx-prof grx-conform)
+foreach(tool grx-smi grx-conform)
   file(GLOB ${tool}_SRC CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/${tool}/*.cpp")
   if(${tool}_SRC)
     add_executable(${tool} ${${tool}_SRC})
@@ -14,7 +14,9 @@ endforeach()
 #   grx-sanitize runs a program and reads its report; it opens no device itself,
 #                and linking one in would make a debugging aid depend on the
 #                thing being debugged
-foreach(tool grxify grx-sanitize)
+#   grx-prof     same shape: it runs a program, reads GRXPROF lines, and writes
+#                a trace. The device work is all in the child process.
+foreach(tool grxify grx-sanitize grx-prof)
   file(GLOB ${tool}_SRC CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/${tool}/*.cpp")
   if(${tool}_SRC)
     add_executable(${tool} ${${tool}_SRC})

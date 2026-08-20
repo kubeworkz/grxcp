@@ -164,7 +164,7 @@ Status legend:
 | cuSPARSE | grxSPARSE | LLC AMO for scatter |
 | Thrust / CUB | `grx::par` | header-only |
 | `nvidia-smi` | `grx-smi` | |
-| Nsight Compute / Systems | `grx-prof` | MPM counters + Perfetto + roofline already exist |
+| Nsight Compute / Systems | `grx-prof` | v1 ships: MPM counters, occupancy, Chrome/Perfetto trace — see [`grx_prof.md`](grx_prof.md); roofline still open |
 | compute-sanitizer | `grx-sanitize` | v1 ships: outlined ASan callbacks + the allocator's own map — see [`grx_sanitize.md`](grx_sanitize.md) |
 | `cuda-gdb` | `grx-gdb` | existing GDB/OpenOCD kernel-debug path |
 | `hipify` | `grxify` | source translator |
