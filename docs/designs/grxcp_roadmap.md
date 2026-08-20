@@ -580,8 +580,30 @@ issuing plain WMMA never is. `tests/repro/tcu_multi_cta/` and cuda_mapping.md
 7.12 now say so, because a bug report that suggests flipping a flag sends
 whoever fixes it to the wrong line.
 
-Still open in phase 3: int8 GEMM, autotuned tile selection, and the WGMMA
-warp-group forms.
+**Progress — `grx::wmma` does int8.**
+
+`fragment<…, int8_t>` with an `int32_t` accumulator, on a sysroot built with
+`VX_CFG_TCU_INT8_ENABLE`. The tile is **8x4x16**: same m and n as fp16, twice
+the depth, because a 32-bit register holds four int8 where it holds two fp16.
+`tests/kernels/wmma/` asks the device for both shapes and checks that
+relationship rather than assuming it — a kernel that sizes a staging buffer
+from one shape and indexes it with the other is wrong in a way that only shows
+up on ragged edges.
+
+The change to the header was four lines, and the reason is worth writing down:
+`wmma_context` carries every fragment in FLOAT registers whatever the format
+(`vreg_t = float`, and the MMA instruction pins its operands to `f0`-`f7`), so
+an int8 fragment is a bit pattern in a float exactly as a packed fp16 pair
+already was. `fragment::x[]` did not need a storage-type parameter, because the
+storage was never really float.
+
+The int8 arithmetic is checked against an integer reference with **no
+tolerance at all** — not even the "chosen so it is exact" kind the fp16 gate
+needs. Watched failing: declaring B `row_major` instead of `col_major` makes all
+32 elements wrong.
+
+Still open in phase 3: int8 through `grxblasGemmEx`, autotuned tile selection,
+and the WGMMA warp-group forms.
 ---
 
 ## Phase 4 — `grxcc` single-source driver (≈5–6 engineer-months)

@@ -128,6 +128,7 @@ Status legend:
 | `__popc`, `__clz`, `__brev`, `__ffs` | same | RISC-V Zb* bit-manipulation |
 | `__fmaf_rn`, fast-math intrinsics | same | FPU |
 | `nvcuda::wmma::fragment` etc. | `grx::wmma::fragment` | `vortex::tensor::wmma_context<NT, …>` |
+| `wmma::fragment<…, __half>` / int8 | `grx::wmma::fragment<…, half>` / `int8_t` with an `int32_t` accumulator | int8 is a build-time option (`VX_CFG_TCU_INT8_ENABLE`) and its tile is DEEPER in k — 8x4x16 where fp16 is 8x4x8 — see §7.19 |
 | warp-group MMA (`wgmma`) | `grx::wmma::wgmma_*` | `vortex::tensor::wgmma_context` |
 | 2:4 structured sparsity | `grx::wmma::sparse_*` | TCU sparsity path (`VX_CFG_TCU_SPARSE_ENABLE`) |
 | MX / block-scaled formats (mxfp8/mxfp4) | `grx::wmma` MX fragment types | TCU MX path — **ahead of CUDA's public surface here** |

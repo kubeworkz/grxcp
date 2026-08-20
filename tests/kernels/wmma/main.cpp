@@ -200,6 +200,120 @@ int main(int argc, char** argv) {
   CHECK(grxFree(dB));
   CHECK(grxFree(dC));
   CHECK(grxFree(dD));
+  // -------------------------------------------------------------------------
+  // int8 in, int32 out
+  // -------------------------------------------------------------------------
+  //
+  // Tested separately rather than assumed from the fp16 result: it is a
+  // different tile, a different format id and a different accumulator type,
+  // and the only thing the two paths share is the plumbing. The arithmetic is
+  // integer, so the comparison is exact by construction -- there is no
+  // tolerance here at all, not even the "chosen so it is exact" kind.
+  {
+    grxFunction_t i8shape = nullptr, i8gemm = nullptr;
+    if (grxModuleGetFunction(&i8shape, mod, "wmma_i8_shape") != grxSuccess) {
+      std::printf("int8: the module has no int8 entry points\n");
+    } else {
+      void* d_sh = nullptr;
+      CHECK(grxMalloc(&d_sh, WMMA_I8_COUNT * sizeof(uint32_t)));
+      CHECK(grxMemset(d_sh, 0, WMMA_I8_COUNT * sizeof(uint32_t)));
+      wmma_i8_shape_args a{};
+      a.out = (uint64_t)(uintptr_t)d_sh;
+      CHECK(grxLaunchFunction(i8shape, dim3_t{1, 1, 1}, dim3_t{warp, 1, 1}, &a,
+                              sizeof(a), 0, nullptr));
+      CHECK(grxDeviceSynchronize());
+      uint32_t ish[WMMA_I8_COUNT] = {0};
+      CHECK(grxMemcpy(ish, d_sh, sizeof(ish), grxMemcpyDefault));
+      CHECK(grxFree(d_sh));
+
+      if (!ish[WMMA_I8_ENABLED]) {
+        std::printf("int8: this build's tensor unit has no int8 format "
+                    "(rebuild with -DVX_CFG_TCU_INT8_ENABLE)\n");
+      } else if (grxModuleGetFunction(&i8gemm, mod, "wmma_i8_gemm_tile") !=
+                 grxSuccess) {
+        std::printf("int8: shape reports enabled but the GEMM entry is "
+                    "missing\n");
+        ++failures;
+      } else {
+        const int im = (int)ish[WMMA_I8_M], in_ = (int)ish[WMMA_I8_N],
+                  ik = (int)ish[WMMA_I8_K];
+        std::printf("int8 tile %dx%dx%d (int8 in, int32 out), registers per "
+                    "lane a=%u b=%u acc=%u\n", im, in_, ik,
+                    ish[WMMA_I8_REGS_A], ish[WMMA_I8_REGS_B],
+                    ish[WMMA_I8_REGS_ACC]);
+
+        // The int8 tile must be the fp16 tile with twice the depth: same m and
+        // n, k doubled, because a register holds four int8 where it holds two
+        // fp16. Checked rather than assumed -- if it ever stops being true,
+        // every kernel that sizes a staging buffer from one shape and indexes
+        // it with the other is wrong.
+        if (im != m || in_ != n || ik != 2 * k) {
+          std::printf("  FAIL  int8 tile %dx%dx%d is not the fp16 tile "
+                      "%dx%dx%d with twice the depth\n", im, in_, ik, m, n, k);
+          ++failures;
+        }
+
+        std::vector<int8_t>  A((size_t)im * ik), B((size_t)ik * in_);
+        std::vector<int32_t> C((size_t)im * in_), D((size_t)im * in_, -1);
+        // Small values with mixed signs. The largest product is 7*7 = 49 and
+        // the deepest sum is k of them, so nothing here comes near an int32.
+        for (size_t i = 0; i < A.size(); ++i) A[i] = (int8_t)((int)(i * 5 % 15) - 7);
+        for (size_t i = 0; i < B.size(); ++i) B[i] = (int8_t)((int)(i * 3 % 13) - 6);
+        for (size_t i = 0; i < C.size(); ++i) C[i] = (int32_t)(i * 11 % 97) - 48;
+
+        std::vector<int32_t> want((size_t)im * in_, 0);
+        for (int r = 0; r < im; ++r)
+          for (int c = 0; c < in_; ++c) {
+            int32_t acc = C[(size_t)r * in_ + c];
+            for (int l = 0; l < ik; ++l)
+              acc += (int32_t)A[(size_t)r * ik + l] * (int32_t)B[(size_t)c * ik + l];
+            want[(size_t)r * in_ + c] = acc;
+          }
+
+        void *dA = nullptr, *dB = nullptr, *dC = nullptr, *dD = nullptr;
+        CHECK(grxMalloc(&dA, A.size()));
+        CHECK(grxMalloc(&dB, B.size()));
+        CHECK(grxMalloc(&dC, C.size() * sizeof(int32_t)));
+        CHECK(grxMalloc(&dD, D.size() * sizeof(int32_t)));
+        CHECK(grxMemcpy(dA, A.data(), A.size(), grxMemcpyDefault));
+        CHECK(grxMemcpy(dB, B.data(), B.size(), grxMemcpyDefault));
+        CHECK(grxMemcpy(dC, C.data(), C.size() * sizeof(int32_t), grxMemcpyDefault));
+        CHECK(grxMemcpy(dD, D.data(), D.size() * sizeof(int32_t), grxMemcpyDefault));
+
+        wmma_i8_gemm_args g{};
+        g.a = (uint64_t)(uintptr_t)dA;
+        g.b = (uint64_t)(uintptr_t)dB;
+        g.c = (uint64_t)(uintptr_t)dC;
+        g.d = (uint64_t)(uintptr_t)dD;
+        g.lda = (uint32_t)ik; g.ldb = (uint32_t)ik; g.ldc = (uint32_t)in_;
+        g.accumulate = 1;
+        CHECK(grxLaunchFunction(i8gemm, dim3_t{1, 1, 1}, dim3_t{warp, 1, 1}, &g,
+                                sizeof(g), 0, nullptr));
+        CHECK(grxDeviceSynchronize());
+        CHECK(grxMemcpy(D.data(), dD, D.size() * sizeof(int32_t), grxMemcpyDefault));
+
+        int bad = 0;
+        for (size_t i = 0; i < D.size(); ++i) {
+          if (D[i] != want[i]) {
+            if (bad < 4)
+              std::printf("        D[%zu] got %d want %d\n", i, D[i], want[i]);
+            ++bad;
+          }
+        }
+        if (bad) {
+          std::printf("  FAIL  int8 tile: %d of %zu elements wrong\n", bad,
+                      D.size());
+          ++failures;
+        } else {
+          std::printf("  ok    int8 tile matches an integer reference exactly, "
+                      "all %zu elements\n", D.size());
+        }
+        CHECK(grxFree(dA)); CHECK(grxFree(dB));
+        CHECK(grxFree(dC)); CHECK(grxFree(dD));
+      }
+    }
+  }
+
   CHECK(grxModuleUnload(mod));
   return failures ? 1 : 0;
 }

@@ -108,6 +108,25 @@ template <> struct format<half> {
 };
 template <> struct format<float> { using type = vt::fp32; };
 
+// Integer tensor formats. int8 in, int32 out -- the pairing the hardware
+// provides, and the only integer pairing it provides.
+//
+// Nothing about the register plumbing changes for these. wmma_context holds
+// every fragment in FLOAT registers whatever the format is (vreg_t = float in
+// vx_tensor.h, and the MMA instruction pins its operands to f0-f7), so an int8
+// fragment is a bit pattern carried in a float exactly as a packed fp16 pair
+// already is. That is why fragment::x[] stays float here rather than growing a
+// storage-type parameter: the storage was never really float.
+template <> struct format<int8_t> {
+  using type = vt::int8;
+  static_assert(VX_CFG_TCU_INT8_ENABLED,
+                "grx::wmma: this build's tensor unit has no int8 format. It is "
+                "a build-time choice: rebuild the sysroot with "
+                "-DVX_CFG_TCU_INT8_ENABLE (see ci/README.md). Ask "
+                "grxblasGetTensorTypes rather than assuming.");
+};
+template <> struct format<int32_t> { using type = vt::int32; };
+
 static constexpr uint32_t kWarpWidth = VX_CFG_NUM_THREADS;
 static constexpr uint32_t kFragRegs  = GRX_WMMA_FRAG_REGS;
 
