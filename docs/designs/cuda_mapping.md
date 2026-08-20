@@ -38,7 +38,7 @@ Status legend:
 | `warpSize` | `VX_CAPS_NUM_THREADS` | SW |
 | `__syncthreads()` | `vx_barrier(cta_id, num_warps)` → `BAR` instruction | HW+SW |
 | `__syncwarp()` | implicit within a warp (lockstep SIMT); compiler fence only | HW |
-| `this_grid().sync()` (cooperative) | `VX_gbar_unit` global barrier, `vortex::gbarrier` | HW+SW |
+| `this_grid().sync()` (cooperative) | `VX_gbar_unit`, `vortex::gbarrier` — **cluster-scoped**, so grid-wide only on a single-cluster device | HW+SW — §7.17 |
 | `cuda::barrier` / mbarrier with transaction count | `vx_barrier_arrive` / `_wait` / `_expect_tx` | HW+SW |
 | launch bounds / occupancy | fixed-stride slot allocator; `usable_slots = min(NUM_WARPS, ⌊LMEM/stride⌋)` | HW |
 | dynamic parallelism (device-side launch) | no device-side KMU programming path | OUT |
@@ -132,7 +132,14 @@ Status legend:
 | 2:4 structured sparsity | `grx::wmma::sparse_*` | TCU sparsity path (`VX_CFG_TCU_SPARSE_ENABLE`) |
 | MX / block-scaled formats (mxfp8/mxfp4) | `grx::wmma` MX fragment types | TCU MX path — **ahead of CUDA's public surface here** |
 | `cuda::pipeline`, `memcpy_async` | `grx::pipeline`, `grx::memcpy_async` | `vx_dxa_issue_*_wg` + `vx_barrier_expect_tx` |
-| cooperative groups (`tiled_partition`, `this_grid`) | `grx::cg` | thread mask + `vx_gbar` |
+| `cooperative_groups::thread_block` | `grx::cg::thread_block` | `__syncthreads()`, CTA CSRs |
+| `cooperative_groups::thread_block_tile<N>` | `grx::cg::thread_block_tile<N>` | segmented `SHFL`/`VOTE`; N must be ≤ the warp width — §7.9's problem, same answer |
+| tile `reduce` / `inclusive_scan` / `exclusive_scan` | same | butterfly and Hillis-Steele over the shuffle |
+| `cooperative_groups::coalesced_threads()` | `grx::cg::coalesced_threads()` | `vx_active_threads()` + popcount ranking |
+| `cooperative_groups::cluster_group` | `grx::cg::cluster_group` | `vortex::group_barrier`; `map_shared_rank` needs an explicit stride — §7.18 |
+| `cooperative_groups::grid_group` | `grx::cg::grid_group` | `vortex::gbarrier` — §7.17 |
+| `cooperative_groups::labeled_partition` / `binary_partition` | — | OUT of v1 |
+| `__match_any_sync` / `__match_all_sync` | — | no match instruction | OUT |
 | ray tracing intrinsics | `grx::rt` | RTU (`vx_raytrace.h`) — no CUDA analogue in the runtime API; OptiX-shaped, out of v1 |
 
 ---
@@ -442,6 +449,58 @@ Two consequences, both live:
 The mismatch itself is fixable upstream — the kernel `-march` string should
 follow `VX_CFG_EXT_A_ENABLED` rather than always claiming **a** — and until it
 does, the compiler will keep offering a rope the hardware does not have.
+### 7.17 The grid barrier is cluster-scoped — **HW, structural**
+
+`this_grid().sync()` is a grid-wide rendezvous in CUDA. On GRX-G100 the
+hardware barrier that implements it releases per **cluster**, and that is not a
+detail a header can paper over.
+
+The mechanism has two stages. A core's barrier unit waits until every one of
+its active warps has arrived, then forwards a single arrival to its cluster.
+The cluster releases when the arrivals equal the participant count — and there
+is no stage above the cluster. `Cluster::global_barrier_arrive` masks the
+arriving core id by `cores_per_cluster` and compares against a mask that only
+has that many bits.
+
+Three consequences, all live:
+
+- **On a single-cluster device the barrier is exactly a grid barrier**, and
+  `grx::cg::grid_group::sync()` is the real thing. The configuration this was
+  developed against has one cluster, and `tests/kernels/cg/` exercises the
+  barrier there with a control that fails without it.
+- **On a multi-cluster device there is nothing to implement a grid barrier
+  with.** `sync()` is `__attribute__((unavailable))` rather than a call that
+  hangs, and the message points at `this_cluster()` or separate launches.
+- **The participant count is cores per cluster, not cores.**
+  `VX_CSR_NUM_CORES` reports `VX_CFG_NUM_CORES * VX_CFG_NUM_CLUSTERS` — the
+  device total — and passing it to `vortex::gbarrier` waits for arrivals the
+  cluster's mask cannot represent. The compile-time `VX_CFG_NUM_CORES` is the
+  per-cluster figure and the correct one.
+
+A cooperative launch must therefore put at least one block on **every** core:
+a core with no active warps never forwards an arrival and the cluster waits
+forever. `grxLaunchCooperativeKernel` and `grxLaunchCooperativeFunction` refuse
+a grid smaller than the machine as well as one too large to be resident —
+which is worth knowing, because a grid smaller than the machine is exactly the
+shape a first test tends to have.
+
+### 7.18 `map_shared_rank` has no stride to work from — **HW/DOC**
+
+A cluster's CTAs land in consecutive fixed-stride local-memory slots, so a
+peer's shared-memory base is `base + delta * stride` and distributed shared
+memory is genuinely available. The kernel just cannot compute it:
+`VX_CSR_CTA_LMEM_ADDR` gives this CTA's base and there is no companion register
+for the stride, which the dispatcher derives from the launch's `lmem_size`
+rounded up to the cache-line granule.
+
+So `grx::cg::cluster_group::map_shared_rank(addr, rank)` — the CUDA spelling —
+is unavailable, and the three-argument form takes the stride the caller already
+knows. Guessing it would read another CTA's memory silently, which is why the
+argument is required rather than defaulted.
+
+The fix is a one-register addition on the device side: expose the per-CTA LMEM
+stride the way `VX_CSR_CTA_LMEM_ADDR` exposes the base.
+
 ---
 
 ## 8. Where GRX-G100 is *ahead* of the reference

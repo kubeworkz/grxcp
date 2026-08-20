@@ -257,8 +257,44 @@ same trace *format* from what the runtime and the counters already know, with
 no special build, and `perfetto.py` remains the next zoom level down
 (`grx_prof.md` section 5).
 
-Still open in phase 2: `grx_cg.h` (cooperative groups). `grxify` v0 already
-exists.
+**Progress — `grx_cg.h` is done, and phase 2 with it.**
+
+`grx::cg` covers `thread_block`, `thread_block_tile<N>` with the shuffle family
+and `reduce`/`inclusive_scan`/`exclusive_scan`, `coalesced_group` over the
+active mask, `cluster_group`, and `grid_group` including a real grid-wide
+barrier. `tests/kernels/cg/` checks every collective against a reference the
+host computes independently, and the grid barrier carries a control that has to
+fail: the same kernel without the barrier, with block 0 stalled before it
+publishes, must read a value that is not there yet. Without that control the
+barrier test would pass whether or not the barrier worked.
+
+Writing it turned up three things about the hardware that were not written down
+anywhere:
+
+- **The barrier id is a packed pair, not a slot index.** `cta_id | (bar_no <<
+  8)`, flattened to `cta_id * NUM_BARRIERS + bar_no`. The cross-CTA forms force
+  the CTA field to zero so every CTA names the same slot — which also lands
+  them inside CTA 0's range. A cluster barrier on the obvious `bar_no` 1
+  collides with CTA 0's own `grx::barrier(1)` and hangs. `grx_device.h` now
+  carries the slot map and reserves the top two numbers.
+- **The "global" barrier releases per CLUSTER**, and its participant count is
+  cores per cluster — `VX_CFG_NUM_CORES`, not `VX_CSR_NUM_CORES`, which is the
+  device total. On a multi-cluster device there is no grid barrier at all, and
+  `grid_group::sync()` is unavailable rather than a call that hangs
+  (cuda_mapping.md 7.17).
+- **A cooperative launch must cover every core**, not merely fit. A core with
+  no active warps never forwards an arrival. The launch validation now refuses
+  a grid smaller than the machine, and `grxLaunchCooperativeFunction` brings
+  that validation to the module path, which had no cooperative entry point.
+
+Not implemented, and listed rather than left to be discovered:
+`labeled_partition` and `binary_partition`, the `__match_*` family (no match
+instruction exists), and `cluster_group::map_shared_rank`'s two-argument CUDA
+form — the per-CTA local-memory stride is not exposed to the kernel, so the
+three-argument form takes it explicitly (cuda_mapping.md 7.18).
+
+**Phase 2 is complete**: the device headers, `grxify` v0, `grx-sanitize` v1,
+`grx-prof` v1, and all three exit-gate clauses.
 
 **Note.** `grx-sanitize` lands early on purpose. On a functional simulator
 it is cheap, and it pays for itself across every later phase by catching the

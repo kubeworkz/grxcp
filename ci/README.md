@@ -98,6 +98,17 @@ disagreement there means the module and the runtime came from different
 configurations, which is the failure "configuration provenance" below exists to
 prevent. It skips when the device reports no tensor unit.
 
+`tests/kernels/cg/` is the cooperative-groups gate: `thread_block`,
+`thread_block_tile` at two widths, `coalesced_group` taken inside a divergent
+branch, the cluster, and `this_grid().sync()` through a cooperative launch, all
+against references the host computes independently.
+
+The grid barrier carries its own control, and it is the interesting part. Block
+0 stalls before publishing, and the gate then runs the same kernel with the
+barrier removed and requires it to get the answer WRONG. Without the stall both
+blocks would publish long before either read, and the barrier test would pass
+whether or not the barrier worked.
+
 The **PROF GATE** runs `vecadd` under `grx-prof` at three sizes. Three of its
 checks are about the trace being readable — it parses, the kernel slice carries
 a device cycle count, and the report states which of its numbers are host-clock

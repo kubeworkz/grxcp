@@ -139,6 +139,21 @@ grxError_t grxLaunchFunction(grxFunction_t func, dim3_t gridDim,
                              size_t argsSize, size_t sharedMem,
                              grxStream_t stream);
 
+// The cooperative form of the same, for a kernel that calls
+// grx::cg::this_grid().sync(). CUDA's driver API spells this
+// cuLaunchCooperativeKernel; the runtime API's grxLaunchCooperativeKernel
+// takes a registered host stub instead, which a module-path caller does not
+// have.
+//
+// It is not a hint. The grid-wide barrier only terminates if every block is
+// resident at once AND every core has at least one block to run, because the
+// hardware counts arrivals per core. Both are checked here, and a launch that
+// fails either is refused rather than left to hang.
+grxError_t grxLaunchCooperativeFunction(grxFunction_t func, dim3_t gridDim,
+                                        dim3_t blockDim, const void* argsBlob,
+                                        size_t argsSize, size_t sharedMem,
+                                        grxStream_t stream);
+
 // ---------------------------------------------------------------------------
 // Modules (driver-style path, for JIT and language runtimes)
 // ---------------------------------------------------------------------------

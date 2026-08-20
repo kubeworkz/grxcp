@@ -187,6 +187,29 @@ grxError_t launch_common(const KernelBinding& k, const dim3_t& grid,
 
 }  // namespace
 
+// Is a cooperative launch legal on this device?
+//
+// Two conditions, and the second is easy to miss. The grid-wide barrier only
+// terminates if every block is RESIDENT at once -- that is the familiar one.
+// It also only terminates if every core has at least one block, because the
+// hardware counts arrivals per core: a core with no active warps never
+// forwards an arrival, and the cluster waits for it forever. A grid smaller
+// than the machine is the shape that hangs, which is exactly the shape a
+// first test tends to have.
+grxError_t check_cooperative(const grxDeviceProp_t& prop, const dim3_t& grid,
+                             const dim3_t& block, size_t smem_per_block) {
+  const int per_sm = resident_blocks_per_sm(prop, (int)volume(block),
+                                            smem_per_block);
+  const uint64_t blocks = (uint64_t)(grid.x ? grid.x : 1) *
+                          (grid.y ? grid.y : 1) * (grid.z ? grid.z : 1);
+  if (per_sm <= 0) return grxErrorLaunchOutOfResources;
+  if (blocks > (uint64_t)per_sm * (uint64_t)prop.multiProcessorCount)
+    return grxErrorLaunchOutOfResources;
+  if (blocks < (uint64_t)prop.multiProcessorCount)
+    return grxErrorLaunchOutOfResources;
+  return grxSuccess;
+}
+
 int resident_blocks_per_sm(const grxDeviceProp_t& prop, int block_size,
                            size_t smem_per_block) {
   if (block_size <= 0 || prop.warpSize <= 0) return 0;
@@ -303,15 +326,11 @@ grxError_t grxLaunchKernelEx(const grxLaunchConfig_t* config, const void* func,
     return grxcp::set_error(grxErrorNotSupported);
 
   if (cooperative) {
-    // A grid-wide barrier only terminates if every block is resident at once.
-    const int per_sm = grxcp::resident_blocks_per_sm(
-        d->prop, (int)grxcp::volume(config->blockDim),
-        config->dynamicSharedMem + k.static_smem);
-    const uint64_t blocks = (uint64_t)(config->gridDim.x ? config->gridDim.x : 1) *
-                            (config->gridDim.y ? config->gridDim.y : 1) *
-                            (config->gridDim.z ? config->gridDim.z : 1);
-    if (blocks > (uint64_t)per_sm * (uint64_t)d->prop.multiProcessorCount)
-      return grxcp::set_error(grxErrorLaunchOutOfResources);
+    grxError_t ce = grxcp::check_cooperative(d->prop, config->gridDim,
+                                             config->blockDim,
+                                             config->dynamicSharedMem +
+                                                 k.static_smem);
+    if (ce != grxSuccess) return grxcp::set_error(ce);
   }
 
   std::vector<uint8_t> blob;
@@ -353,6 +372,30 @@ grxError_t grxLaunchFunction(grxFunction_t func, dim3_t gridDim,
   grxError_t e = grxcp::launch_common(k, gridDim, blockDim, dim3_t{1, 1, 1},
                                       sharedMem, argsBlob, argsSize,
                                       k.device, stream);
+  return (e == grxSuccess) ? e : grxcp::set_error(e);
+}
+
+grxError_t grxLaunchCooperativeFunction(grxFunction_t func, dim3_t gridDim,
+                                        dim3_t blockDim, const void* argsBlob,
+                                        size_t argsSize, size_t sharedMem,
+                                        grxStream_t stream) {
+  grxcp::KernelBinding k{};
+  if (!grxcp::lookup_function(func, &k))
+    return grxcp::set_error(grxErrorInvalidResourceHandle);
+
+  grxcp::Device* d = nullptr;
+  grxError_t e = grxcp::acquire_device(k.device, &d);
+  if (e != grxSuccess) return grxcp::set_error(e);
+
+  if (!(d->prop.capabilities & GRX_CAP_COOPERATIVE_LAUNCH))
+    return grxcp::set_error(grxErrorNotSupported);
+
+  e = grxcp::check_cooperative(d->prop, gridDim, blockDim,
+                               sharedMem + k.static_smem);
+  if (e != grxSuccess) return grxcp::set_error(e);
+
+  e = grxcp::launch_common(k, gridDim, blockDim, dim3_t{1, 1, 1},
+                           sharedMem, argsBlob, argsSize, k.device, stream);
   return (e == grxSuccess) ? e : grxcp::set_error(e);
 }
 

@@ -88,6 +88,38 @@ __forceinline__ uint32_t cluster_rank() { return get_cluster_rank(); }
 
 __forceinline__ uint64_t clock64() { return (uint64_t)vx_rdcycle(); }
 
+// ---------------------------------------------------------------------------
+// The hardware barrier-slot map
+// ---------------------------------------------------------------------------
+//
+// The barrier unit holds VX_CFG_NUM_WARPS * VX_CFG_NUM_BARRIERS slots, and the
+// id a kernel passes is a PACKED PAIR, not a slot index:
+//
+//     raw id = cta_id | (bar_no << 8)      flat slot = cta_id * NUM_BARRIERS + bar_no
+//
+// Two consequences that are easy to get wrong, and both produce a hang rather
+// than an error:
+//
+//   __syncthreads() uses bar_no 0, so slot cta_id*NUM_BARRIERS is spoken for in
+//   every CTA. A kernel picking its own barrier numbers starts at 1.
+//
+//   The cross-CTA forms -- vortex::group_barrier and vortex::gbarrier -- force
+//   cta_id to 0 so every CTA names the same slot. That is what makes them
+//   shared, and it also means they land inside CTA 0's range. A cluster
+//   barrier on bar_no 1 collides with CTA 0's own grx::barrier(1).
+//
+// So cooperative groups take the TOP two numbers and kernels count up from 1.
+
+constexpr uint32_t kBarrierCount     = VX_CFG_NUM_BARRIERS;
+constexpr uint32_t kClusterBarrierNo = VX_CFG_NUM_BARRIERS - 1;
+constexpr uint32_t kGridBarrierNo    = VX_CFG_NUM_BARRIERS - 2;
+// The highest number a kernel may use for its own barriers.
+constexpr uint32_t kMaxUserBarrierNo = VX_CFG_NUM_BARRIERS - 3;
+
+static_assert(VX_CFG_NUM_BARRIERS >= 3,
+              "this configuration has too few barrier slots to reserve one "
+              "for the cluster barrier and one for the grid barrier");
+
 // Base of this CTA's shared-memory slot -- CUDA's dynamic shared memory. The
 // slot is `sharedMem` bytes, from the launch; nothing on the device knows that
 // number, so reading past it silently reads the next CTA's slot. The runtime

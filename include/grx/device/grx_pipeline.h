@@ -60,6 +60,12 @@ namespace grx {
 // shape. `id` selects one of the CTA's hardware barrier slots (the device
 // reports how many as grxDeviceProp_t::numBarriers); picking them is the
 // kernel's job, the same way shared-memory offsets are.
+//
+// Count up from 1, and stop at grx::kMaxUserBarrierNo. Number 0 is
+// __syncthreads(), and the top two are reserved for the cluster and grid
+// barriers in grx_cg.h -- those name their slot with the CTA field forced to
+// zero, so they land inside CTA 0's range and a collision hangs CTA 0 only.
+// grx_device.h has the slot map.
 class barrier {
  public:
   __forceinline__ explicit barrier(uint32_t id,

@@ -133,6 +133,31 @@ else
 fi
 
 echo
+echo "==> CG GATE: cooperative groups, up to and including the grid barrier"
+# thread_block, thread_block_tile at two widths, coalesced_group inside a
+# divergent branch, the cluster, and this_grid().sync() through a cooperative
+# launch. Every reference is computed independently on the host.
+#
+# The grid barrier carries its own control: the same kernel with the barrier
+# removed must get the answer WRONG. Block 0 stalls before publishing, so a
+# block that does not wait reads the sentinel -- without that, both blocks
+# would publish long before either read and the test would pass with or
+# without a barrier.
+if [[ -z "$GRXGPU" || ! -d "$TOOLDIR/llvm-vortex" ]]; then
+  echo "SKIPPED: needs --grxgpu <path> and a device toolchain in $TOOLDIR."
+else
+  "$ROOT/ci/build_kernel.sh" --grxgpu "$GRXGPU" --tooldir "$TOOLDIR" \
+    "$ROOT/tests/kernels/cg/kernel.cpp" -o "$BUILD/cg.vxbin" >/dev/null
+  $CXX $CXXFLAGS -I"$ROOT/tests/kernels/cg" \
+    -c "$ROOT/tests/kernels/cg/main.cpp" -o "$BUILD/cg_main.o"
+  $CXX "${OBJS[@]}" "$BUILD/cg_main.o" $LIBS -o "$BUILD/cg_gate"
+  if ! "$BUILD/cg_gate" "$BUILD/cg.vxbin"; then
+    rc=$?
+    [[ $rc -eq 77 ]] || exit $rc
+  fi
+fi
+
+echo
 echo "==> PROF GATE: a Perfetto trace, and counters that respond to the work"
 # The phase 2 exit gate asks that grx-prof "produces a Perfetto trace a human
 # can read". Readable is checked three ways: the file parses as a trace, the
