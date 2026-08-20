@@ -67,6 +67,15 @@ int main() {
     check(!(p.capabilities & GRX_CAP_TENSOR_CORE) ||
            (p.capabilities & GRX_CAP_GEMM),
           "tensor core implies GEMM capability");
+    // The stock configuration has VX_CFG_EXT_A_ENABLE = false, so the misa A
+    // bit is clear and an AMO instruction aborts in the simulator's LSU rather
+    // than faulting. Nothing in GRXCP emulates one. Asserting the bit is clear
+    // keeps the mock honest: it claimed atomics once, which would have let a
+    // tier-1 run bless a kernel that cannot execute on the real device
+    // (cuda_mapping.md 7.16). Setting GRXMOCK_ATOMICS=1 models a build that
+    // does enable the extension.
+    check(!(p.capabilities & GRX_CAP_GLOBAL_ATOMICS),
+          "atomics report absent, matching VX_CFG_EXT_A_ENABLE = false");
 
     // --- managed memory must be gated by backend, not just by VM support ---
     // VM silently no-ops on the FPGA paths (command_processor.md 10, item 2).

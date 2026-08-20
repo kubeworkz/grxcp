@@ -9,6 +9,9 @@
   concept tables and the honest list of what does not work yet
 - [Implementation Roadmap](designs/grxcp_roadmap.md) — phases 0–7 with exit
   gates, external dependencies, and the risk register
+- [grx-sanitize](designs/grx_sanitize.md) — device memory checking: what it
+  finds, what it cannot, and how outlined AddressSanitizer callbacks reach the
+  allocator's own map
 
 ## Reports
 

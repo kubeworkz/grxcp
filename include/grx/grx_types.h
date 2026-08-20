@@ -150,6 +150,13 @@ typedef enum {
 #define GRX_CAP_ASYNC_COPY          (1u << 7)
 #define GRX_CAP_RAY_TRACING         (1u << 8)
 #define GRX_CAP_COOPERATIVE_LAUNCH  (1u << 9)
+// The RISC-V A extension, from the device's own misa. Worth a capability bit
+// of its own because the DEVICE TOOLCHAIN does not agree with the device: a
+// kernel is compiled -march=rv64imafd, so the compiler will happily emit an
+// AMO for a C++ atomic, and a GRX-G100 built with VX_CFG_EXT_A_ENABLED off
+// aborts in the LSU when one arrives. Anything that wants an atomic has to ask
+// first (cuda_mapping.md section 7.16).
+#define GRX_CAP_GLOBAL_ATOMICS      (1u << 10)
 
 typedef struct {
   char            name[128];

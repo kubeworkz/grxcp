@@ -1,5 +1,5 @@
 # Tools that link the runtime.
-foreach(tool grx-smi grx-prof grx-sanitize grx-conform)
+foreach(tool grx-smi grx-prof grx-conform)
   file(GLOB ${tool}_SRC CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/${tool}/*.cpp")
   if(${tool}_SRC)
     add_executable(${tool} ${${tool}_SRC})
@@ -8,10 +8,16 @@ foreach(tool grx-smi grx-prof grx-sanitize grx-conform)
   endif()
 endforeach()
 
-# grxify is a source translator: it reads the API table and never calls the
-# runtime, so it must stay linkable without a device stack present.
-file(GLOB grxify_SRC CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/grxify/*.cpp")
-if(grxify_SRC)
-  add_executable(grxify ${grxify_SRC})
-  install(TARGETS grxify RUNTIME DESTINATION bin)
-endif()
+# Tools that must stay linkable without a device stack present.
+#
+#   grxify       a source translator: reads the API table, never calls the runtime
+#   grx-sanitize runs a program and reads its report; it opens no device itself,
+#                and linking one in would make a debugging aid depend on the
+#                thing being debugged
+foreach(tool grxify grx-sanitize)
+  file(GLOB ${tool}_SRC CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/${tool}/*.cpp")
+  if(${tool}_SRC)
+    add_executable(${tool} ${${tool}_SRC})
+    install(TARGETS ${tool} RUNTIME DESTINATION bin)
+  endif()
+endforeach()

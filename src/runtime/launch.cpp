@@ -122,6 +122,23 @@ grxError_t launch_common(const KernelBinding& k, const dim3_t& grid,
   e = resolve_stream(stream, device, &q, nullptr);
   if (e != grxSuccess) return e;
 
+  // grx-sanitize arms the device-side checker with the allocation map as it
+  // stands right now. Draining first is not optional: the map is a single
+  // device-resident table, so a kernel still in flight would be checked
+  // against a table that is being rewritten underneath it. Sanitized runs
+  // therefore serialize at every launch, which is a cost the mode accepts.
+  if (sanitize_enabled()) {
+    e = sync_all_streams(device);
+    if (e != grxSuccess) return e;
+    const uint32_t grid_threads =
+        (grid.x ? grid.x : 1) * (grid.y ? grid.y : 1) * (grid.z ? grid.z : 1) *
+        (block.x ? block.x : 1) * (block.y ? block.y : 1) *
+        (block.z ? block.z : 1);
+    e = sanitize_arm(*d, (uint32_t)(shared + k.static_smem), grid_threads,
+                     k.name, k.module_path, k.module_elf, k.sanitized);
+    if (e != grxSuccess) return e;
+  }
+
   vx_launch_info_t info{};
   info.struct_size = sizeof(info);
   info.next        = nullptr;

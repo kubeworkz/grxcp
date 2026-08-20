@@ -98,6 +98,20 @@ disagreement there means the module and the runtime came from different
 configurations, which is the failure "configuration provenance" below exists to
 prevent. It skips when the device reports no tensor unit.
 
+`tests/kernels/sanitize/` is the memory-checking gate. `build_kernel.sh
+--sanitize` compiles it with AddressSanitizer's checks outlined into calls that
+`src/device/grx_sanitize_rt.cpp` answers from the allocator's own map, and the
+gate requires each of four planted bugs — an overflow, an underflow, a
+use-after-free, a shared-memory overrun — to be reported *at the line it lives
+on*. The line numbers are grepped out of the kernel source by marker comment,
+so moving the code does not silently disarm the check.
+
+It carries two controls, because a detector is only as trustworthy as its
+negative case. The same kernel with the bug removed must come back clean, and
+the same bug in an **uninstrumented** build must be reported as *unchecked*
+rather than as clean — otherwise every build that forgot `--sanitize` would
+pass this gate forever. See `docs/designs/grx_sanitize.md`.
+
 Without a toolchain, `run_real.sh` **skips** that gate and says so, rather than
 reporting a pass over work that never ran. The grxBLAS gate behaves the same
 way: no kernels built means it exits 77 (skip), because "nobody compiled it"

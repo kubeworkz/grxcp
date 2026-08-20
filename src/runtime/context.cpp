@@ -114,6 +114,7 @@ void populate_properties(Device& d) {
   if (isa & VX_ISA_EXT_TCU) caps |= GRX_CAP_TENSOR_CORE | GRX_CAP_GEMM;
   if (isa & VX_ISA_EXT_DXA) caps |= GRX_CAP_ASYNC_COPY;
   if (isa & VX_ISA_EXT_RTU) caps |= GRX_CAP_RAY_TRACING;
+  if (isa & VX_ISA_STD_A)   caps |= GRX_CAP_GLOBAL_ATOMICS;
   if (p.unifiedAddressing)  caps |= GRX_CAP_UNIFIED_ADDRESSING;
   p.capabilities = caps;
 

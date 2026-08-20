@@ -102,6 +102,7 @@ Failing at compile time is the point. A mystery at runtime would be worse.
 | Event elapsed time | host clock; measures submission, not device execution |
 | `__constant__` | lowered to read-only global memory; no broadcast bandwidth advantage |
 | Managed memory | refused on this backend |
+| Atomics | absent: this build has `VX_CFG_EXT_A_ENABLED` off, and an AMO instruction aborts rather than faulting |
 
 ## What this report does not measure
 

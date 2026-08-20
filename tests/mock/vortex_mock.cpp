@@ -147,12 +147,21 @@ vx_result_t vx_device_query(vx_device_h dev, uint32_t caps_id, uint64_t* out) {
     case VX_CAPS_VM_PINNED_SIZE:  *out = env_u64("GRXMOCK_PINNED_SIZE", 0); return VX_SUCCESS;
     case VX_CAPS_VM_PINNED_FREE:  *out = env_u64("GRXMOCK_PINNED_FREE", 0); return VX_SUCCESS;
     case VX_CAPS_ISA_FLAGS: {
-      // RV64IMAFDC plus the custom extension bits the default build enables.
+      // RV64IMFDC plus the custom extension bits the default build enables.
       // vortex2.h exposes no VX_ISA_STD_M constant, so the M bit is omitted
       // rather than hardcoded from the misa layout.
-      uint64_t f = VX_ISA_STD_I | VX_ISA_STD_A | VX_ISA_STD_F |
+      //
+      // No VX_ISA_STD_A. This used to claim the atomic extension, and it was
+      // wrong: VX_config.toml has VX_CFG_EXT_A_ENABLE = false by default, so
+      // the misa A bit is clear on a stock build and an AMO instruction hits
+      // an abort in the simulator's LSU. A mock that advertises hardware the
+      // device does not have lets tier 1 bless a kernel that cannot run, which
+      // is the one thing a mock must never do. GRXMOCK_ATOMICS=1 models a
+      // build that does enable it (cuda_mapping.md 7.16).
+      uint64_t f = VX_ISA_STD_I | VX_ISA_STD_F |
                    VX_ISA_STD_D | VX_ISA_STD_C |
                    VX_ISA_EXT_ICACHE | VX_ISA_EXT_DCACHE | VX_ISA_EXT_LMEM;
+      if (env_u64("GRXMOCK_ATOMICS", 0)) f |= VX_ISA_STD_A;
       if (env_u64("GRXMOCK_TCU", 1)) f |= VX_ISA_EXT_TCU;
       if (env_u64("GRXMOCK_DXA", 1)) f |= VX_ISA_EXT_DXA;
       if (env_u64("GRXMOCK_RTU", 0)) f |= VX_ISA_EXT_RTU;

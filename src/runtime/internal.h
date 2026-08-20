@@ -123,7 +123,19 @@ struct KernelBinding {
   uint32_t                max_threads_per_block = 0;
   bool                    has_layout  = false;
   int                     device      = 0;
+  // Provenance for grx-sanitize. These point into the owning ModuleState and
+  // are valid for as long as the module is loaded; a kernel reached through
+  // the host-stub registry leaves them empty, because a fat binary registered
+  // by a static initializer has no file the sanitizer could read symbols from.
+  const char*             name        = "";
+  const char*             module_path = "";
+  const char*             module_elf  = "";
+  bool                    sanitized   = false;
 };
+
+// Load a device image and register it, remembering the path it came from.
+grxError_t load_module_tracked(grxModule_t* module, const void* image,
+                               size_t size, const char* path);
 
 // Resolve a registered host stub for a device, loading its module on first use.
 bool lookup_registration(const void* stub, int device, KernelBinding* out);
@@ -135,6 +147,34 @@ bool lookup_function(grxFunction_t func, KernelBinding* out);
 // occupancy API and by launch validation.
 int resident_blocks_per_sm(const grxDeviceProp_t& prop, int block_size,
                            size_t smem_per_block);
+
+// ---------------------------------------------------------------------------
+// grx-sanitize (src/runtime/sanitize.cpp)
+// ---------------------------------------------------------------------------
+//
+// All of these are no-ops when GRX_SANITIZE is unset, which is what keeps the
+// call sites in the allocator and the launch path unconditional and short.
+
+bool     sanitize_enabled();
+uint64_t sanitize_redzone_bytes();   // trailing pad per allocation, 0 when off
+
+void sanitize_note_region(uint64_t base, uint64_t size);
+void sanitize_forget_region(uint64_t base);
+void sanitize_note_alloc(uint64_t base, uint64_t requested);
+void sanitize_note_free(uint64_t base);
+void sanitize_forget_all();
+
+// Patch the control-block address into a .vxbin image. True when the image was
+// built with --sanitize and now points at the block.
+bool sanitize_patch_image(std::vector<uint8_t>& image, const char* elf_path,
+                          int device);
+
+grxError_t sanitize_arm(Device& d, uint32_t shared_bytes, uint32_t grid_threads,
+                        const char* kernel, const char* module_path,
+                        const char* elf_path, bool instrumented);
+void sanitize_drain(int device);
+int  sanitize_findings();
+void sanitize_report_summary();
 
 }  // namespace grxcp
 

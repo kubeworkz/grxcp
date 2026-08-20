@@ -65,8 +65,8 @@ Status legend:
 | `cudaMemcpy` H2D/D2H/D2D | `CMD_MEM_WRITE` / `CMD_MEM_READ` / `CMD_MEM_COPY` via CP DMA | HW+SW |
 | `cudaMemcpy2D/3D` | `vx_enqueue_{read,write,copy}_rect` | SW |
 | `cudaMemset` | `vx_enqueue_fill_buffer` | SW |
-| `atomicAdd` and friends | AMO unit at the LLC | HW |
-| `cuda::atomic` scopes (block/device/system) | LMEM / L2-AMO / host-visible + `CMD_CACHE_FLUSH` | HW+SW |
+| `atomicAdd` and friends | AMO unit at the LLC, **only where `VX_CFG_EXT_A_ENABLED`** | HW/ISA — §7.16 |
+| `cuda::atomic` scopes (block/device/system) | LMEM / L2-AMO / host-visible + `CMD_CACHE_FLUSH` | HW+SW where the A extension is built in — §7.16 |
 | `__threadfence*()` | `vx_fence` | HW+SW |
 | `cudaMemcpyAsync` (device-side, `cp.async`) | DXA async copy, `vx_dxa_issue_{1..5}d_wg` | HW+SW |
 | TMA (bulk tensor async copy) | DXA multi-dimensional descriptors (up to 5D) + multicast | HW+SW |
@@ -113,7 +113,7 @@ Status legend:
 | `__global__` | `__global__` | `annotate("vortex.kernel")` + `__vx_kentry_<name>` in `.vx_entry` |
 | `__device__` | `__device__` | ordinary device-target function |
 | `__host__ __device__` | same | dual-emission in `grxcc` |
-| `__shared__` | `__shared__` | `__local_mem()` carve at `VX_CSR_CTA_LMEM_ADDR` |
+| `__shared__` (static) | `grx::shared_memory<T>()` + the launch's `sharedMem` | compile error as written — §7.10 |
 | `__constant__` | `__constant__` | NEW — §7.2 |
 | `__restrict__`, `__ldg` | same | load hints |
 | `kernel<<<g,b,s,st>>>(…)` | same syntax | `__grxPushCallConfiguration` + stub → `grxLaunchKernel` |
@@ -122,9 +122,9 @@ Status legend:
 | `__launch_bounds__` | `__launch_bounds__` | metadata into the `.vxbin` footer (Phase 4) |
 | `clock()` / `clock64()` | `grx::clock64()` | `vx_rdcycle` |
 | `__activemask()` | `__activemask()` | `vx_active_threads()` |
-| `__ballot_sync(mask, p)` | same | `vx_active_threads()` under predication |
+| `__ballot_sync(mask, p)` | same | `vx_vote_ballot` |
 | `__any_sync` / `__all_sync` | same | derived from ballot |
-| `__shfl_sync` and variants | same | **ISA gap — §7.1**; LMEM fallback in v1 |
+| `__shfl_sync` and variants | same | `SHFL.IDX/UP/DOWN/BFLY` — §7.1, closed |
 | `__popc`, `__clz`, `__brev`, `__ffs` | same | RISC-V Zb* bit-manipulation |
 | `__fmaf_rn`, fast-math intrinsics | same | FPU |
 | `nvcuda::wmma::fragment` etc. | `grx::wmma::fragment` | `vortex::tensor::wmma_context<NT, …>` |
@@ -165,7 +165,7 @@ Status legend:
 | Thrust / CUB | `grx::par` | header-only |
 | `nvidia-smi` | `grx-smi` | |
 | Nsight Compute / Systems | `grx-prof` | MPM counters + Perfetto + roofline already exist |
-| compute-sanitizer | `grx-sanitize` | SimX instrumentation — cheaper here than on silicon |
+| compute-sanitizer | `grx-sanitize` | v1 ships: outlined ASan callbacks + the allocator's own map — see [`grx_sanitize.md`](grx_sanitize.md) |
 | `cuda-gdb` | `grx-gdb` | existing GDB/OpenOCD kernel-debug path |
 | `hipify` | `grxify` | source translator |
 
@@ -408,6 +408,40 @@ MPS, multi-process service, `cudaHostAlloc` write-combining hints, and
 peer-to-peer copies. Each is listed so a port that needs one gets a clear
 "no" instead of a mysterious failure.
 
+
+### 7.16 Atomics: the toolchain says yes, the hardware says no — **HW / TOOLCHAIN, sharp edge**
+
+CUDA's `atomicAdd` family is unmapped, and the reason is worth stating
+carefully because the failure mode is so unpleasant.
+
+The device compiles `-march=rv64imafd`. The **a** in there is the RISC-V atomic
+extension, so clang will lower a `std::atomic`, a `__atomic_fetch_add`, or an
+`__sync_*` builtin to an AMO instruction without a word of complaint. A
+GRX-G100 built with `VX_CFG_EXT_A_ENABLED` off — which is this configuration —
+decodes that instruction, routes it to the LSU, and calls `std::abort()` in the
+simulator. No message, no line, no trace: the process is gone, and nothing in
+the stack has said the word "atomic".
+
+That is exactly how grx-sanitize's first draft died. It counted findings with
+`__atomic_fetch_add` on a device-memory word, and the first planted
+out-of-bounds write aborted the simulator instead of being reported. The
+sanitizer now indexes its report table by grid-linear thread instead — one slot
+per thread, one writer per slot, no atomic anywhere.
+
+Two consequences, both live:
+
+- **`grxDeviceProp_t::capabilities` carries `GRX_CAP_GLOBAL_ATOMICS`,** set from
+  the device's own `misa` A bit via `VX_CAPS_ISA_FLAGS`. `grx-smi` prints it as
+  `atomics`. Anything that wants an atomic must ask, and on this configuration
+  the answer is no.
+- **A `grx_atomic.h` is not written yet, and when it is, it must `#error` when
+  `VX_CFG_EXT_A_ENABLED` is 0** rather than emit an AMO the device will die on.
+  A CAS loop over a hardware barrier is not a substitute worth shipping; a
+  configuration with the extension enabled is.
+
+The mismatch itself is fixable upstream — the kernel `-march` string should
+follow `VX_CFG_EXT_A_ENABLED` rather than always claiming **a** — and until it
+does, the compiler will keep offering a rope the hardware does not have.
 ---
 
 ## 8. Where GRX-G100 is *ahead* of the reference

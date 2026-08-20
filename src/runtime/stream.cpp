@@ -144,7 +144,13 @@ grxError_t sync_stream(grxStream_t stream, int device) {
     if (!s) return grxErrorInvalidResourceHandle;
     q = s->queue;
   }
-  return map_result(vx_queue_finish(q, VX_TIMEOUT_INFINITE));
+  const grxError_t e = map_result(vx_queue_finish(q, VX_TIMEOUT_INFINITE));
+  // A synchronization point is the first moment the host may look at what the
+  // device wrote, which makes it the right and only place to collect sanitizer
+  // findings: earlier and the report buffer is still being filled, later and
+  // the program may already have acted on corrupt data.
+  if (e == grxSuccess) sanitize_drain(device);
+  return e;
 }
 
 grxError_t sync_all_streams(int device) {
@@ -160,6 +166,7 @@ grxError_t sync_all_streams(int device) {
     vx_result_t r = vx_queue_finish(q, VX_TIMEOUT_INFINITE);
     if (r != VX_SUCCESS) return map_result(r);
   }
+  sanitize_drain(device);
   return grxSuccess;
 }
 

@@ -36,6 +36,14 @@ namespace {
 struct ModuleState {
   vx_module_h module = nullptr;
   int         device = 0;
+  // Provenance, kept for grx-sanitize: the path this image came from, the
+  // sibling ELF that carries its symbols and line tables, and whether the
+  // sanitizer's control-block anchor was found and patched. A module loaded
+  // from memory has no path and therefore no ELF, which is a reportable fact
+  // rather than a failure.
+  std::string path;
+  std::string elf;
+  bool        sanitized = false;
 };
 
 struct FunctionState {
@@ -199,6 +207,61 @@ bool lookup_registration(const void* stub, int device, KernelBinding* out) {
   return true;
 }
 
+// Load an image and register it, remembering where it came from.
+//
+// `path` is null for grxModuleLoadData, which is the whole reason this is one
+// function rather than two: the sanitizer needs the sibling ELF, the ELF is
+// found from the path, and a module loaded from memory simply does not have
+// one. Keeping both paths here makes that difference explicit instead of
+// leaving grxModuleLoadData to silently lose provenance.
+grxError_t load_module_tracked(grxModule_t* module, const void* image,
+                               size_t size, const char* path) {
+  if (!module || !image || size == 0) return set_error(grxErrorInvalidValue);
+
+  Device* d = nullptr;
+  grxError_t e = acquire_device(current_device_index(), &d);
+  if (e != grxSuccess) return set_error(e);
+
+  std::string elf_path;
+  bool sanitized = false;
+
+  // Patching rewrites 8 bytes of the payload, so it needs a mutable copy. Only
+  // taken when the sanitizer is on -- the ordinary path still loads the
+  // caller's bytes in place.
+  std::vector<uint8_t> patched;
+  if (path && sanitize_enabled()) {
+    elf_path = path;
+    const size_t dot = elf_path.rfind(".vxbin");
+    if (dot != std::string::npos && dot + 6 == elf_path.size())
+      elf_path.replace(dot, 6, ".elf");
+    else
+      elf_path += ".elf";
+
+    patched.assign((const uint8_t*)image, (const uint8_t*)image + size);
+    sanitized = sanitize_patch_image(patched, elf_path.c_str(), d->index);
+    if (sanitized) image = patched.data();
+  }
+
+  vx_module_h mod = nullptr;
+  e = load_module(*d, image, size, &mod);
+  if (e != grxSuccess) return set_error(e);
+
+  auto* s     = new ModuleState();
+  s->module   = mod;
+  s->device   = d->index;
+  s->path     = path ? path : "";
+  s->elf      = sanitized ? elf_path : "";
+  s->sanitized = sanitized;
+
+  auto handle = reinterpret_cast<grxModule_t>(s);
+  {
+    std::lock_guard<std::mutex> lock(g_module_mutex);
+    g_modules[handle] = s;
+  }
+  *module = handle;
+  return grxSuccess;
+}
+
 bool lookup_function(grxFunction_t func, KernelBinding* out) {
   std::lock_guard<std::mutex> lock(g_module_mutex);
   auto it = g_functions.find(func);
@@ -213,6 +276,12 @@ bool lookup_function(grxFunction_t func, KernelBinding* out) {
     out->max_threads_per_block = it->second->max_threads_per_block;
     out->has_layout  = false;
     out->device      = it->second->owner ? it->second->owner->device : 0;
+    out->name        = it->second->name.c_str();
+    if (const ModuleState* m = it->second->owner) {
+      out->module_path = m->path.c_str();
+      out->module_elf  = m->elf.c_str();
+      out->sanitized   = m->sanitized;
+    }
   }
   return true;
 }
@@ -227,27 +296,7 @@ extern "C" {
 
 grxError_t grxModuleLoadData(grxModule_t* module, const void* image,
                              size_t size) {
-  if (!module || !image || size == 0)
-    return grxcp::set_error(grxErrorInvalidValue);
-
-  grxcp::Device* d = nullptr;
-  grxError_t e = grxcp::acquire_device(grxcp::current_device_index(), &d);
-  if (e != grxSuccess) return grxcp::set_error(e);
-
-  vx_module_h mod = nullptr;
-  e = grxcp::load_module(*d, image, size, &mod);
-  if (e != grxSuccess) return grxcp::set_error(e);
-
-  auto* s   = new grxcp::ModuleState();
-  s->module = mod;
-  s->device = d->index;
-  auto handle = reinterpret_cast<grxModule_t>(s);
-  {
-    std::lock_guard<std::mutex> lock(grxcp::g_module_mutex);
-    grxcp::g_modules[handle] = s;
-  }
-  *module = handle;
-  return grxSuccess;
+  return grxcp::load_module_tracked(module, image, size, nullptr);
 }
 
 grxError_t grxModuleLoad(grxModule_t* module, const char* path) {
@@ -270,7 +319,7 @@ grxError_t grxModuleLoad(grxModule_t* module, const char* path) {
   std::fclose(f);
   if (got != bytes.size()) return grxcp::set_error(grxErrorInvalidKernelImage);
 
-  return grxModuleLoadData(module, bytes.data(), bytes.size());
+  return grxcp::load_module_tracked(module, bytes.data(), bytes.size(), path);
 }
 
 grxError_t grxModuleUnload(grxModule_t module) {

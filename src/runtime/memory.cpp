@@ -132,6 +132,7 @@ grxError_t add_slab(Device& d, uint64_t bytes, size_t* out_index) {
   s.size   = bytes;
   s.device = d.index;
   g_slabs.push_back(s);
+  sanitize_note_region(base, bytes);
 
   const size_t index = g_slabs.size() - 1;
   insert_free(base, bytes, index);
@@ -175,7 +176,8 @@ grxError_t allocate_device_physical(int device, uint64_t bytes,
   grxError_t e = acquire_device(device, &d);
   if (e != grxSuccess) return e;
 
-  const uint64_t need = align_up(bytes, alignment_for(*d));
+  const uint64_t need = align_up(bytes + sanitize_redzone_bytes(),
+                                 alignment_for(*d));
 
   vx_buffer_h buf = nullptr;
   vx_result_t r = vx_buffer_create(d->handle, need,
@@ -190,6 +192,8 @@ grxError_t allocate_device_physical(int device, uint64_t bytes,
   a.buffer = buf; a.base = base; a.size = need; a.offset = 0;
   a.device = device; a.direct = true; a.physical = true;
   g_live[base] = a;
+  sanitize_note_region(base, need);
+  sanitize_note_alloc(base, bytes);
   *out_address = base;
   return grxSuccess;
 }
@@ -201,7 +205,12 @@ grxError_t allocate_device(int device, uint64_t bytes, bool managed,
   if (e != grxSuccess) return e;
 
   const uint64_t align = alignment_for(*d);
-  const uint64_t need  = align_up(bytes, align);
+  // Under GRX_SANITIZE every allocation gets a trailing redzone. It is not
+  // handed to the caller and belongs to no extent, so an overflow off the end
+  // of one allocation lands in a hole rather than in the next allocation --
+  // which is the difference between a finding and a corrupted neighbour.
+  // Because every allocation has one, an underflow also lands in a redzone.
+  const uint64_t need  = align_up(bytes + sanitize_redzone_bytes(), align);
   const uint64_t slab  = slab_size();
 
   std::lock_guard<std::mutex> lock(g_mem_mutex);
@@ -220,6 +229,8 @@ grxError_t allocate_device(int device, uint64_t bytes, bool managed,
     a.buffer = buf; a.base = base; a.size = need; a.offset = 0;
     a.device = device; a.direct = true; a.managed = managed;
     g_live[base] = a;
+    sanitize_note_region(base, need);
+    sanitize_note_alloc(base, bytes);
     *out_address = base;
     return grxSuccess;
   }
@@ -243,6 +254,7 @@ grxError_t allocate_device(int device, uint64_t bytes, bool managed,
   a.managed = managed;
   a.slab    = slab_index;
   g_live[base] = a;
+  sanitize_note_alloc(base, bytes);
   *out_address = base;
   return grxSuccess;
 }
@@ -324,6 +336,7 @@ void release_all_allocations(int device) {
   g_slabs.erase(std::remove_if(g_slabs.begin(), g_slabs.end(),
                                [](const Slab& s) { return s.buffer == nullptr; }),
                 g_slabs.end());
+  sanitize_forget_all();
 }
 
 namespace {
@@ -466,6 +479,18 @@ grxError_t grxFree(void* ptr) {
 
   const grxcp::Allocation a = it->second;
   grxcp::g_live.erase(it);
+
+  // Under GRX_SANITIZE the memory is quarantined rather than recycled: the
+  // extent stays in the map marked freed, and neither the free list nor the
+  // driver gets it back. That is what makes a use-after-free stay a
+  // use-after-free instead of becoming a read of whatever moved in. It also
+  // means a sanitized run's peak device memory is the sum of everything it
+  // ever allocated -- documented, and the reason --sanitize is not a default.
+  if (grxcp::sanitize_enabled()) {
+    grxcp::sanitize_note_free(a.base);
+    return grxSuccess;
+  }
+
   if (a.direct) vx_buffer_release(a.buffer);
   else          grxcp::insert_free(a.base, a.size, a.slab);
   return grxSuccess;

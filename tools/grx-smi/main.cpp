@@ -41,6 +41,7 @@ std::string caps_list(unsigned c) {
     {GRX_CAP_ASYNC_COPY,         "async-copy"},
     {GRX_CAP_RAY_TRACING,        "raytrace"},
     {GRX_CAP_COOPERATIVE_LAUNCH, "cooperative"},
+    {GRX_CAP_GLOBAL_ATOMICS,     "atomics"},
   };
   std::string s;
   for (auto& e : table) {
@@ -108,6 +109,13 @@ void print_human(int index, const grxDeviceProp_t& p) {
   std::printf("    __constant__           %s\n",
               p.constantMemoryIsGlobal ? "read-only global (no broadcast path)"
                                        : "constant cache");
+  // Not a stand-in -- the opposite. There is nothing standing in, and a kernel
+  // that emits an AMO on a build without the A extension aborts the simulator
+  // outright (cuda_mapping.md 7.16). Said here because the device toolchain
+  // compiles -march=rv64imafd either way and will not warn.
+  if (!(p.capabilities & GRX_CAP_GLOBAL_ATOMICS))
+    std::printf("    atomics                ABSENT: no A extension in this "
+                "build; an AMO aborts\n");
   std::printf("\n");
 }
 

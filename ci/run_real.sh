@@ -67,6 +67,10 @@ for tool in grx-smi grx-conform; do
 done
 $CXX $CXXFLAGS -c "$ROOT/tools/grxify/main.cpp" -o "$BUILD/grxify.o"
 $CXX "$BUILD/grxify.o" -o "$BUILD/grxify"
+# grx-sanitize runs a program and reads its report; it never opens a device, so
+# it links no more than grxify does.
+$CXX $CXXFLAGS -c "$ROOT/tools/grx-sanitize/main.cpp" -o "$BUILD/grx-sanitize.o"
+$CXX "$BUILD/grx-sanitize.o" -o "$BUILD/grx-sanitize"
 
 echo
 echo "==> PHASE 0 GATE: grx-smi on a real $DRIVER device"
@@ -124,6 +128,72 @@ else
     rc=$?
     [[ $rc -eq 77 ]] || exit $rc
   fi
+fi
+
+echo
+echo "==> SANITIZE GATE: planted memory bugs, found and located to the line"
+# The phase 2 exit gate asks that grx-sanitize "detects a deliberately planted
+# out-of-bounds write and reports the source line". Four planted bugs, each
+# checked for the exact line it lives on -- and, because a detector that never
+# fires would pass a test that only looks for failures, two controls: the same
+# kernel with the bug removed must come back clean, and the same bug in an
+# UNINSTRUMENTED build must be reported as unchecked rather than as clean.
+if [[ -z "$GRXGPU" || ! -d "$TOOLDIR/llvm-vortex" ]]; then
+  echo "SKIPPED: needs --grxgpu <path> and a device toolchain in $TOOLDIR."
+else
+  SAN_SRC="$ROOT/tests/kernels/sanitize/kernel.cpp"
+  "$ROOT/ci/build_kernel.sh" --grxgpu "$GRXGPU" --tooldir "$TOOLDIR" --sanitize \
+    "$SAN_SRC" -o "$BUILD/sanitize.vxbin" >/dev/null
+  "$ROOT/ci/build_kernel.sh" --grxgpu "$GRXGPU" --tooldir "$TOOLDIR" \
+    "$SAN_SRC" -o "$BUILD/sanitize_plain.vxbin" >/dev/null
+  $CXX $CXXFLAGS -I"$ROOT/tests/kernels/sanitize" \
+    -c "$ROOT/tests/kernels/sanitize/main.cpp" -o "$BUILD/sanitize_main.o"
+  $CXX "${OBJS[@]}" "$BUILD/sanitize_main.o" $LIBS -o "$BUILD/test_sanitize"
+  export TOOLDIR   # how grx-sanitize finds llvm-symbolizer
+
+  # Line numbers come from the source, not from this script: a marker comment
+  # is a thing an editor moves along with the code, and a hard-coded 31 is not.
+  san_line() { grep -n "PLANTED: $1" "$SAN_SRC" | head -1 | cut -d: -f1; }
+
+  san_expect() {   # scenario, marker text
+    local sc="$1" want; want="$(san_line "$2")"
+    local log="$BUILD/san_$sc.log"
+    if "$BUILD/grx-sanitize" -- "$BUILD/test_sanitize" \
+         "$BUILD/sanitize.vxbin" "$sc" >"$log" 2>&1; then
+      echo "  FAIL  $sc: grx-sanitize found nothing"; cat "$log"; exit 1
+    fi
+    if ! grep -q "kernel.cpp:$want:" "$log"; then
+      echo "  FAIL  $sc: no finding at kernel.cpp:$want"; cat "$log"; exit 1
+    fi
+    printf '  ok    %-16s located at kernel.cpp:%s\n' "$sc" "$want"
+  }
+
+  san_expect oob-write      "one past the end"
+  san_expect oob-read       "before the start"
+  san_expect use-after-free "buffer already freed"
+  san_expect oob-shared     "past sharedMem"
+
+  # Control 1: the same program, the same allocator, no planted bug.
+  if ! "$BUILD/grx-sanitize" -- "$BUILD/test_sanitize" \
+         "$BUILD/sanitize.vxbin" clean >"$BUILD/san_clean.log" 2>&1; then
+    echo "  FAIL  clean: findings in a correct kernel"
+    cat "$BUILD/san_clean.log"; exit 1
+  fi
+  echo "  ok    clean            no findings"
+
+  # Control 2: instrumentation actually matters. Without it the tool must say
+  # the run was unchecked -- silence here would mean every unsanitized build
+  # passes this gate forever.
+  if "$BUILD/grx-sanitize" -- "$BUILD/test_sanitize" \
+       "$BUILD/sanitize_plain.vxbin" oob-write >"$BUILD/san_plain.log" 2>&1; then
+    echo "  FAIL  uninstrumented: reported success on an unchecked run"
+    cat "$BUILD/san_plain.log"; exit 1
+  fi
+  if ! grep -q "no instrumentation" "$BUILD/san_plain.log"; then
+    echo "  FAIL  uninstrumented: no warning that nothing was checked"
+    cat "$BUILD/san_plain.log"; exit 1
+  fi
+  echo "  ok    uninstrumented   reported as unchecked, not as clean"
 fi
 
 echo

@@ -26,6 +26,7 @@ OUT=""
 SRC=""
 CONFIGS=""
 CONFIGS_SET=0
+SANITIZE=0
 EXTRA_INCLUDES=()
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -36,6 +37,7 @@ while [[ $# -gt 0 ]]; do
     --tooldir) TOOLDIR="$2"; shift 2 ;;
     --xlen)    XLEN="$2"; shift 2 ;;
     --configs) CONFIGS="$2"; CONFIGS_SET=1; shift 2 ;;
+    --sanitize) SANITIZE=1; shift ;;
     -I)        EXTRA_INCLUDES+=("-I$2"); shift 2 ;;
     -o)        OUT="$2"; shift 2 ;;
     -h|--help) sed -n '2,18p' "$0" | sed 's|^# \{0,1\}||'; exit 0 ;;
@@ -101,21 +103,84 @@ else
   ARCH=(-march=rv32imaf  -mabi=ilp32f); STARTUP_ADDR=0x80000000
 fi
 
-echo "==> compiling $(basename "$SRC") with VOLT"
-"$LLVM/bin/clang++" \
-  --target="riscv${XLEN}-unknown-elf" \
-  --sysroot="$RVT/riscv${XLEN}-unknown-elf" \
-  --gcc-toolchain="$RVT" \
-  -Xclang -target-feature -Xclang +xvortex \
-  -Xclang -target-feature -Xclang +zicond \
-  -mllvm -disable-loop-idiom-all -Wno-unused-command-line-argument \
-  "${ARCH[@]}" -O3 -mcmodel=medany -fno-rtti -fno-exceptions \
-  -nostartfiles -nostdlib -fdata-sections -ffunction-sections \
-  -I"$ROOT/include" -I"$(dirname "$SRC")" \
-  -I"$GRXGPU/sw/kernel/include" -I"$BUILD/sw" -I"$BUILD/hw" -I"$GRXGPU/sw/common" \
-  "${EXTRA_INCLUDES[@]+"${EXTRA_INCLUDES[@]}"}" \
-  -DNDEBUG -D__VORTEX__ -DKMU_ENABLE $XCONFIGS \
+# Flags every device translation unit here shares, so the sanitizer runtime is
+# built for exactly the machine the kernel is built for.
+COMMON=(
+  --target="riscv${XLEN}-unknown-elf"
+  --sysroot="$RVT/riscv${XLEN}-unknown-elf"
+  --gcc-toolchain="$RVT"
+  -Xclang -target-feature -Xclang +xvortex
+  -Xclang -target-feature -Xclang +zicond
+  -mllvm -disable-loop-idiom-all -Wno-unused-command-line-argument
+  "${ARCH[@]}" -O3 -mcmodel=medany -fno-rtti -fno-exceptions
+  -nostartfiles -nostdlib -fdata-sections -ffunction-sections
+  -I"$ROOT/include" -I"$(dirname "$SRC")"
+  -I"$GRXGPU/sw/kernel/include" -I"$BUILD/sw" -I"$BUILD/hw" -I"$GRXGPU/sw/common"
+  "${EXTRA_INCLUDES[@]+"${EXTRA_INCLUDES[@]}"}"
+  -DNDEBUG -D__VORTEX__ -DKMU_ENABLE $XCONFIGS
+)
+
+# --sanitize: instrument the kernel for grx-sanitize.
+#
+# The threshold of 0 forces AddressSanitizer to OUTLINE every check as a call
+# to __asan_loadN / __asan_storeN instead of inlining a shadow-memory probe.
+# src/device/grx_sanitize_rt.cpp implements those calls against the allocation
+# table the host uploads, so no shadow map is needed -- see the header there.
+# Stack and global instrumentation are off because nothing implements the
+# redzones they depend on; claiming them would report an all-clear the runtime
+# has not earned.
+#
+# -g is not optional under --sanitize: a finding without a source line is a
+# hex address and a shrug.
+SAN_FLAGS=()
+EXTRA_OBJS=()
+if [[ "$SANITIZE" == "1" ]]; then
+  SAN_RT="$ROOT/src/device/grx_sanitize_rt.cpp"
+  [[ -f "$SAN_RT" ]] || { echo "error: $SAN_RT not found" >&2; exit 1; }
+  #
+  # Three flag choices here are load-bearing.
+  #
+  # kernel-address, not address. Both emit the same __asan_loadN/__asan_storeN
+  # callbacks; -fsanitize=address additionally emits a module constructor that
+  # calls __asan_init and registers globals, aimed at a hosted runtime that
+  # does not exist here. KASan is the freestanding spelling: no constructor,
+  # no init, nothing to run before main on a device that has no main.
+  #
+  # -Xclang, because the driver refuses either spelling for a bare-metal
+  # riscv64 target: it cannot find libclang_rt.asan-riscv64.a, which does not
+  # exist and never will. The refusal is about the RUNTIME, not the
+  # instrumentation, and the runtime is the part we supply
+  # (src/device/grx_sanitize_rt.cpp). Passing the flag to cc1 asks for exactly
+  # the instrumentation and nothing else.
+  #
+  # -gline-tables-only -gdwarf-4, not -g. A finding without a source line is a
+  # hex address and a shrug, so some debug info is mandatory -- but linking an
+  # instrumented kernel object built with full DWARF-5 -g against the device
+  # link script segfaults ld.lld 20.1.8 from llvm-vortex. Line tables in
+  # DWARF-4 link cleanly and carry everything llvm-symbolizer needs. Neither
+  # form reaches the device: vxbin.py packages allocatable sections only.
+  SAN_FLAGS=(
+    -Xclang -fsanitize=kernel-address
+    -mllvm -asan-instrumentation-with-call-threshold=0
+    -mllvm -asan-stack=0
+    -mllvm -asan-globals=0
+    -gline-tables-only -gdwarf-4
+  )
+  echo "==> compiling the sanitizer runtime (uninstrumented)"
+  # Uninstrumented on purpose: an instrumented check calls itself. Same debug
+  # flavour as the kernel -- mixing DWARF-5 here with an instrumented object
+  # reproduces the same ld.lld crash.
+  "$LLVM/bin/clang++" "${COMMON[@]}" -gline-tables-only -gdwarf-4 \
+    -c "$SAN_RT" -o "${OUT%.vxbin}.san.o"
+  EXTRA_OBJS+=("${OUT%.vxbin}.san.o")
+fi
+
+[[ "$SANITIZE" == "1" ]] && LABEL=" (sanitized)" || LABEL=""
+echo "==> compiling $(basename "$SRC") with VOLT$LABEL"
+"$LLVM/bin/clang++" "${COMMON[@]}" \
+  "${SAN_FLAGS[@]+"${SAN_FLAGS[@]}"}" \
   "$SRC" \
+  "${EXTRA_OBJS[@]+"${EXTRA_OBJS[@]}"}" \
   -Wl,-Bstatic,--gc-sections,-T,"$GRXGPU/sw/kernel/scripts/link${XLEN}.ld",--defsym=STARTUP_ADDR=$STARTUP_ADDR \
   "$BUILD/sw/kernel/libvortex2.a" \
   -L"$LIBC/lib" -lm -lc \

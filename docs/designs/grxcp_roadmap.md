@@ -194,8 +194,37 @@ segmented semantics at two widths, the vote family, and a kernel that shuffles
 beside its own shared memory -- which caught the emulation's scratch region
 starting at the same address `grx::shared_memory()` returns.
 
-Still open in phase 2: `grx_cg.h` (cooperative groups), `grx-prof` and
-`grx-sanitize`. `grxify` v0 already exists.
+**Progress — `grx-sanitize` v1 is done, and the exit gate's second clause with
+it.** A kernel built with `ci/build_kernel.sh --sanitize` is compiled with
+AddressSanitizer's checks *outlined* (`-mllvm
+-asan-instrumentation-with-call-threshold=0`), so every load and store becomes
+a call into `src/device/grx_sanitize_rt.cpp` — where the check is a lookup in
+the allocator's own map rather than a shadow-memory probe. No shadow map has to
+exist, and the check knows things a shadow map would not: the size the caller
+actually asked for, and whether the allocation has been freed.
+
+The SANITIZE GATE in `ci/run_real.sh` plants four bugs — an overflow, an
+underflow, a use-after-free, and a shared-memory overrun — and requires each to
+be reported *at the line it lives on*, with the line numbers read out of the
+source rather than hard-coded. Two controls sit beside them: the same kernel
+without the bug must come back clean, and the same bug in an **uninstrumented**
+build must be reported as unchecked rather than as clean.
+
+Two of the phase-2 scope items did not ship: uninitialized shared memory
+(needs a per-byte initialization shadow) and barrier divergence (needs a
+timeout watch). Both are described, with their designs, in
+[`grx_sanitize.md`](grx_sanitize.md) §2 and §7.
+
+Building it also turned up a live hazard worth more than the tool: the device
+toolchain compiles kernels `-march=rv64imafd`, but this configuration has
+`VX_CFG_EXT_A_ENABLED` off and the simulator **aborts without a word** on any
+AMO instruction. The sanitizer's first draft counted findings atomically and
+died on its own first finding. It now indexes reports by grid-linear thread,
+and `GRX_CAP_GLOBAL_ATOMICS` reports the capability so nothing else has to
+discover this the same way (cuda_mapping.md 7.16).
+
+Still open in phase 2: `grx_cg.h` (cooperative groups) and `grx-prof`.
+`grxify` v0 already exists.
 
 **Note.** `grx-sanitize` lands early on purpose. On a functional simulator
 it is cheap, and it pays for itself across every later phase by catching the

@@ -116,6 +116,7 @@ struct DeviceFacts {
   bool        simulated             = false;
   bool        constant_is_global    = false;
   bool        managed_memory        = false;
+  bool        atomics               = false;
 };
 
 DeviceFacts probe_device() {
@@ -133,6 +134,7 @@ DeviceFacts probe_device() {
                              p.backend == GRX_BACKEND_GEM5);
   f.constant_is_global    = p.constantMemoryIsGlobal != 0;
   f.managed_memory        = p.managedMemory != 0;
+  f.atomics               = (p.capabilities & GRX_CAP_GLOBAL_ATOMICS) != 0;
   return f;
 }
 
@@ -214,6 +216,13 @@ void print_human(const std::vector<Check>& checks, const DeviceFacts& facts) {
                                          : "constant cache");
     std::printf("  managed memory         %s\n",
                 facts.managed_memory ? "available" : "refused on this backend");
+    // A port that calls atomicAdd needs this before it runs, not after: a
+    // build without the A extension does not fail the instruction, it aborts
+    // the simulator (cuda_mapping.md 7.16).
+    std::printf("  atomics                %s\n",
+                facts.atomics
+                    ? "AMO unit present"
+                    : "ABSENT -- this build has no A extension; an AMO aborts");
   }
 
   std::printf("\nNot measured here\n");
@@ -317,6 +326,11 @@ void print_markdown(const std::vector<Check>& checks, const DeviceFacts& facts) 
     std::printf("| Managed memory | %s |\n",
                 facts.managed_memory ? "available"
                                      : "refused on this backend");
+    std::printf("| Atomics | %s |\n",
+                facts.atomics
+                    ? "AMO unit present"
+                    : "absent: this build has `VX_CFG_EXT_A_ENABLED` off, and "
+                      "an AMO instruction aborts rather than faulting");
     std::printf("\n");
   }
 
