@@ -528,9 +528,32 @@ reports the WMMA tile shape and for the same reason. `grxblasGemmEx` refusing a
 type now names what the device *does* accept — a caller told "no" without being
 told what "yes" looks like concludes the whole tensor path is missing.
 
-Still open in phase 3: transposed operands for `grxblasGemmEx`, batched GEMM,
-int8 GEMM (needs a sysroot with the flag), autotuned tile selection, and the
-WGMMA warp-group forms (also a build option this sysroot does not enable).
+**Progress — `grxblasGemmEx` takes transposed operands, all four ways.**
+
+Transposing an operand does three things to its DXA descriptor at once, and
+they are three faces of one change: the extents swap, the tile extents swap,
+and the destination layout flips between the plain and the transposing scatter
+— so that both storage orders land on the *same* shared-memory tile the WMMA
+fragments read. The kernel swaps its coordinate pair to match, because tile
+coordinates are computed per block on the device and the host cannot do it for
+it.
+
+The interesting part was the ragged-`k` case. The untransposed GEMM was exact
+only by an accident of layout: `k` was an outer dimension of A's descriptor, so
+A's tail came back zeroed and every tail term was `0 * whatever-B-read`. The
+DXA engine does not pad dimension 0 (cuda_mapping.md 7.14), and transposing an
+operand moves `k` between dimension 0 and the outer dimension — TN puts it in
+dimension 0 for **both**, and garbage times garbage is garbage.
+
+So the kernel now zeroes the staged tail itself, on the one step that can
+overhang. All four combinations are then exact for their own reason rather than
+by luck. Confirmed in the failing direction: with the zeroing removed, exactly
+the TN ragged-`k` cases fail and NN, NT and TT stay correct — which is what the
+layout table predicts, observed rather than assumed.
+
+Still open in phase 3: batched GEMM, int8 GEMM (needs a sysroot with the flag),
+autotuned tile selection, and the WGMMA warp-group forms (also a build option
+this sysroot does not enable).
 ---
 
 ## Phase 4 — `grxcc` single-source driver (≈5–6 engineer-months)

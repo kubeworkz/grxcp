@@ -63,11 +63,16 @@ grxblasStatus_t grxblasGetStream(grxblasHandle_t handle, grxStream_t* stream);
 //
 //   C = alpha * A * B + beta * C,  A m x k, B k x n, C m x n, all column major
 //
-// WHAT v0 ACCEPTS. Atype and Btype must be GRX_R_16F, Ctype GRX_R_32F, and
-// both operations GRXBLAS_OP_N. Anything else returns
+// WHAT THIS ACCEPTS. All four transpose combinations. Atype and Btype must be
+// GRX_R_16F and Ctype GRX_R_32F -- which is what this device's tensor unit
+// has; ask grxblasGetTensorTypes rather than assuming, because the type set is
+// a build-time choice. A type it cannot do returns
 // GRXBLAS_STATUS_NOT_SUPPORTED rather than falling back to the scalar kernel:
 // a silent fallback would turn "the tensor path does not handle this" into "the
 // tensor path is slow", and the caller would have no way to tell.
+//
+// Leading dimensions bound op()'s STORAGE, not its logical shape: a transposed
+// A is stored k x m, so lda >= k.
 //
 // The device needs a tensor unit AND a DMA engine (grxDeviceProp_t
 // capabilities); without either this returns GRXBLAS_STATUS_ARCH_MISMATCH.

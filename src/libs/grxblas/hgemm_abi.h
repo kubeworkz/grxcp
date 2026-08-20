@@ -12,10 +12,12 @@
 
 #include <stdint.h>
 
+#include "sgemm_abi.h"   // GRXBLAS_ABI_OP_N / _T
+
 // Bumped whenever this struct changes; the kernel refuses to run on a
 // mismatch. See the same mechanism in sgemm_abi.h and the incident that
 // prompted it.
-#define GRXBLAS_HGEMM_ABI_VERSION 3u
+#define GRXBLAS_HGEMM_ABI_VERSION 4u
 
 // Indices into the buffer the shape entry point fills.
 enum {
@@ -59,6 +61,11 @@ struct grxblas_hgemm_args {
   uint32_t tiles;          // m_tiles * n_tiles: the blocks the warps walk
   uint32_t k_steps;        // ceil(k / tile K)
   uint32_t slot_a, slot_b; // DXA descriptor slots the host programmed
+  // Transposing an operand swaps which of its two indices is the descriptor's
+  // dimension 0, so the kernel has to issue its tile coordinates in the other
+  // order. The host cannot do this for it: the coordinates are computed on the
+  // device, per block. GRXBLAS_ABI_OP_N / _T.
+  uint32_t transa, transb;
   uint32_t barrier;        // first barrier slot; warp w uses barrier + w
   float    alpha, beta;
   uint64_t c;

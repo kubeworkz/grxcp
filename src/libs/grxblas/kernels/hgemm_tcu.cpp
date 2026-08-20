@@ -219,9 +219,43 @@ __global__ void hgemm_tcu(grxblas_hgemm_args* __UNIFORM__ arg) {
       // before either is issued -- expect_tx after an issue races a transfer
       // that may already have finished.
       bar.expect_tx(2);
-      grx::memcpy_async(sA, mapA, row0, k0, bar);
-      grx::memcpy_async(sB, mapB, k0, col0, bar);
+      // Coordinate order follows the descriptor's dimension order, which the
+      // transpose flags decide. A stored m x k has the m index in dimension 0;
+      // stored k x m has the k index there instead, and passing the pair the
+      // other way round would fetch a tile from somewhere else entirely.
+      if (arg->transa == GRXBLAS_ABI_OP_N)
+        grx::memcpy_async(sA, mapA, row0, k0, bar);
+      else
+        grx::memcpy_async(sA, mapA, k0, row0, bar);
+      if (arg->transb == GRXBLAS_ABI_OP_N)
+        grx::memcpy_async(sB, mapB, k0, col0, bar);
+      else
+        grx::memcpy_async(sB, mapB, col0, k0, bar);
       bar.arrive_and_wait();
+
+      // Zero whatever the last k step overhangs.
+      //
+      // The DXA engine pads a tile that runs off an OUTER dimension and does
+      // NOT pad dimension 0, where it reads straight past the extent
+      // (cuda_mapping.md 7.14). Untransposed, k is an outer dimension of A, so
+      // A's tail came back zeroed and every tail term was 0 * whatever-B-read.
+      // Transpose an operand and k moves to dimension 0 for it -- and for TN it
+      // moves there for BOTH, at which point the product of two pieces of
+      // garbage is garbage.
+      //
+      // So the tail is zeroed here rather than inherited from whichever operand
+      // happened to be padded. It costs a few stores on one step out of
+      // k_steps, and it makes all four transpose combinations exact for their
+      // own reason instead of by luck.
+      const uint32_t k_valid = (arg->k > k0) ? (arg->k - k0) : 0u;
+      if (k_valid < (uint32_t)tile::k) {
+        const uint32_t W = grx::warp_size();
+        for (uint32_t i = lane; i < kBlockM * (uint32_t)tile::k; i += W)
+          if ((i % (uint32_t)tile::k) >= k_valid) sA[i] = 0;
+        for (uint32_t i = lane; i < kBlockN * (uint32_t)tile::k; i += W)
+          if ((i % (uint32_t)tile::k) >= k_valid) sB[i] = 0;
+        __syncwarp();
+      }
 
       // Each A fragment is read by every column of the block and each B
       // fragment by every row: that reuse is the whole point of the blocking,

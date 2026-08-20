@@ -360,10 +360,14 @@ grxblasStatus_t grxblasGemmEx(grxblasHandle_t handle,
   // Refused rather than emulated. A fallback to the scalar kernel here would
   // report success for a call the tensor path cannot do, and the caller would
   // read the resulting speed as the tensor unit's.
-  if (transa != GRXBLAS_OP_N || transb != GRXBLAS_OP_N)
-    return GRXBLAS_STATUS_NOT_SUPPORTED;
-
-  if (lda < m || ldb < k || ldc < m) return GRXBLAS_STATUS_INVALID_VALUE;
+  // Leading-dimension rules follow op(), not the logical shape: a transposed A
+  // is STORED k x m, so its leading dimension bounds k rather than m.
+  const bool ta = (transa == GRXBLAS_OP_T);
+  const bool tb = (transb == GRXBLAS_OP_T);
+  const int min_lda = ta ? k : m;
+  const int min_ldb = tb ? n : k;
+  if (lda < min_lda || ldb < min_ldb || ldc < m)
+    return GRXBLAS_STATUS_INVALID_VALUE;
 
   auto* ctx = reinterpret_cast<Context*>(handle);
   const grxblasStatus_t s = ensure_hgemm(*ctx);
@@ -401,29 +405,61 @@ grxblasStatus_t grxblasGemmEx(grxblasHandle_t handle,
   const uint32_t n_tiles = ((uint32_t)n + bn - 1) / bn;
   const uint32_t k_steps = ((uint32_t)k + tk - 1) / tk;
 
-  // A is m x k column major, so its contiguous direction is the row index; the
-  // transposing (k-major) destination turns that into the row-major tile the
-  // matrix_a fragment wants. B is k x n column major, contiguous along k, and
-  // the plain destination gives what matrix_b col_major wants. See the kernel.
+  // The descriptors, and what a transpose does to them.
+  //
+  // The kernel wants one thing from each operand regardless of how it is
+  // stored: sA holding op(A)'s tile ROW major with leading dimension tile::k,
+  // and sB holding op(B)'s tile COLUMN major with the same leading dimension.
+  // That is what matrix_a and matrix_b col_major fragments read.
+  //
+  // Dimension 0 of a descriptor is the source's contiguous direction, and the
+  // destination layout says whether the engine keeps that order (RowMajor:
+  // dest[e1*tile0 + e0]) or transposes it (KMajor: dest[e0*tile1 + e1]). So
+  // transposing an operand does three things together, and they are three
+  // faces of one change:
+  //
+  //   the extents swap        (m,k) <-> (k,m)     -- what is stored
+  //   the tile extents swap   (bm,tk) <-> (tk,bm)
+  //   the destination layout flips                -- to land on the same sA
+  //
+  // and the kernel swaps its coordinate pair to match, because coordinates are
+  // per block and computed on the device.
+  //
+  //   A, N: stored m x k, dim0 = m. KMajor transposes it into row-major sA.
+  //   A, T: stored k x m, dim0 = k. RowMajor already gives row-major sA.
+  //   B, N: stored k x n, dim0 = k. RowMajor gives column-major sB.
+  //   B, T: stored n x k, dim0 = n. KMajor gives column-major sB.
   grxTensorMapDesc_t da{};
   da.slot = ctx->slot_a;
   da.base = const_cast<void*>(A);
   da.rank = 2;
-  da.size[0] = (unsigned)m;  da.size[1] = (unsigned)(k ? k : 1);
   da.strideBytes[0] = (unsigned)lda * 2u;
-  da.tile[0] = bm;           da.tile[1] = tk;
   da.elementBytes = 2;
-  da.layout = grxTensorMapLayoutKMajor;
+  if (!ta) {
+    da.size[0] = (unsigned)m;            da.size[1] = (unsigned)(k ? k : 1);
+    da.tile[0] = bm;                     da.tile[1] = tk;
+    da.layout  = grxTensorMapLayoutKMajor;
+  } else {
+    da.size[0] = (unsigned)(k ? k : 1);  da.size[1] = (unsigned)m;
+    da.tile[0] = tk;                     da.tile[1] = bm;
+    da.layout  = grxTensorMapLayoutRowMajor;
+  }
 
   grxTensorMapDesc_t db{};
   db.slot = ctx->slot_b;
   db.base = const_cast<void*>(B);
   db.rank = 2;
-  db.size[0] = (unsigned)(k ? k : 1);  db.size[1] = (unsigned)n;
   db.strideBytes[0] = (unsigned)ldb * 2u;
-  db.tile[0] = tk;                     db.tile[1] = bn;
   db.elementBytes = 2;
-  db.layout = grxTensorMapLayoutRowMajor;
+  if (!tb) {
+    db.size[0] = (unsigned)(k ? k : 1);  db.size[1] = (unsigned)n;
+    db.tile[0] = tk;                     db.tile[1] = bn;
+    db.layout  = grxTensorMapLayoutRowMajor;
+  } else {
+    db.size[0] = (unsigned)n;            db.size[1] = (unsigned)(k ? k : 1);
+    db.tile[0] = bn;                     db.tile[1] = tk;
+    db.layout  = grxTensorMapLayoutKMajor;
+  }
 
   if (k > 0) {
     e = grxTensorMapProgramAsync(&da, ctx->stream);
@@ -441,6 +477,8 @@ grxblasStatus_t grxblasGemmEx(grxblasHandle_t handle,
   args.k_steps = k_steps;
   args.slot_a = (uint32_t)ctx->slot_a;
   args.slot_b = (uint32_t)ctx->slot_b;
+  args.transa = ta ? GRXBLAS_ABI_OP_T : GRXBLAS_ABI_OP_N;
+  args.transb = tb ? GRXBLAS_ABI_OP_T : GRXBLAS_ABI_OP_N;
   args.barrier = 0;
   args.alpha = *alpha; args.beta = *beta;
   args.c = (uint64_t)(uintptr_t)C;

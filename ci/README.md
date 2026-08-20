@@ -98,6 +98,15 @@ disagreement there means the module and the runtime came from different
 configurations, which is the failure "configuration provenance" below exists to
 prevent. It skips when the device reports no tensor unit.
 
+`tests/libs/test_grxblas_ex.cpp` covers `grxblasGemmEx` in all four transpose
+combinations, including the ragged-`k` shapes. Those are the interesting ones:
+transposing an operand moves `k` between the DXA descriptor's dimension 0 and
+its outer dimension, and only the outer one is padded. TN puts `k` in
+dimension 0 for both operands, so the kernel zeroes the staged tail itself
+rather than inheriting a zero from whichever operand happened to be padded.
+Watched in the failing direction — with the zeroing removed, exactly the TN
+ragged-`k` cases fail and the other three stay correct.
+
 `tests/libs/test_grxblas_l12.cpp` is the level-1/level-2 gate: saxpy, sscal and
 sgemv, with every comparison EXACT. The values are small integers held in
 floats, so every summation order gives the same bits and no tolerance is

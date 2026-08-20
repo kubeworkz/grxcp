@@ -398,12 +398,25 @@ reads straight past `size0` into whatever memory follows. Measured in
 `tests/kernels/dxa/`; the gate asserts both halves so the asymmetry cannot
 change unnoticed.
 
-It matters more than it looks. The tensor GEMM's ragged-`k` case is exact only
-because `k` is an outer dimension of the **A** descriptor, so A's tail is
-zeroed and every tail term is `0 * whatever-B-picked-up`. Put `k` in dimension
-0 for both operands — which is what a transposed A would do — and the same
-kernel silently starts accumulating garbage. It is one reason `grxblasGemmEx`
-refuses transposes today rather than assuming they compose.
+It mattered more than it looked. The tensor GEMM's ragged-`k` case used to be
+exact only because `k` was an outer dimension of the **A** descriptor, so A's
+tail came back zeroed and every tail term was `0 * whatever-B-picked-up`. That
+is an accident of one transpose combination, and transposing an operand moves
+`k` between dimension 0 and the outer dimension:
+
+| | A's `k` | B's `k` | tail product |
+|---|---|---|---|
+| NN | outer, zeroed | dim 0, garbage | `0 * garbage` |
+| NT | outer, zeroed | outer, zeroed | `0 * 0` |
+| TT | dim 0, garbage | outer, zeroed | `garbage * 0` |
+| **TN** | dim 0, garbage | dim 0, garbage | **garbage** |
+
+So `grxblasGemmEx` no longer inherits its correctness from whichever operand
+happened to be padded: `kernels/hgemm_tcu.cpp` zeroes the staged tail itself on
+the one step that can overhang. It costs a few stores out of `k_steps`, and it
+makes all four combinations exact for their own reason. Verified in the
+direction that matters — with the zeroing removed, exactly the TN ragged-`k`
+cases fail and the other three stay correct, which is what the table predicts.
 
 `grxTensorMapProgramAsync` sizes its bounds check for a full edge tile, so the
 unchecked overhang cannot reach outside the caller's allocation.

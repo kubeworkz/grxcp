@@ -35,28 +35,44 @@ float sample(unsigned& seed) {
   return (float)((int)((seed >> 16) % 17u) - 8) * 0.5f;
 }
 
-// C = alpha * A * B + beta * C, column major, computed from the float values
-// the halves were made from.
-void reference(int m, int n, int k, float alpha, const std::vector<float>& A,
-               int lda, const std::vector<float>& B, int ldb, float beta,
+// C = alpha * op(A) * op(B) + beta * C, column major, computed from the float
+// values the halves were made from.
+//
+// The transpose is applied here as a swap of a single subscript pair, and
+// deliberately not as a second index expression: writing the two cases
+// independently is how a reference ends up agreeing with a kernel that
+// transposes nothing. The sgemm gate learned that the hard way.
+void reference(bool ta, bool tb, int m, int n, int k, float alpha,
+               const std::vector<float>& A, int lda,
+               const std::vector<float>& B, int ldb, float beta,
                std::vector<float>& C, int ldc) {
   for (int j = 0; j < n; ++j) {
     for (int i = 0; i < m; ++i) {
       float acc = 0.0f;
-      for (int l = 0; l < k; ++l)
-        acc += A[(size_t)i + (size_t)l * lda] * B[(size_t)l + (size_t)j * ldb];
+      for (int l = 0; l < k; ++l) {
+        const float a = ta ? A[(size_t)l + (size_t)i * lda]
+                           : A[(size_t)i + (size_t)l * lda];
+        const float b = tb ? B[(size_t)j + (size_t)l * ldb]
+                           : B[(size_t)l + (size_t)j * ldb];
+        acc += a * b;
+      }
       const size_t ci = (size_t)i + (size_t)j * ldc;
       C[ci] = (beta == 0.0f) ? (alpha * acc) : (alpha * acc + beta * C[ci]);
     }
   }
 }
 
-bool run_case(grxblasHandle_t h, int m, int n, int k, float alpha, float beta,
-              int pad, const char* label) {
-  const int lda = m + pad, ldb = (k ? k : 1) + pad, ldc = m + pad;
+bool run_case(grxblasHandle_t h, bool ta, bool tb, int m, int n, int k,
+              float alpha, float beta, int pad, const char* label) {
+  // Storage shapes follow op(), not the logical ones: a transposed A is stored
+  // k x m and its leading dimension bounds k.
+  const int kk     = k ? k : 1;
+  const int a_rows = ta ? kk : m,  a_cols = ta ? m : kk;
+  const int b_rows = tb ? n : kk,  b_cols = tb ? kk : n;
+  const int lda = a_rows + pad, ldb = b_rows + pad, ldc = m + pad;
 
-  std::vector<float> A((size_t)lda * (k ? k : 1)), B((size_t)ldb * n),
-      C((size_t)ldc * n);
+  std::vector<float> A((size_t)lda * (size_t)a_cols),
+      B((size_t)ldb * (size_t)b_cols), C((size_t)ldc * n);
   unsigned seed = 99u;
   for (auto& v : A) v = sample(seed);
   for (auto& v : B) v = sample(seed);
@@ -70,7 +86,7 @@ bool run_case(grxblasHandle_t h, int m, int n, int k, float alpha, float beta,
   for (size_t i = 0; i < B.size(); ++i) hB[i] = float_to_half(B[i]);
 
   std::vector<float> expected = C;
-  reference(m, n, k, alpha, A, lda, B, ldb, beta, expected, ldc);
+  reference(ta, tb, m, n, k, alpha, A, lda, B, ldb, beta, expected, ldc);
 
   void *dA = nullptr, *dB = nullptr, *dC = nullptr;
   auto bytes16 = [](const std::vector<uint16_t>& v) {
@@ -87,7 +103,8 @@ bool run_case(grxblasHandle_t h, int m, int n, int k, float alpha, float beta,
   grxMemcpy(dC, C.data(), C.size() * sizeof(float), grxMemcpyDefault);
 
   const grxblasStatus_t s =
-      grxblasGemmEx(h, GRXBLAS_OP_N, GRXBLAS_OP_N, m, n, k, &alpha,
+      grxblasGemmEx(h, ta ? GRXBLAS_OP_T : GRXBLAS_OP_N,
+                    tb ? GRXBLAS_OP_T : GRXBLAS_OP_N, m, n, k, &alpha,
                     dA, GRX_R_16F, lda, dB, GRX_R_16F, ldb, &beta,
                     dC, GRX_R_32F, ldc);
   if (s != GRXBLAS_STATUS_SUCCESS) {
@@ -189,15 +206,39 @@ int main() {
 
   section("GemmEx against a CPU reference");
   bool all = true;
-  all &= run_case(h, tm, tn, tk, 1.0f, 0.0f, 0, "exactly one tile, one k step");
-  all &= run_case(h, tm * 2, tn * 2, tk * 2, 1.0f, 0.0f, 0, "four tiles, two k steps");
-  all &= run_case(h, 16, 16, 16, 1.0f, 0.0f, 0, "16x16x16");
-  all &= run_case(h, 5, 3, 7, 1.0f, 0.0f, 0, "5x3x7 -- every dimension ragged");
-  all &= run_case(h, 17, 9, 13, 1.0f, 0.0f, 0, "17x9x13 -- ragged and larger");
-  all &= run_case(h, 1, 1, 1, 1.0f, 0.0f, 0, "1x1x1 -- one element, one product");
-  all &= run_case(h, 12, 6, 10, 2.5f, -1.5f, 0, "alpha and beta");
-  all &= run_case(h, 12, 6, 10, 1.0f, 0.0f, 3, "padded leading dimensions");
-  all &= run_case(h, 6, 5, 0, 1.0f, 2.0f, 0, "k = 0 scales C by beta");
+  all &= run_case(h, false, false, tm, tn, tk, 1.0f, 0.0f, 0, "exactly one tile, one k step");
+  all &= run_case(h, false, false, tm * 2, tn * 2, tk * 2, 1.0f, 0.0f, 0, "four tiles, two k steps");
+  all &= run_case(h, false, false, 16, 16, 16, 1.0f, 0.0f, 0, "16x16x16");
+  all &= run_case(h, false, false, 5, 3, 7, 1.0f, 0.0f, 0, "5x3x7 -- every dimension ragged");
+  all &= run_case(h, false, false, 17, 9, 13, 1.0f, 0.0f, 0, "17x9x13 -- ragged and larger");
+  all &= run_case(h, false, false, 1, 1, 1, 1.0f, 0.0f, 0, "1x1x1 -- one element, one product");
+  all &= run_case(h, false, false, 12, 6, 10, 2.5f, -1.5f, 0, "alpha and beta");
+  all &= run_case(h, false, false, 12, 6, 10, 1.0f, 0.0f, 3, "padded leading dimensions");
+  all &= run_case(h, false, false, 6, 5, 0, 1.0f, 2.0f, 0, "k = 0 scales C by beta");
+
+  section("GemmEx with transposed operands");
+  // Every combination, and the ragged-k cases are the point. Transposing an
+  // operand moves k between the descriptor's dimension 0 and its outer
+  // dimension, and dimension 0 is the one the DXA engine does not pad
+  // (cuda_mapping.md 7.14). TN puts k in dimension 0 for BOTH operands, which
+  // is the combination that used to be arithmetically impossible here.
+  for (int which = 0; which < 3; ++which) {
+    const bool ta = (which != 1), tb = (which != 0);
+    const char* name = ta && tb ? "TT" : (ta ? "TN" : "NT");
+    char label[96];
+
+    std::snprintf(label, sizeof(label), "%s exactly one tile", name);
+    all &= run_case(h, ta, tb, tm, tn, tk, 1.0f, 0.0f, 0, label);
+    std::snprintf(label, sizeof(label), "%s four tiles, two k steps", name);
+    all &= run_case(h, ta, tb, tm * 2, tn * 2, tk * 2, 1.0f, 0.0f, 0, label);
+    std::snprintf(label, sizeof(label), "%s 5x3x7 -- every dimension ragged", name);
+    all &= run_case(h, ta, tb, 5, 3, 7, 1.0f, 0.0f, 0, label);
+    std::snprintf(label, sizeof(label), "%s 17x9x13 -- ragged and larger", name);
+    all &= run_case(h, ta, tb, 17, 9, 13, 1.0f, 0.0f, 0, label);
+    std::snprintf(label, sizeof(label), "%s alpha, beta and padded lds", name);
+    all &= run_case(h, ta, tb, 12, 6, 10, 2.5f, -1.5f, 3, label);
+  }
+  check(all, "every transposed GemmEx case matches the reference exactly");
   check(all, "every GemmEx case matches the reference exactly");
 
   section("what the tensor path refuses");
@@ -205,10 +246,14 @@ int main() {
     const float one = 1.0f, zero = 0.0f;
     void* d = nullptr;
     grxMalloc(&d, 4096);
-    check(grxblasGemmEx(h, GRXBLAS_OP_T, GRXBLAS_OP_N, 8, 4, 8, &one, d,
-                        GRX_R_16F, 8, d, GRX_R_16F, 8, &zero, d, GRX_R_32F, 8)
-              == GRXBLAS_STATUS_NOT_SUPPORTED,
-          "a transposed operand is refused, not silently handled elsewhere");
+    // A transposed operand used to be refused here. It is implemented now, so
+    // what this checks is the leading-dimension rule that comes with it: a
+    // transposed A is stored k x m, so lda bounds k and an lda of 4 with k = 8
+    // is too small even though it is big enough for m.
+    check(grxblasGemmEx(h, GRXBLAS_OP_T, GRXBLAS_OP_N, 4, 4, 8, &one, d,
+                        GRX_R_16F, 4, d, GRX_R_16F, 8, &zero, d, GRX_R_32F, 4)
+              == GRXBLAS_STATUS_INVALID_VALUE,
+          "lda bounds k when A is transposed, not m");
     check(grxblasGemmEx(h, GRXBLAS_OP_N, GRXBLAS_OP_N, 8, 4, 8, &one, d,
                         GRX_R_32F, 8, d, GRX_R_16F, 8, &zero, d, GRX_R_32F, 8)
               == GRXBLAS_STATUS_NOT_SUPPORTED,
