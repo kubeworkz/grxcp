@@ -820,6 +820,24 @@ required to report.
 
 ## Phase 5 — Concurrency and asynchrony (≈3 engineer-months, gated externally)
 
+**Status: still gated, and now measured rather than assumed.** The gate was a
+sentence in `src/runtime/stream.cpp` — "the driver serializes launches" — that
+nobody had re-checked since it was written, and an entire phase rested on it.
+`tests/repro/stream_overlap/` now tests it directly: two kernels rendezvous
+through a device global, one per stream, and only a **mid-spin** sighting proves
+overlap. On simx, across trials, zero overlapped. The gate is real.
+
+It also turned up something the sentence did not say: **independent streams have
+no order either.** About a third of trials run the second stream's kernel first,
+because two streams are two driver worker threads racing to submit. That is not
+a defect — CUDA promises no ordering between independent streams — but it is
+true *today*, not only after concurrency lands, and a first version of the
+repro mistook it for overlap half the time. `cuda_mapping.md` section 7.3 has
+the reasoning and the two controls the repro carries.
+
+The repro is a standing watch in `ci/run_real.sh`, so CI reports the day a
+mid-spin sighting appears and this phase opens.
+
 **Scope.** Make streams mean something physically.
 
 - Consume the GRX-G100 QMD-style atomic `CMD_LAUNCH` and multi-queue CP work

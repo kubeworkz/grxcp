@@ -151,6 +151,20 @@ the same bug in an **uninstrumented** build must be reported as *unchecked*
 rather than as clean — otherwise every build that forgot `--sanitize` would
 pass this gate forever. See `docs/designs/grx_sanitize.md`.
 
+The **stream-overlap WATCH** (`tests/repro/stream_overlap/`) answers a question
+the roadmap gates all of phase 5 on: do two streams run at the same time? Two
+kernels rendezvous through a device global, one per stream, waiter enqueued
+first. Only a sighting **mid-spin** proves overlap — a sighting at iteration 0
+means the setter finished before the waiter began, which is reordering, and a
+first version that counted it as overlap reported overlap half the time on a
+device that has none.
+
+Its two controls DO gate, and that is the point: one checks the rendezvous works
+at all, the other checks the detector can see a mid-spin sighting by having the
+waiter set the flag itself halfway through. Without the second, "never saw it"
+could equally mean the measurement is blind. The overlap answer itself is a
+watch — exit 0 either way, read the message.
+
 The **BARRIER GATE** (`tests/repro/barrier_duplication/`) is half gate and half
 watch, because it covers a defect GRXCP works around rather than owns. Two
 kernels do the same work behind a divergent branch: one calls GRXCP's

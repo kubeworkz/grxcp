@@ -243,6 +243,40 @@ atomic `CMD_LAUNCH` replacing today's ~18-`CMD_DCR_WRITE` launch dance
   most CUDA code uses streams at all.
 - **Fix:** GRX-G100 side. GRXCP's Phase 5 tracks and consumes it.
 
+**Now measured rather than asserted.** The sentence above gated an entire phase
+and nobody had re-checked it since it was written, so
+`tests/repro/stream_overlap/` checks it directly. Two kernels rendezvous through
+a device global: a `waiter` spins on it with a bounded budget, a `setter` writes
+it, one per stream, waiter enqueued first.
+
+The iteration number is the whole answer, and getting that right took two tries:
+
+| result | meaning |
+|---|---|
+| saw it at iteration **> 0** | **overlap** — the waiter was already spinning when the setter ran |
+| never saw it | **serialized** for that run — the waiter ran its whole budget and the setter still had not run |
+| saw it at iteration **0** | **inconclusive** — the flag was set on the first read, so the setter finished *before* the waiter began |
+
+The third case is about a third of runs, and a first version that counted it as
+overlap reported overlap half the time on a device that has none. Every sighting
+was at iteration 0 exactly — never 500, never 1200 — which is what identifies it
+as reordering rather than concurrency.
+
+**Result on simx: serialized, with no ordering between independent streams.**
+Across trials, zero overlapped and the rest either ran the full budget or were
+reordered. Both readings are consistent, and the second is not a defect: CUDA
+promises no ordering between independent streams either. It does mean a naive
+overlap test is flaky, which is why the repro runs several trials and concludes
+from the set.
+
+The repro carries a control for the *detector*, not just for the device: the
+waiter can set the flag itself halfway through its own spin, and must then
+report that iteration. Without it, "never saw it" could equally mean the
+measurement cannot see a mid-spin sighting at all. That control had to be run
+with the setter **not launched**, because otherwise the same reordering race
+sets the flag before the waiter's first read — which is exactly how its first
+version failed.
+
 ### 7.4 Device-side event timing — **DRV**
 
 `vx_event_get_profiling` works: the driver stamps queued/submit/start/end for

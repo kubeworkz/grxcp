@@ -13,6 +13,18 @@
 // driver serializes launches; real overlap needs the upstream QMD-style atomic
 // launch (cuda_mapping.md section 7.3). Programs written against these
 // semantics get faster when that lands, without source changes.
+//
+// That is MEASURED, not assumed -- tests/repro/stream_overlap/ runs two kernels
+// on two streams that rendezvous through a device global, and no trial has ever
+// seen the second one run while the first was still going. It is a standing
+// watch, so CI reports the day that changes.
+//
+// One thing the measurement added: independent streams have no ORDER either.
+// About a third of trials run the second stream's kernel before the first's,
+// because two streams are two driver worker threads racing to submit. That is
+// not a defect -- CUDA promises nothing about ordering between independent
+// streams -- but code that assumes enqueue order across streams is wrong here
+// today, not only after concurrency lands.
 
 #include "internal.h"
 

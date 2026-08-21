@@ -372,6 +372,30 @@ else
 fi
 
 echo
+echo "==> WATCH: do two streams overlap yet"
+# The whole of phase 5 is gated on "the driver serializes launches", which was a
+# sentence in src/runtime/stream.cpp that nobody had re-checked. This measures
+# it: two kernels rendezvous through a device global, one per stream, and a
+# mid-spin sighting is the only thing that proves overlap. A watch, not a gate --
+# it exits 0 either way. Read the message.
+if [[ -n "$GRXGPU" && -d "$TOOLDIR/llvm-vortex" ]]; then
+  "$ROOT/ci/build_kernel.sh" --grxgpu "$GRXGPU" --tooldir "$TOOLDIR" \
+    -I "$ROOT/include" "$ROOT/tests/repro/stream_overlap/kernel.cpp" \
+    -o "$BUILD/stream_overlap.vxbin" >/dev/null
+  $CXX $CXXFLAGS -c "$ROOT/tests/repro/stream_overlap/main.cpp" \
+    -o "$BUILD/stream_overlap_main.o"
+  $CXX "${OBJS[@]}" "$BUILD/stream_overlap_main.o" $LIBS -o "$BUILD/stream_overlap"
+  # The two controls inside it DO gate: if the rendezvous or the detector is
+  # broken, the answer means nothing and it exits non-zero.
+  if ! "$BUILD/stream_overlap" "$BUILD/stream_overlap.vxbin" 5000 6; then
+    rc=$?
+    [[ $rc -eq 77 ]] || exit $rc
+  fi
+else
+  echo "SKIPPED: needs --grxgpu <path> and a device toolchain in $TOOLDIR."
+fi
+
+echo
 echo "==> BARRIER GATE: is __syncthreads() still surviving divergence"
 # Half gate, half watch. guarded_good is GRXCP's convergent __syncthreads() and
 # MUST pass -- a failure there is our regression. guarded_bad is upstream's bare
