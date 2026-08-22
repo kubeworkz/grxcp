@@ -1,0 +1,22 @@
+# npu_c930 — GRX930 NPU backend for grxcp.
+#
+# This module drives the C930's INT8 systolic-array GEMM accelerator through
+# its AXI4-Lite MMIO register interface.  It has NO dependency on vortex2.h.
+
+# NOTE: the parent src/CMakeLists.txt globs *.cpp from this directory.
+# test_npu_c930.cpp has main() and must NOT be compiled into libgrxrt.
+# It is built separately below as a standalone test executable.
+#
+# The npu_c930.cpp is compiled into the grxrt library via the parent's glob.
+# This file only defines the standalone test target.
+
+add_executable(test_npu_c930
+    test_npu_c930.cc
+    npu_c930.cpp   # compiled separately for the test (not via the parent glob)
+)
+
+target_include_directories(test_npu_c930 PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+add_test(NAME npu_c930_unit COMMAND test_npu_c930)

@@ -21,6 +21,10 @@
 #include "blas12_abi.h"
 #include "sgemm_abi.h"
 
+#ifdef GRXCP_ENABLE_NPU
+#include "npu_c930.h"
+#endif
+
 namespace {
 
 std::mutex  g_path_mutex;
@@ -302,6 +306,105 @@ grxblasStatus_t ensure_hgemm(Context& ctx) {
   return GRXBLAS_STATUS_SUCCESS;
 }
 
+// ---------------------------------------------------------------------------
+// NPU C930 backend (compiled only when GRXCP_ENABLE_NPU is set)
+// ---------------------------------------------------------------------------
+
+#ifdef GRXCP_ENABLE_NPU
+
+static npu_c930_device_t g_npu_dev;
+static bool              g_npu_detected = false;
+static std::once_flag    g_npu_once;
+
+static void ensure_npu_detected() {
+  std::call_once(g_npu_once, [] {
+    g_npu_detected = npu_c930_detect(&g_npu_dev) != 0;
+    if (g_npu_detected)
+      std::fprintf(stderr, "grxblas: GRX930 NPU detected at 0x%08x\n",
+                   NPU_C930_MMIO_BASE);
+  });
+}
+
+// Check if the current device is an NPU (deviceType == GRX_DEVICE_TYPE_NPU).
+static bool current_device_is_npu() {
+  grxDeviceProp_t prop{};
+  if (grxGetDeviceProperties(&prop, grxGetDevice(nullptr)) != grxSuccess)
+    return false;
+  return prop.deviceType == GRX_DEVICE_TYPE_NPU;
+}
+
+// NPU GEMM path: INT8 in, INT32 out, via the C930 systolic array.
+//
+// The NPU's AXI4 DMA reads A/B from DDR and writes C back.
+// All pointers are physical DDR addresses (no MMU on bare-metal).
+//
+// For column-major BLAS convention: A is m x k (lda >= m), B is k x n
+// (ldb >= k), C is m x n (ldc >= m).  The NPU expects row-major packed
+// INT8.  We pass the A/B/C pointers directly and let the NPU's DMA
+// handle the layout — the caller must ensure the buffers are contiguous
+// and row-major.
+//
+// NOTE: this assumes no transpose.  Transpose support would require
+// physical copies into row-major buffers, which is a follow-up.
+static grxblasStatus_t npu_gemm_path(
+    int m, int n, int k,
+    const float* alpha, const void* A, int lda,
+    const void* B, int ldb,
+    const float* beta, void* C, int ldc) {
+  ensure_npu_detected();
+  if (!g_npu_detected) return GRXBLAS_STATUS_NOT_SUPPORTED;
+
+  // The NPU only does INT8→INT32.  Refuse non-unit alpha/beta for now
+  // (the hardware has no alpha/beta scaling — C = A*B, not alpha*A*B + beta*C).
+  if (*alpha != 1.0f || *beta != 0.0f) {
+    static bool said = false;
+    if (!said) {
+      said = true;
+      std::fprintf(stderr,
+                   "grxblas: NPU path requires alpha=1, beta=0."
+                   "  alpha=%.1f beta=%.1f not supported.\n",
+                   *alpha, *beta);
+    }
+    return GRXBLAS_STATUS_NOT_SUPPORTED;
+  }
+
+  // Validate dimensions against NPU hardware limits.
+  if (m > NPU_C930_MAX_M || n > NPU_C930_MAX_N || k > NPU_C930_MAX_K) {
+    std::fprintf(stderr,
+                 "grxblas: NPU dimensions M=%d N=%d K=%d exceed limits"
+                 " (max %d/%d/%d).\n",
+                 m, n, k, NPU_C930_MAX_M, NPU_C930_MAX_N, NPU_C930_MAX_K);
+    return GRXBLAS_STATUS_NOT_SUPPORTED;
+  }
+
+  // The NPU expects contiguous row-major INT8.  The BLAS pointer IS the
+  // DDR address on bare-metal (no MMU).  For lda > m, the leading dimension
+  // padding means the data is not contiguous — we cannot pass it directly.
+  if (lda != m || ldb != k || ldc != m) {
+    static bool said = false;
+    if (!said) {
+      said = true;
+      std::fprintf(stderr,
+                   "grxblas: NPU path requires contiguous row-major"
+                   " (lda= ldb= ldc= m).  lda=%d ldb=%d ldc=%d"
+                   " not supported yet.\n",
+                   lda, ldb, ldc);
+    }
+    return GRXBLAS_STATUS_NOT_SUPPORTED;
+  }
+
+  // Launch the GEMM through the NPU MMIO interface.
+  const uint32_t a_addr = (uint32_t)(uintptr_t)A;
+  const uint32_t b_addr = (uint32_t)(uintptr_t)B;
+  const uint32_t c_addr = (uint32_t)(uintptr_t)C;
+
+  int rc = npu_c930_gemm(&g_npu_dev, m, n, k, a_addr, b_addr, c_addr);
+  if (rc != 0) return GRXBLAS_STATUS_EXECUTION_FAILED;
+  return GRXBLAS_STATUS_SUCCESS;
+}
+
+#endif  // GRXCP_ENABLE_NPU
+
 }  // namespace
 
 extern "C" {
@@ -419,6 +522,28 @@ grxblasStatus_t grxblasGemmEx(grxblasHandle_t handle,
   const int min_ldb = tb ? n : k;
   if (lda < min_lda || ldb < min_ldb || ldc < m)
     return GRXBLAS_STATUS_INVALID_VALUE;
+
+  // ------------------------------------------------------------------
+  // NPU C930 dispatch (Phase 7 backend).
+  //
+  // If the current device is a GRX930 NPU and the type pairing is INT8,
+  // route through the NPU's MMIO GEMM path instead of the GPU tensor
+  // path.  The NPU has no .vxbin modules, no tensor maps, and no SIMT
+  // pipeline — it is a systolic-array accelerator that programs its
+  // registers over MMIO and runs the GEMM autonomously via DMA.
+  //
+  // This check happens BEFORE ensure_hgemm() to avoid loading the
+  // expensive GPU tensor kernel module when the NPU path is taken.
+  // ------------------------------------------------------------------
+#ifdef GRXCP_ENABLE_NPU
+  {
+    const bool npu_int8 = (Atype == GRX_R_8I && Btype == GRX_R_8I &&
+                           Ctype == GRX_R_32I);
+    if (npu_int8 && current_device_is_npu()) {
+      return npu_gemm_path(m, n, k, alpha, A, lda, B, ldb, beta, C, ldc);
+    }
+  }
+#endif
 
   auto* ctx = reinterpret_cast<Context*>(handle);
   const grxblasStatus_t s = ensure_hgemm(*ctx);
