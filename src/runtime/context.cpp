@@ -14,6 +14,10 @@
 #include <cstring>
 #include <string>
 
+#ifdef GRXCP_ENABLE_NPU
+#include "npu_c930.h"
+#endif
+
 namespace grxcp {
 
 namespace {
@@ -169,13 +173,108 @@ const char* backend_name(grxBackend_t b) {
   return "unknown";
 }
 
+// ---------------------------------------------------------------------------
+// NPU C930 device support
+// ---------------------------------------------------------------------------
+#ifdef GRXCP_ENABLE_NPU
+
+// Fill grxDeviceProp_t for the GRX930 NPU from hardware constants.
+// The NPU has no vx_device_h and no vx_device_query — every field comes
+// from the RTL parameters in c930/doc/c930_architecture.md.
+static void populate_npu_properties(Device& d) {
+  grxDeviceProp_t& p = d.prop;
+  std::memset(&p, 0, sizeof(p));
+
+  p.deviceType = GRX_DEVICE_TYPE_NPU;
+  p.backend    = GRX_BACKEND_SILICON;  // NPU is always real hardware
+
+  // Compute capability: NPU has no scalar pipeline, report 0.0
+  p.computeCapabilityMajor = 0;
+  p.computeCapabilityMinor = 0;
+
+  // --- execution geometry (NPU has no SIMT pipeline) ---
+  p.warpSize                  = 1;   // no warps — scalar GEMM dispatch
+  p.maxWarpsPerMultiProcessor = 0;
+  p.multiProcessorCount       = 0;   // no SMs — systolic array
+  p.clusterCount              = 0;
+  p.socketSize                = 0;
+  p.issueWidth                = 0;
+  p.maxThreadsPerBlock        = 0;
+  p.maxThreadsDim[0] = p.maxThreadsDim[1] = p.maxThreadsDim[2] = 0;
+  p.maxGridSize[0] = p.maxGridSize[1] = p.maxGridSize[2] = 0;
+  p.numBarriers = 0;
+
+  // --- memory (NPU uses DDR, 64 KB in the current SoC) ---
+  p.totalGlobalMem             = 65536;  // MEM_BYTES from c930_soc_top
+  p.sharedMemPerMultiprocessor = 0;
+  p.sharedMemPerBlock          = 0;
+  p.memBankCount               = 0;
+  p.memBankSize                = 0;
+  p.cacheLineSize              = 32;     // icache line size
+  p.clockRateMHz               = 50;     // CLK_DIV=2, 100/2=50 MHz
+  p.peakMemoryBandwidthMBs     = 0;      // not characterized yet
+  p.unifiedAddressing          = 0;      // no MMU/IOMMU yet
+  p.managedMemory              = 0;
+  p.pinnedMemTotal             = 0;
+  p.pinnedMemFree              = 0;
+
+  // --- capability profile (from architecture spec §6) ---
+  unsigned caps = 0;
+  caps |= NPU_C930_CAP_STREAMS;    // MMIO doorbell + STATUS.DONE
+  caps |= NPU_C930_CAP_EVENTS;     // o_irq pulses on completion
+  caps |= NPU_C930_CAP_MEMCPY;     // c930_npu_dma AXI4 master
+  caps |= NPU_C930_CAP_GEMM;       // systolic array INT8 GEMM
+  // No GRX_CAP_KERNEL_LAUNCH — no SIMT pipeline
+  // No GRX_CAP_UNIFIED_ADDRESSING — no MMU yet
+  p.capabilities = caps;
+
+  // --- honesty flags ---
+  p.warpShuffleIsEmulated   = 0;  // no shuffles at all
+  p.eventTimingIsDeviceSide = 0;  // no device-side timestamp counter
+  p.constantMemoryIsGlobal  = 1;  // no __constant__ path
+
+  std::snprintf(p.name, sizeof(p.name), "GRX930 NPU (silicon)");
+}
+
+void probe_npu_device(std::vector<Device>& devices) {
+  static std::once_flag npu_once;
+  std::call_once(npu_once, [&devices] {
+    npu_c930_device_t* dev = new npu_c930_device_t;
+    if (npu_c930_detect(dev) && dev->present) {
+      Device d;
+      d.index    = (int)devices.size();
+      d.type     = DeviceType::NPU;
+      d.handle   = nullptr;  // no Vortex handle
+      d.opened   = true;     // MMIO is always "open"
+      d.probed   = false;    // will be filled on first acquire
+      d.npu_dev  = dev;
+      devices.push_back(d);
+      std::fprintf(stderr, "grxcp: GRX930 NPU detected at 0x%08x"
+                   " (device %d)\n", NPU_C930_MMIO_BASE, d.index);
+    } else {
+      delete dev;
+    }
+  });
+}
+
+#endif  // GRXCP_ENABLE_NPU
+
 grxError_t ensure_initialized() {
   std::call_once(g_init_once, [] {
+    // Enumerate Vortex (GPU) devices first
     uint32_t count = 0;
     vx_result_t r = vx_device_count(&count);
     if (r != VX_SUCCESS) { g_init_error = map_result(r); return; }
     g_devices.resize(count);
-    for (uint32_t i = 0; i < count; ++i) g_devices[i].index = (int)i;
+    for (uint32_t i = 0; i < count; ++i) {
+      g_devices[i].index = (int)i;
+      g_devices[i].type  = DeviceType::GPU;
+    }
+
+    // Probe for the GRX930 NPU and append it
+#ifdef GRXCP_ENABLE_NPU
+    probe_npu_device(g_devices);
+#endif
   });
   return g_init_error;
 }
@@ -187,13 +286,24 @@ grxError_t acquire_device(int index, Device** out) {
 
   std::lock_guard<std::mutex> lock(g_devices_mutex);
   Device& d = g_devices[index];
-  if (!d.opened) {
+
+  // GPU devices need vx_device_open; NPU devices are already "open" (MMIO)
+  if (d.type == DeviceType::GPU && !d.opened) {
     vx_result_t r = vx_device_open((uint32_t)index, &d.handle);
     if (r != VX_SUCCESS) return map_result(r);
     d.opened = true;
   }
+
   if (!d.probed) {
-    populate_properties(d);
+    if (d.type == DeviceType::NPU) {
+#ifdef GRXCP_ENABLE_NPU
+      populate_npu_properties(d);
+#else
+      return grxErrorNotSupported;
+#endif
+    } else {
+      populate_properties(d);
+    }
     d.probed = true;
   }
   *out = &d;
@@ -215,10 +325,9 @@ grxError_t grxGetDeviceCount(int* count) {
   if (!count) return grxcp::set_error(grxErrorInvalidValue);
   grxError_t e = grxcp::ensure_initialized();
   if (e != grxSuccess) return grxcp::set_error(e);
-  uint32_t n = 0;
-  vx_result_t r = vx_device_count(&n);
-  if (r != VX_SUCCESS) return grxcp::set_error(grxcp::map_result(r));
-  *count = (int)n;
+  // Return the total device count from the table (GPU + NPU).
+  // ensure_initialized() has already appended the NPU if present.
+  *count = (int)grxcp::g_devices.size();
   return grxSuccess;
 }
 
@@ -249,6 +358,17 @@ grxError_t grxMemGetInfo(size_t* freeBytes, size_t* totalBytes) {
   grxcp::Device* d = nullptr;
   grxError_t e = grxcp::acquire_device(grxcp::current_device_index(), &d);
   if (e != grxSuccess) return grxcp::set_error(e);
+
+  // NPU has no vx_device_memory_info — report total DDR from properties.
+  // The NPU's DDR is shared with the CPU, so "free" is the total minus
+  // what the CPU has allocated.  For now, report total as free (the NPU
+  // DMA can access any DDR address).
+  if (d->type == grxcp::DeviceType::NPU) {
+    if (freeBytes)  *freeBytes  = (size_t)d->prop.totalGlobalMem;
+    if (totalBytes) *totalBytes = (size_t)d->prop.totalGlobalMem;
+    return grxSuccess;
+  }
+
   uint64_t f = 0, used = 0;
   vx_result_t r = vx_device_memory_info(d->handle, &f, &used);
   if (r != VX_SUCCESS) return grxcp::set_error(grxcp::map_result(r));
@@ -262,6 +382,8 @@ grxError_t grxDeviceSynchronize(void) {
   grxcp::Device* d = nullptr;
   grxError_t e = grxcp::acquire_device(device, &d);
   if (e != grxSuccess) return grxcp::set_error(e);
+  // NPU has no Vortex streams — nothing to sync.
+  if (d->type == grxcp::DeviceType::NPU) return grxSuccess;
   // Drains every stream on the device, including the null stream -- CUDA's
   // contract is device-wide, not current-stream.
   e = grxcp::sync_all_streams(device);

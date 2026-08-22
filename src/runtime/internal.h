@@ -11,21 +11,33 @@
 #include <mutex>
 #include <vector>
 
+#ifdef GRXCP_ENABLE_NPU
+struct npu_c930_device;  // forward declaration (npu_c930.h)
+#endif
+
 namespace grxcp {
 
 // ---------------------------------------------------------------------------
 // Devices
 // ---------------------------------------------------------------------------
 
-// One entry per device reported by vx_device_count. Devices are opened lazily:
-// enumerating must not cost a device open, because grx-smi and any program that
-// merely counts devices should not spin up every backend.
+// Device type tag: GPU (Vortex) or NPU (GRX930 systolic array).
+// The NPU is a memory-mapped accelerator with no Vortex driver dependency.
+enum class DeviceType { GPU, NPU };
+
+// One entry per device. GPU devices come from vx_device_count and are opened
+// lazily via vx_device_open. NPU devices are detected by MMIO probe and
+// have no vx_device_h (handle stays nullptr).
 struct Device {
   int             index    = -1;
-  vx_device_h     handle   = nullptr;
+  DeviceType      type     = DeviceType::GPU;
+  vx_device_h     handle   = nullptr;  // nullptr for NPU devices
   bool            opened   = false;
   bool            probed   = false;   // properties populated
   grxDeviceProp_t prop     {};
+#ifdef GRXCP_ENABLE_NPU
+  struct npu_c930_device* npu_dev = nullptr;  // owned, only for NPU devices
+#endif
 };
 
 // The single mapping point from a driver result to a GRXCP error. Nothing else
@@ -49,6 +61,15 @@ void set_current_device_index(int index);
 // variable the stub reads is the only honest way to report it.
 grxBackend_t detect_backend();
 const char*  backend_name(grxBackend_t b);
+
+// ---------------------------------------------------------------------------
+// NPU device support (GRXCP_ENABLE_NPU)
+// ---------------------------------------------------------------------------
+#ifdef GRXCP_ENABLE_NPU
+// Probe for the GRX930 NPU and append it to the device table.
+// Called once during ensure_initialized(), after Vortex device enumeration.
+void probe_npu_device(std::vector<Device>& devices);
+#endif
 
 // ---------------------------------------------------------------------------
 // Allocations
