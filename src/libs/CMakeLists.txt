@@ -17,3 +17,18 @@ foreach(lib grxblas grxdnn grxfft grxrand grxsparse)
     install(TARGETS ${lib} LIBRARY DESTINATION lib)
   endif()
 endforeach()
+
+# grxDNN calls grxBLAS, and only grxDNN does.
+#
+# Attention is two batched GEMMs with a mask and a softmax between them, so
+# grxdnnAttentionForward is a grxBLAS caller (grxdnn.h says so where the op is
+# declared). PUBLIC rather than PRIVATE because grxdnn.h includes grxblas.h --
+# a program that includes one gets the other's declarations, and its link line
+# should match.
+#
+# This is a real dependency between two libraries that are otherwise siblings,
+# so it is stated once here rather than folded into the loop above, where it
+# would read as though every library had it.
+if(TARGET grxdnn AND TARGET grxblas)
+  target_link_libraries(grxdnn PUBLIC grxblas)
+endif()

@@ -10,6 +10,8 @@
 
 #include <unistd.h>
 
+#include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -69,7 +71,13 @@ struct Context {
   grxModule_t   module    = nullptr;
   grxFunction_t softmax   = nullptr;
   grxFunction_t layernorm = nullptr;
+  grxFunction_t causal_mask = nullptr;
   std::string   path;
+  // Attention's two GEMMs are grxBLAS calls. The handle is created on first use
+  // rather than in grxdnnCreate: a program that only ever calls softmax should
+  // not pay for a grxBLAS context, and grxBLAS loads its module lazily too, so
+  // creating one early would not even warm anything.
+  grxblasHandle_t blas = nullptr;
 };
 
 grxdnnStatus_t ensure_module_locked(Context& ctx) {
@@ -94,6 +102,14 @@ grxdnnStatus_t ensure_module_locked(Context& ctx) {
       ctx.softmax   = sm;
       ctx.layernorm = ln;
       ctx.path      = path;
+      // Looked up but NOT required: an older image predating attention still
+      // serves softmax and layer norm perfectly well, and refusing to load it
+      // would break those callers over a kernel they never asked for.
+      // grxdnnAttentionForward reports the absence by name if it is asked to
+      // run without it.
+      if (grxModuleGetFunction(&ctx.causal_mask, mod, "dnn_causal_mask") !=
+          grxSuccess)
+        ctx.causal_mask = nullptr;
       return GRXDNN_STATUS_SUCCESS;
     }
   }
@@ -172,6 +188,10 @@ grxdnnStatus_t grxdnnCreate(grxdnnHandle_t* handle) {
 grxdnnStatus_t grxdnnDestroy(grxdnnHandle_t handle) {
   if (!handle) return GRXDNN_STATUS_INVALID_VALUE;
   Context* ctx = reinterpret_cast<Context*>(handle);
+  // grxBLAS first: it holds a reference to the same module this is about to
+  // release, and destroying it after the unload would leave it briefly owning
+  // functions from a module already let go.
+  if (ctx->blas) grxblasDestroy(ctx->blas);
   if (ctx->module) grxModuleUnload(ctx->module);
   delete ctx;
   return GRXDNN_STATUS_SUCCESS;
@@ -284,6 +304,181 @@ grxdnnStatus_t grxdnnLayerNormForward(grxdnnHandle_t handle,
                                       dim3_t{shape.grid, 1, 1},
                                       dim3_t{shape.block, 1, 1},
                                       &args, sizeof(args), 0, ctx->stream));
+}
+
+// ---------------------------------------------------------------------------
+// Attention
+// ---------------------------------------------------------------------------
+
+grxdnnStatus_t grxdnnAttentionWorkspaceSize(int batch, int heads, int seqLen,
+                                            int headDim, size_t* bytes) {
+  if (!bytes) return GRXDNN_STATUS_INVALID_VALUE;
+  if (batch <= 0 || heads <= 0 || seqLen <= 0 || headDim <= 0)
+    return GRXDNN_STATUS_INVALID_VALUE;
+
+  // seqLen SQUARED per head, and the multiplication is checked rather than
+  // trusted: at 64 heads and a 16k sequence this passes 2^38 elements, and a
+  // size_t that has silently wrapped becomes an allocation far too small for
+  // the writes that follow.
+  const uint64_t heads_total = (uint64_t)batch * (uint64_t)heads;
+  const uint64_t per_head    = (uint64_t)seqLen * (uint64_t)seqLen;
+  if (per_head != 0 && heads_total > UINT64_MAX / per_head)
+    return GRXDNN_STATUS_INVALID_VALUE;
+  const uint64_t elems = heads_total * per_head;
+  if (elems > UINT64_MAX / sizeof(float)) return GRXDNN_STATUS_INVALID_VALUE;
+  const uint64_t need = elems * sizeof(float);
+  if (need > (uint64_t)SIZE_MAX) return GRXDNN_STATUS_INVALID_VALUE;
+
+  *bytes = (size_t)need;
+  return GRXDNN_STATUS_SUCCESS;
+}
+
+grxdnnStatus_t grxdnnAttentionForward(grxdnnHandle_t handle,
+                                      int batch, int heads,
+                                      int seqLen, int headDim,
+                                      const float* Q, const float* K,
+                                      const float* V,
+                                      grxdnnAttnMask_t mask,
+                                      void* workspace, size_t workspaceBytes,
+                                      float* out) {
+  if (!handle || !Q || !K || !V || !out) return GRXDNN_STATUS_INVALID_VALUE;
+  if (batch <= 0 || heads <= 0 || seqLen <= 0 || headDim <= 0)
+    return GRXDNN_STATUS_INVALID_VALUE;
+  if (mask != GRXDNN_ATTN_MASK_NONE && mask != GRXDNN_ATTN_MASK_CAUSAL)
+    return GRXDNN_STATUS_INVALID_VALUE;
+
+  // Aliasing is refused rather than tolerated. The second GEMM writes `out`
+  // while reading V, so out == V produces a wrong answer and not a crash --
+  // the worst kind, since it looks like an attention bug.
+  if (out == Q || out == K || out == V) return GRXDNN_STATUS_INVALID_VALUE;
+
+  size_t need = 0;
+  grxdnnStatus_t st =
+      grxdnnAttentionWorkspaceSize(batch, heads, seqLen, headDim, &need);
+  if (st != GRXDNN_STATUS_SUCCESS) return st;
+  if (!workspace || workspaceBytes < need) return GRXDNN_STATUS_INVALID_VALUE;
+
+  Context* ctx = reinterpret_cast<Context*>(handle);
+  std::lock_guard<std::mutex> lock(ctx->mutex);
+  st = ensure_module_locked(*ctx);
+  if (st != GRXDNN_STATUS_SUCCESS) return st;
+
+  if (mask == GRXDNN_ATTN_MASK_CAUSAL && !ctx->causal_mask) {
+    std::fprintf(stderr,
+                 "grxdnn: this kernel image has no dnn_causal_mask, so a "
+                 "causal mask cannot be applied.\n"
+                 "        Rebuild it from src/libs/kernels_all.cpp (loaded: "
+                 "%s).\n",
+                 ctx->path.c_str());
+    return GRXDNN_STATUS_KERNEL_NOT_FOUND;
+  }
+
+  if (!ctx->blas) {
+    if (grxblasCreate(&ctx->blas) != GRXBLAS_STATUS_SUCCESS)
+      return GRXDNN_STATUS_NOT_INITIALIZED;
+  }
+  // Every launch below goes on the caller's stream, including grxBLAS's, or the
+  // GEMMs and the softmax between them would be ordered against each other only
+  // by luck.
+  if (grxblasSetStream(ctx->blas, ctx->stream) != GRXBLAS_STATUS_SUCCESS)
+    return GRXDNN_STATUS_NOT_INITIALIZED;
+
+  float* scores = reinterpret_cast<float*>(workspace);
+  const int nheads = batch * heads;              // heads are contiguous
+  const long long qkv_stride = (long long)seqLen * headDim;
+  const long long s_stride   = (long long)seqLen * seqLen;
+
+  // ---- GEMM 1: scores = Q Kᵀ / sqrt(headDim) --------------------------------
+  //
+  // grxBLAS is COLUMN-major and these tensors are ROW-major, and no data moves
+  // to bridge that: a row-major (r, c) matrix with leading dimension ld IS the
+  // column-major (c, r) matrix over the same bytes. So Q's memory read
+  // column-major is Qᵀ, K's is Kᵀ, and writing the result column-major with
+  // ld = seqLen produces scoresᵀ.
+  //
+  //   scoresᵀ = (Q Kᵀ)ᵀ = K Qᵀ
+  //
+  // which is A = K with transa = T, B = Q untransposed. The operands swap and
+  // the transpose lands on K -- the opposite of how the formula reads, which is
+  // exactly why this is checked against PyTorch in tests/libs/test_grxdnn_attn
+  // rather than against a reference written from the same reasoning.
+  //
+  // The scale is alpha. It needs no kernel and no second pass over the matrix.
+  const float scale = 1.0f / std::sqrt((float)headDim);
+  const float zero = 0.0f, one = 1.0f;
+  grxblasStatus_t bs = grxblasSgemmStridedBatched(
+      ctx->blas, GRXBLAS_OP_T, GRXBLAS_OP_N,
+      seqLen, seqLen, headDim, &scale,
+      K, headDim, qkv_stride,
+      Q, headDim, qkv_stride,
+      &zero, scores, seqLen, s_stride, nheads);
+  if (bs != GRXBLAS_STATUS_SUCCESS) return GRXDNN_STATUS_EXECUTION_FAILED;
+
+  // ---- mask ----------------------------------------------------------------
+  //
+  // The score matrix is now [batch*heads*seqLen] rows of seqLen columns in the
+  // row-major view, and the row index carries the query position: r % seqLen.
+  const uint32_t rows = (uint32_t)nheads * (uint32_t)seqLen;
+  if (mask == GRXDNN_ATTN_MASK_CAUSAL) {
+    Shape shape{};
+    st = launch_shape((int)rows, &shape);
+    if (st != GRXDNN_STATUS_SUCCESS) return st;
+
+    grxdnn_mask_args margs{};
+    margs.abi_version = GRXDNN_ABI_VERSION;
+    margs.rows    = rows;
+    margs.seq_len = (uint32_t)seqLen;
+    margs.ld      = seqLen;
+    margs.scores  = (uint64_t)(uintptr_t)scores;
+
+    st = map_launch(grxLaunchFunction(ctx->causal_mask,
+                                      dim3_t{shape.grid, 1, 1},
+                                      dim3_t{shape.block, 1, 1},
+                                      &margs, sizeof(margs), 0, ctx->stream));
+    if (st != GRXDNN_STATUS_SUCCESS) return st;
+  }
+
+  // ---- softmax along the key axis ------------------------------------------
+  //
+  // The same kernel the library already ships, over the same row-major view.
+  // Nothing about it knows this is attention, which is the point: it is gated
+  // on its own and this call inherits that.
+  {
+    Shape shape{};
+    st = launch_shape((int)rows, &shape);
+    if (st != GRXDNN_STATUS_SUCCESS) return st;
+
+    grxdnn_softmax_args sargs{};
+    sargs.abi_version = GRXDNN_ABI_VERSION;
+    sargs.rows = rows;
+    sargs.cols = (uint32_t)seqLen;
+    sargs.ldx  = seqLen;
+    sargs.ldy  = seqLen;
+    sargs.x    = (uint64_t)(uintptr_t)scores;
+    sargs.y    = (uint64_t)(uintptr_t)scores;   // in place
+
+    st = map_launch(grxLaunchFunction(ctx->softmax,
+                                      dim3_t{shape.grid, 1, 1},
+                                      dim3_t{shape.block, 1, 1},
+                                      &sargs, sizeof(sargs), 0, ctx->stream));
+    if (st != GRXDNN_STATUS_SUCCESS) return st;
+  }
+
+  // ---- GEMM 2: out = P V ---------------------------------------------------
+  //
+  //   outᵀ = (P V)ᵀ = Vᵀ Pᵀ
+  //
+  // and Vᵀ and Pᵀ are just V's and P's memory read column-major. So neither
+  // operand is transposed and the two simply swap places -- V first. m is
+  // headDim here, not seqLen, because the column-major result is outᵀ.
+  bs = grxblasSgemmStridedBatched(
+      ctx->blas, GRXBLAS_OP_N, GRXBLAS_OP_N,
+      headDim, seqLen, seqLen, &one,
+      V, headDim, qkv_stride,
+      scores, seqLen, s_stride,
+      &zero, out, headDim, qkv_stride, nheads);
+  return (bs == GRXBLAS_STATUS_SUCCESS) ? GRXDNN_STATUS_SUCCESS
+                                        : GRXDNN_STATUS_EXECUTION_FAILED;
 }
 
 }  // extern "C"

@@ -203,6 +203,34 @@ claiming 2e-6 relative error. It is 1.7e-3. Every layer-norm case failed and
 every softmax case passed, which is the signature of the only thing the two do
 not share.
 
+The **ATTENTION GATE** (`tests/libs/test_grxdnn_attn.cpp`) is the last quarter
+of the phase 6 exit gate, and the only gate here whose reference is a third
+party's arithmetic. Attention is where grxDNN's row-major convention meets
+grxBLAS's column-major one — twice, once transposed — so it is almost entirely
+index bookkeeping, and a reference written from the same reasoning as the
+implementation agrees with it whether or not either is right.
+
+So the expected values come from `torch.nn.functional.scaled_dot_product_
+attention` in float64. `tests/libs/attention_ref.py` generates them and checks
+them in as `attention_ref.bin`, so this gate needs neither Python nor torch.
+That script also simulates the exact `grxblasSgemm` calls the implementation
+makes — leading dimensions, transpose flags, flat memory — and **refuses to
+write the vectors** unless the simulation reproduces torch to 1e-12. The layout
+algebra is settled on a laptop before a device sees it, which is why attention
+passed on the device on the first run.
+
+Watched failing three ways. Flipping `transa` fails everything but the 1×1 case,
+caught by grxBLAS's own leading-dimension check before any arithmetic. Passing Q
+and K in the order the formula reads — dimensionally valid, silently computes
+scoresᵀ — fails every non-trivial case by 0.117 to 0.316; that is the mistake a
+careful person makes, and nothing but an outside reference catches it. Removing
+the causal mask fails **only** the two causal cases, so the mask does real work
+and the five unmasked cases are not accidentally masked.
+
+The 1×1×1×1 case is in the file to exercise the degenerate path, not the
+algebra: every transpose of a 1×1 matrix is itself, so it passes under every
+ablation above and proves nothing about layout on its own.
+
 The **CROSS-LIBRARY GATE** (`tests/libs/test_libs_together.cpp`) is the one that
 matters for the phase 6 exit gate, because that gate is a transformer layer and
 a transformer layer is two libraries in one process. grxBLAS and grxDNN are

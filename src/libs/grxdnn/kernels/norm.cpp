@@ -30,15 +30,13 @@
 #include <grx/device/grx_cycles.h>
 
 #include "../dnn_abi.h"
+#include "dnn_device.h"
 
 namespace {
 
 namespace cg = grx::cg;
 
-// The largest finite float, negated: the identity for a max reduction. Lanes
-// with no element must contribute something that cannot win, and 0 would win
-// over a row of negatives.
-constexpr float kNegInf = -3.402823466e+38f;
+using grxdnn_dev::kNegInf;   // see dnn_device.h for why it is not -inf
 
 // exp() for the device. The device build is -nostdlib, so the libm one is not
 // available; this is the standard range-reduction, and it is here rather than

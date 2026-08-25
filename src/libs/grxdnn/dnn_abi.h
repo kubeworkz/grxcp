@@ -40,4 +40,17 @@ struct grxdnn_layernorm_args {
   uint64_t cycles;
 };
 
+// Causal masking of an attention score matrix, viewed as `rows` rows of
+// `seq_len` columns with row stride `ld`. `rows` is batch*heads*seq_len and the
+// row index encodes both the head and the query position, so nothing here needs
+// to know how many heads there are.
+struct grxdnn_mask_args {
+  uint32_t abi_version;
+  uint32_t rows;
+  uint32_t seq_len;
+  int32_t  ld;
+  uint64_t scores;
+  uint64_t cycles;
+};
+
 #endif  // GRXDNN_ABI_H

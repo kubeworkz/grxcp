@@ -876,12 +876,38 @@ layernorm + softmax) runs end-to-end through GRXCP libraries with numerical
 agreement against a PyTorch CPU reference; conformance pass rate hits the
 target set at Phase 4.
 
-**Progress.** grxDNN v0 has landed: `grxdnnSoftmaxForward` and
-`grxdnnLayerNormForward`, fp32, forward only, row-major, one warp per row,
-checked against a host reference on five shapes with two controls that are
-themselves verified to discriminate (`tests/libs/test_grxdnn.cpp`). No conv,
-no backward pass, no attention fusion — absent rather than stubbed, so a port
-that needs them fails to compile.
+**Progress.** grxDNN v0 has landed: `grxdnnSoftmaxForward`,
+`grxdnnLayerNormForward` and `grxdnnAttentionForward`, fp32, forward only,
+row-major. The norms are one warp per row, checked against a host reference on
+five shapes with two controls that are themselves verified to discriminate
+(`tests/libs/test_grxdnn.cpp`). No conv, no backward pass, no attention
+*fusion* — absent rather than stubbed, so a port that needs them fails to
+compile.
+
+**Attention closes the exit gate's missing quarter**, and it is the first op
+that has to cross between the two libraries' opposite conventions: grxDNN is
+row-major, grxBLAS is column-major, and attention presents row-major tensors to
+a column-major library twice, once transposed. No data moves — a row-major
+(r, c) matrix with leading dimension ld *is* the column-major (c, r) matrix over
+the same bytes — so the transposes live in the arguments, which is exactly the
+kind of code that produces plausible numbers and wrong answers.
+
+It is therefore gated against **PyTorch**, not against a reference written from
+the same reasoning: `tests/libs/attention_ref.py` generates vectors from
+`torch.nn.functional.scaled_dot_product_attention` in float64 and checks them
+in, so CI needs no torch. The same script simulates the exact `grxblasSgemm`
+calls the implementation makes — leading dimensions, transpose flags, flat
+memory — and refuses to emit the vectors unless that simulation reproduces
+torch to 1e-12, so the layout algebra was settled before a device ran any of
+it. It then passed on the device first try.
+
+Watched failing three ways. Flipping `transa` fails everything but the 1×1
+case, caught by grxBLAS's own leading-dimension check. Passing Q and K in the
+order the formula reads — dimensionally valid, silently computes scoresᵀ —
+fails every non-trivial case numerically by 0.117 to 0.316; that is the mistake
+a careful person makes and nothing but an outside reference catches it. Removing
+the causal mask fails *only* the two causal cases, so the mask does real work
+and the unmasked cases are not accidentally masked.
 
 Landing it turned up the part of the exit gate nobody had costed: the exit
 gate names **two libraries in one process**, and that did not work. Every
@@ -893,9 +919,10 @@ first. The runtime now hands back an already-resident image with a reference
 count. Gated both ways in `ci/run_real.sh` (CROSS-LIBRARY GATE), and written
 up in `cuda_mapping.md` 7.13.
 
-What remains for the exit gate is the workload itself: attention, and a
-PyTorch reference to compare a whole layer against rather than one op at a
-time.
+What remains for the exit gate is assembling a whole layer: GELU and the MLP
+half of a transformer block, then one end-to-end comparison against a PyTorch
+block rather than four ops compared one at a time. Every piece the gate names —
+attention, GEMM, layer norm, softmax — now exists and is individually gated.
 
 ---
 

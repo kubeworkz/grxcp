@@ -40,4 +40,4 @@
 // colliding.
 
 #include "grxblas/kernels/all.cpp"   // NOLINT(bugprone-suspicious-include)
-#include "grxdnn/kernels/norm.cpp"   // NOLINT(bugprone-suspicious-include)
+#include "grxdnn/kernels/all.cpp"    // NOLINT(bugprone-suspicious-include)

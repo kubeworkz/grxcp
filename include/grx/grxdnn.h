@@ -26,16 +26,20 @@
 // transformer normalises over, and it is the one that makes `cols` the
 // feature dimension.
 //
-// STATUS: v0 is softmax and layer norm, fp32, forward only. No backward pass,
-// no conv, no attention fusion. What is here is checked against a CPU
-// reference to a stated tolerance; what is not here is absent rather than
-// stubbed, so a port that needs it fails to compile.
+// STATUS: v0 is softmax, layer norm and scaled dot-product attention, fp32,
+// forward only. No backward pass, no conv, no attention FUSION -- attention
+// here is two grxBLAS GEMMs, a mask and a softmax, which is correct and
+// unfused. What is here is checked against an outside reference to a stated
+// tolerance (a CPU reference for the norms, PyTorch itself for attention);
+// what is not here is absent rather than stubbed, so a port that needs it
+// fails to compile.
 
 #ifndef GRXDNN_H
 #define GRXDNN_H
 
 #include "grx_runtime.h"
 #include "grx_types.h"
+#include "grxblas.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -119,6 +123,64 @@ grxdnnStatus_t grxdnnLayerNormForward(grxdnnHandle_t handle,
                                       const float* gamma, const float* beta,
                                       float eps,
                                       float* y, int ldy);
+
+// ---------------------------------------------------------------------------
+// Scaled dot-product attention
+// ---------------------------------------------------------------------------
+//
+//   scores = Q Kᵀ / sqrt(headDim)          [seqLen x seqLen] per head
+//   P      = softmax(scores, along keys)
+//   out    = P V                           [seqLen x headDim] per head
+//
+// Q, K, V and out are ROW-major [batch][heads][seqLen][headDim], contiguous —
+// the layout a transformer's activations already have, and the layout the rest
+// of grxDNN uses. `headDim` is the innermost dimension.
+//
+// SELF-ATTENTION ONLY in v0: Q, K and V share one seqLen. Cross-attention needs
+// a second length and is absent rather than stubbed, so a port that needs it
+// fails to compile instead of silently attending over the wrong span.
+//
+// THIS OP CALLS grxBLAS, and that is worth knowing rather than hiding. The two
+// GEMMs are `grxblasSgemmStridedBatched`, which means grxDNN's row-major
+// tensors have to be presented to a COLUMN-major library — twice, once
+// transposed. No data is moved: a row-major (r, c) matrix with leading
+// dimension ld *is* the column-major (c, r) matrix with the same bytes, so the
+// transposes live in the arguments. The bookkeeping is checked against
+// PyTorch's own `scaled_dot_product_attention` in
+// `tests/libs/test_grxdnn_attn.cpp`, because a reference derived from the same
+// reasoning as the implementation would agree with it whether or not either
+// was right.
+//
+// The handle carries its own grxBLAS handle and shares this one's stream.
+//
+// NOT HERE: dropout, arbitrary attention masks, cross-attention, multi-query
+// or grouped-query attention, a backward pass, and any fusion at all. This is
+// three library calls and a mask, which is correct and unfused; the flash-style
+// single-pass form is a later increment with its own numerical gate.
+
+typedef enum {
+  GRXDNN_ATTN_MASK_NONE   = 0,   // every key visible to every query
+  GRXDNN_ATTN_MASK_CAUSAL = 1    // query i may not see key j > i
+} grxdnnAttnMask_t;
+
+// Bytes of scratch `grxdnnAttentionForward` needs for the given shape, or an
+// error. The scores matrix is [batch][heads][seqLen][seqLen] and is the whole
+// of it — it grows as the SQUARE of the sequence, which is the reason flash
+// attention exists and the reason this is the caller's allocation rather than
+// a hidden one inside a "forward" call.
+grxdnnStatus_t grxdnnAttentionWorkspaceSize(int batch, int heads, int seqLen,
+                                            int headDim, size_t* bytes);
+
+// `workspace` must be a device allocation of at least the size above.
+// In-place is NOT allowed: out must not alias Q, K or V.
+grxdnnStatus_t grxdnnAttentionForward(grxdnnHandle_t handle,
+                                      int batch, int heads,
+                                      int seqLen, int headDim,
+                                      const float* Q, const float* K,
+                                      const float* V,
+                                      grxdnnAttnMask_t mask,
+                                      void* workspace, size_t workspaceBytes,
+                                      float* out);
 
 #ifdef __cplusplus
 }  // extern "C"
