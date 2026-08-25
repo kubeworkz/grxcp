@@ -36,41 +36,10 @@ namespace {
 
 namespace cg = grx::cg;
 
-using grxdnn_dev::kNegInf;   // see dnn_device.h for why it is not -inf
-
-// exp() for the device. The device build is -nostdlib, so the libm one is not
-// available; this is the standard range-reduction, and it is here rather than
-// in a header because softmax is the only thing that needs it so far.
-//
-//   e^x = 2^k * e^r,  k = round(x / ln2),  r = x - k*ln2,  |r| <= ln2/2
-//
-// e^r over that range is a degree-5 Taylor series, whose worst-case relative
-// error is about 1e-7 -- below fp32's own resolution, so the polynomial is not
-// what limits the result.
-__forceinline__ float dev_exp(float x) {
-  // Clamp before scaling: without this, a large negative x produces a huge
-  // negative k and 2^k underflows to a denormal or a NaN rather than to zero.
-  if (x < -88.0f) return 0.0f;
-  if (x >  88.0f) x = 88.0f;
-
-  const float kInvLn2 = 1.44269504088896340736f;
-  const float kLn2Hi  = 0.693359375f;
-  const float kLn2Lo  = -2.12194440e-4f;
-
-  const int   k = (int)(x * kInvLn2 + (x >= 0.0f ? 0.5f : -0.5f));
-  const float r = (x - (float)k * kLn2Hi) - (float)k * kLn2Lo;
-
-  const float r2 = r * r;
-  const float p  = 1.0f + r +
-                   r2 * (0.5f + r * (0.16666666666f +
-                         r * (0.04166666666f + r * 0.00833333333f)));
-
-  // 2^k by building the exponent field directly. k is within +-127 here
-  // because x was clamped to +-88 and 88/ln2 < 127.
-  union { float f; uint32_t u; } scale;
-  scale.u = (uint32_t)((k + 127) & 0xFF) << 23;
-  return p * scale.f;
-}
+using grxdnn_dev::kNegInf;    // see dnn_device.h for why it is not -inf
+using grxdnn_dev::dev_exp;
+using grxdnn_dev::RowMap;
+using grxdnn_dev::row_map;
 
 __forceinline__ float dev_rsqrt(float x) {
   // The HARDWARE square root. The device is -march=rv64imafd, so fsqrt.s is a
@@ -84,25 +53,6 @@ __forceinline__ float dev_rsqrt(float x) {
   // not share. A reciprocal square root is not worth approximating on a
   // machine that has one.
   return 1.0f / __builtin_sqrtf(x);
-}
-
-// Which row this warp owns, and how many warps the grid has in total.
-struct RowMap {
-  uint32_t row;      // the row this warp starts on
-  uint32_t stride;   // how far to jump for the next row
-  uint32_t lane;
-  uint32_t width;
-};
-
-__forceinline__ RowMap row_map() {
-  const uint32_t w = grx::warp_size();
-  RowMap m;
-  m.lane   = grx::lane_id();
-  m.width  = w;
-  const uint32_t warps_per_block = (blockDim.x + w - 1u) / w;
-  m.row    = blockIdx.x * warps_per_block + (threadIdx.x / w);
-  m.stride = gridDim.x * warps_per_block;
-  return m;
 }
 
 }  // namespace

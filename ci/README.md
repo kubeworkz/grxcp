@@ -70,22 +70,6 @@ nothing else, so `npu_c930.cpp` went into `libgrxrt` while every
 **no NPU is enumerated** on this machine, which has none. A build flag says what
 code exists, not what hardware is attached.
 
-It also runs the **CMAKE GATE**, which configures and builds the project through
-its own `CMakeLists.txt` and checks that every library and tool the file claims
-to produce exists. Everything else in tier 1 compiles GRXCP by hand, so nothing
-had ever run the build system this project ships to its users — and it did not
-work. The top level had `if(X) add_subdirectory(y) endif()` on one line, which
-CMake rejects as a parse error rather than accepting as a terse spelling of the
-same thing, and `src/CMakeLists.txt` and `cmake/grxrt.pc.in` did not exist at
-all. That went unnoticed from the first commit until the GRX930 team asked
-whether `cmake -DGRXCP_ENABLE_NPU=ON` builds.
-
-That flag is checked here too, and it is checked for **refusing**: this tree has
-no `src/backends/npu_c930/`, so a configure that succeeded with the flag on
-would be a GPU build wearing an NPU flag. It fails by name, with the reason. If
-the backend lands, this control becomes stale and should be replaced by a gate
-that runs something on the NPU — the gate says so when it fires.
-
 What it does **not** prove: anything about hardware. The mock returns synthetic
 capability values. A green tier-1 run says the runtime is not broken; it says
 nothing about whether the device works.
@@ -202,6 +186,60 @@ subtracted, and a row whose mean is large next to its spread, which the one-pass
 claiming 2e-6 relative error. It is 1.7e-3. Every layer-norm case failed and
 every softmax case passed, which is the signature of the only thing the two do
 not share.
+
+The **GELU GATE** (`tests/libs/test_grxdnn_gelu.cpp`) is where the device's own
+transcendentals become visible. The device build is `-nostdlib`, so grxDNN
+carries its own `exp` and builds `erf` and `tanh` on top of it, and GELU is the
+only op that uses them. The gate therefore **prints what it measures** rather
+than only passing — the accuracy figures in `kernels/elementwise.cpp` are a
+record of that measurement, swept over [-1000, 1000]:
+
+    gelu, exact (erf) form    worst 5.36e-07 absolute, at x = 0.8158
+    gelu, tanh form           worst 4.77e-07 absolute, at x = 4.0401
+
+Those are larger than the erf polynomial's own quoted 1.5e-7, so `dev_exp` and
+fp32 rounding contribute rather than the polynomial dominating — the sort of
+thing only a measurement tells you, and the reason none of these numbers are
+quoted from a table. This library has been wrong about exactly that before:
+`dev_rsqrt` shipped claiming "about 2e-6 relative" for something that is 1.7e-3.
+
+The two GELU forms are different functions, 4.73e-04 apart. The gate checks both
+against PyTorch **and** checks that the device produces measurably different
+answers for them — without which a run that passed both would mean the mode
+argument was being ignored. Watched failing two ways: indexing the bias by row
+instead of column (worst 3.76, and the row-invariance control fails too), and
+swapping the two GELU modes (both form checks fail by exactly 4.73e-04). The
+second leaves "the two forms differ" passing, which is correct — that check
+catches a mode being *ignored*, not one being *inverted*, and neither check
+covers the other.
+
+The **PHASE 6 EXIT GATE** (`tests/libs/test_grxdnn_block.cpp`) is the phase the
+whole library was building toward: a complete pre-norm transformer block —
+layer norm, QKV projection, causal attention, output projection, residual, layer
+norm, MLP with GELU, residual — run end to end through GRXCP and compared to a
+PyTorch block at **every one of its twelve stages**.
+
+Every op in it is already gated on its own. What no single-op gate can see is
+whether four correct ops *composed* are still correct: each fixes its own layout
+convention and checks it in isolation, and composing them means a transposed or
+mis-strided hand-off between two correct kernels, which produces plausible
+numbers that nothing upstream would catch.
+
+`tests/libs/block_ref.py` dumps every intermediate, not just the block's output,
+and the gate compares them in order and **stops at the first disagreement** —
+so a failure names the op rather than reporting that a ten-stage block is wrong
+somewhere.
+
+Watched failing two ways. Making the output projection overwrite per head
+instead of accumulating leaves the H=1 case passing entirely — correctly, with
+one head there is nothing to accumulate — and fails both H=2 cases at exactly
+`p`, with every earlier stage green; that is a hand-off bug between two
+individually-gated ops, which is what this gate exists for. Substituting the
+exact GELU where the weights expect the tanh form fails at exactly `act` by
+2.33e-04, and that ablation found a defect in the gate itself: the original
+tolerance was three orders of magnitude looser than anything observed and let
+the wrong activation through on two of three cases. It is now set from the
+measurement.
 
 The **ATTENTION GATE** (`tests/libs/test_grxdnn_attn.cpp`) is the last quarter
 of the phase 6 exit gate, and the only gate here whose reference is a third

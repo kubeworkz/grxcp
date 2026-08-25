@@ -517,6 +517,32 @@ else
 fi
 
 echo
+echo "==> GELU GATE: two forms against PyTorch, and the device's own erf and tanh"
+# The device build is -nostdlib, so grxDNN carries its own exp and builds erf
+# and tanh on it. GELU is the only op that uses them, which makes this the only
+# place their error is visible -- so the gate PRINTS what it measures and the
+# figures in kernels/elementwise.cpp are a record of that rather than a
+# quotation from a table. This library has been wrong about exactly that before
+# (dev_rsqrt, "about 2e-6" for something that is 1.7e-3).
+#
+# The two GELU forms are different functions, 4.73e-04 apart, and a model
+# expects the one it was trained with. The gate checks both AND checks that the
+# device produces measurably different answers for them, without which a run
+# that passed both would mean the mode argument was being ignored.
+if [[ -n "$GRXGPU" && -d "$TOOLDIR/llvm-vortex" ]]; then
+  $CXX $CXXFLAGS -I"$ROOT/tests/unit" -c "$ROOT/tests/libs/test_grxdnn_gelu.cpp" \
+    -o "$BUILD/test_grxdnn_gelu.o"
+  $CXX "${OBJS[@]}" "$BUILD/grxblas.o" "$BUILD/grxdnn.o" \
+    "$BUILD/test_grxdnn_gelu.o" $LIBS -o "$BUILD/test_grxdnn_gelu"
+  if ! "$BUILD/test_grxdnn_gelu" "$ROOT/tests/libs/gelu_ref.bin"; then
+    rc=$?
+    [[ $rc -eq 77 ]] || exit $rc
+  fi
+else
+  echo "SKIPPED: needs --grxgpu <path> and a device toolchain in $TOOLDIR."
+fi
+
+echo
 echo "==> ATTENTION GATE: grxdnnAttentionForward against PyTorch"
 # The last quarter of the phase 6 exit gate. Attention is where grxDNN's
 # ROW-major convention meets grxBLAS's COLUMN-major one -- twice, once
@@ -536,6 +562,32 @@ if [[ -n "$GRXGPU" && -d "$TOOLDIR/llvm-vortex" ]]; then
   $CXX "${OBJS[@]}" "$BUILD/grxblas.o" "$BUILD/grxdnn.o" \
     "$BUILD/test_grxdnn_attn.o" $LIBS -o "$BUILD/test_grxdnn_attn"
   if ! "$BUILD/test_grxdnn_attn" "$ROOT/tests/libs/attention_ref.bin"; then
+    rc=$?
+    [[ $rc -eq 77 ]] || exit $rc
+  fi
+else
+  echo "SKIPPED: needs --grxgpu <path> and a device toolchain in $TOOLDIR."
+fi
+
+echo
+echo "==> PHASE 6 EXIT GATE: a transformer block, end to end, against PyTorch"
+# The gate the phase is named for: attention + GEMM + layernorm + softmax, run
+# as a whole pre-norm transformer block and compared to a PyTorch block.
+#
+# Every op in it is already gated on its own. What no single-op gate can see is
+# whether four correct ops COMPOSED are still correct -- each fixes its own
+# layout convention and checks it in isolation, and composing them means a
+# transposed or mis-strided hand-off between two correct kernels, which produces
+# plausible numbers nothing upstream would catch.
+#
+# Stage by stage, stopping at the first disagreement, so a failure names the op
+# rather than reporting that a ten-stage block is wrong somewhere.
+if [[ -n "$GRXGPU" && -d "$TOOLDIR/llvm-vortex" ]]; then
+  $CXX $CXXFLAGS -I"$ROOT/tests/unit" -c "$ROOT/tests/libs/test_grxdnn_block.cpp" \
+    -o "$BUILD/test_grxdnn_block.o"
+  $CXX "${OBJS[@]}" "$BUILD/grxblas.o" "$BUILD/grxdnn.o" \
+    "$BUILD/test_grxdnn_block.o" $LIBS -o "$BUILD/test_grxdnn_block"
+  if ! "$BUILD/test_grxdnn_block" "$ROOT/tests/libs/block_ref.bin"; then
     rc=$?
     [[ $rc -eq 77 ]] || exit $rc
   fi

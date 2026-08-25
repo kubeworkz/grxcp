@@ -72,6 +72,8 @@ struct Context {
   grxFunction_t softmax   = nullptr;
   grxFunction_t layernorm = nullptr;
   grxFunction_t causal_mask = nullptr;
+  grxFunction_t add_bias    = nullptr;
+  grxFunction_t gelu        = nullptr;
   std::string   path;
   // Attention's two GEMMs are grxBLAS calls. The handle is created on first use
   // rather than in grxdnnCreate: a program that only ever calls softmax should
@@ -110,6 +112,10 @@ grxdnnStatus_t ensure_module_locked(Context& ctx) {
       if (grxModuleGetFunction(&ctx.causal_mask, mod, "dnn_causal_mask") !=
           grxSuccess)
         ctx.causal_mask = nullptr;
+      if (grxModuleGetFunction(&ctx.add_bias, mod, "dnn_add_bias") != grxSuccess)
+        ctx.add_bias = nullptr;
+      if (grxModuleGetFunction(&ctx.gelu, mod, "dnn_gelu") != grxSuccess)
+        ctx.gelu = nullptr;
       return GRXDNN_STATUS_SUCCESS;
     }
   }
@@ -301,6 +307,84 @@ grxdnnStatus_t grxdnnLayerNormForward(grxdnnHandle_t handle,
   args.beta  = (uint64_t)(uintptr_t)beta;
 
   return map_launch(grxLaunchFunction(ctx->layernorm,
+                                      dim3_t{shape.grid, 1, 1},
+                                      dim3_t{shape.block, 1, 1},
+                                      &args, sizeof(args), 0, ctx->stream));
+}
+
+// ---------------------------------------------------------------------------
+// Elementwise
+// ---------------------------------------------------------------------------
+
+grxdnnStatus_t grxdnnAddBiasForward(grxdnnHandle_t handle,
+                                    int rows, int cols,
+                                    const float* x, int ldx,
+                                    const float* bias,
+                                    float* y, int ldy) {
+  if (!handle || !x || !bias || !y) return GRXDNN_STATUS_INVALID_VALUE;
+  if (rows <= 0 || cols <= 0) return GRXDNN_STATUS_INVALID_VALUE;
+  if (ldx < cols || ldy < cols) return GRXDNN_STATUS_INVALID_VALUE;
+
+  Context* ctx = reinterpret_cast<Context*>(handle);
+  std::lock_guard<std::mutex> lock(ctx->mutex);
+  grxdnnStatus_t st = ensure_module_locked(*ctx);
+  if (st != GRXDNN_STATUS_SUCCESS) return st;
+  if (!ctx->add_bias) return GRXDNN_STATUS_KERNEL_NOT_FOUND;
+
+  Shape shape{};
+  st = launch_shape(rows, &shape);
+  if (st != GRXDNN_STATUS_SUCCESS) return st;
+
+  grxdnn_bias_args args{};
+  args.abi_version = GRXDNN_ABI_VERSION;
+  args.rows = (uint32_t)rows;
+  args.cols = (uint32_t)cols;
+  args.ldx  = ldx;
+  args.ldy  = ldy;
+  args.x    = (uint64_t)(uintptr_t)x;
+  args.bias = (uint64_t)(uintptr_t)bias;
+  args.y    = (uint64_t)(uintptr_t)y;
+
+  return map_launch(grxLaunchFunction(ctx->add_bias,
+                                      dim3_t{shape.grid, 1, 1},
+                                      dim3_t{shape.block, 1, 1},
+                                      &args, sizeof(args), 0, ctx->stream));
+}
+
+grxdnnStatus_t grxdnnGeluForward(grxdnnHandle_t handle,
+                                 int rows, int cols,
+                                 const float* x, int ldx,
+                                 grxdnnGeluMode_t mode,
+                                 float* y, int ldy) {
+  if (!handle || !x || !y) return GRXDNN_STATUS_INVALID_VALUE;
+  if (rows <= 0 || cols <= 0) return GRXDNN_STATUS_INVALID_VALUE;
+  if (ldx < cols || ldy < cols) return GRXDNN_STATUS_INVALID_VALUE;
+  // An unrecognised mode is refused rather than defaulted. The two forms differ
+  // by ~1e-3 and a caller who has not chosen has a question to answer.
+  if (mode != GRXDNN_GELU_EXACT && mode != GRXDNN_GELU_TANH)
+    return GRXDNN_STATUS_INVALID_VALUE;
+
+  Context* ctx = reinterpret_cast<Context*>(handle);
+  std::lock_guard<std::mutex> lock(ctx->mutex);
+  grxdnnStatus_t st = ensure_module_locked(*ctx);
+  if (st != GRXDNN_STATUS_SUCCESS) return st;
+  if (!ctx->gelu) return GRXDNN_STATUS_KERNEL_NOT_FOUND;
+
+  Shape shape{};
+  st = launch_shape(rows, &shape);
+  if (st != GRXDNN_STATUS_SUCCESS) return st;
+
+  grxdnn_gelu_args args{};
+  args.abi_version = GRXDNN_ABI_VERSION;
+  args.rows = (uint32_t)rows;
+  args.cols = (uint32_t)cols;
+  args.ldx  = ldx;
+  args.ldy  = ldy;
+  args.mode = (mode == GRXDNN_GELU_TANH) ? 1u : 0u;
+  args.x    = (uint64_t)(uintptr_t)x;
+  args.y    = (uint64_t)(uintptr_t)y;
+
+  return map_launch(grxLaunchFunction(ctx->gelu,
                                       dim3_t{shape.grid, 1, 1},
                                       dim3_t{shape.block, 1, 1},
                                       &args, sizeof(args), 0, ctx->stream));

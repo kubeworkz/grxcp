@@ -8,5 +8,6 @@
 // kernels, so a new grxDNN kernel is added here once and reaches both the
 // grxDNN-only image and the combined one.
 
-#include "norm.cpp"   // NOLINT(bugprone-suspicious-include)
-#include "attn.cpp"   // NOLINT(bugprone-suspicious-include)
+#include "norm.cpp"          // NOLINT(bugprone-suspicious-include)
+#include "attn.cpp"          // NOLINT(bugprone-suspicious-include)
+#include "elementwise.cpp"   // NOLINT(bugprone-suspicious-include)

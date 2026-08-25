@@ -125,6 +125,58 @@ grxdnnStatus_t grxdnnLayerNormForward(grxdnnHandle_t handle,
                                       float* y, int ldy);
 
 // ---------------------------------------------------------------------------
+// Bias broadcast
+// ---------------------------------------------------------------------------
+//
+//   y[i][j] = x[i][j] + bias[j]
+//
+// `bias` has length `cols` and is added down every row — the epilogue of every
+// Linear layer in a transformer, which grxBLAS does not do because BLAS has no
+// concept of it.
+//
+// A separate pass, not fused into the GEMM. Fusing it is the obvious
+// optimisation and it is a later increment with its own gate; a bias welded
+// into a GEMM epilogue that nobody has checked separately is two things failing
+// as one. In-place is allowed: y may equal x.
+grxdnnStatus_t grxdnnAddBiasForward(grxdnnHandle_t handle,
+                                    int rows, int cols,
+                                    const float* x, int ldx,
+                                    const float* bias,
+                                    float* y, int ldy);
+
+// ---------------------------------------------------------------------------
+// GELU
+// ---------------------------------------------------------------------------
+//
+// TWO FORMS, AND THE CALLER MUST PICK. They are different functions:
+//
+//   EXACT  y = x * 0.5 * (1 + erf(x / sqrt(2)))          torch.nn.GELU()
+//   TANH   y = x * 0.5 * (1 + tanh(sqrt(2/pi)(x + 0.044715 x^3)))
+//                                                        torch.nn.GELU('tanh')
+//
+// They differ by up to ~1e-3 in the middle of their range, which is far above
+// fp32 resolution and far above this library's tolerances. GPT-2 and BERT were
+// trained with the tanh form and their published weights expect it; most
+// modern PyTorch code uses the exact one. Substituting either for the other
+// gives a ported model plausible outputs and wrong ones, which is the same
+// reason layer norm above uses the biased variance.
+//
+// There is no default. A caller that does not know which form its weights
+// expect has a question to answer, not a parameter to leave out.
+//
+// In-place is allowed: y may equal x.
+typedef enum {
+  GRXDNN_GELU_EXACT = 0,   // erf form
+  GRXDNN_GELU_TANH  = 1    // tanh approximation
+} grxdnnGeluMode_t;
+
+grxdnnStatus_t grxdnnGeluForward(grxdnnHandle_t handle,
+                                 int rows, int cols,
+                                 const float* x, int ldx,
+                                 grxdnnGeluMode_t mode,
+                                 float* y, int ldy);
+
+// ---------------------------------------------------------------------------
 // Scaled dot-product attention
 // ---------------------------------------------------------------------------
 //

@@ -919,10 +919,49 @@ first. The runtime now hands back an already-resident image with a reference
 count. Gated both ways in `ci/run_real.sh` (CROSS-LIBRARY GATE), and written
 up in `cuda_mapping.md` 7.13.
 
-What remains for the exit gate is assembling a whole layer: GELU and the MLP
-half of a transformer block, then one end-to-end comparison against a PyTorch
-block rather than four ops compared one at a time. Every piece the gate names —
-attention, GEMM, layer norm, softmax — now exists and is individually gated.
+**The exit gate's first clause is MET.** A whole pre-norm transformer block —
+layer norm, QKV projection, causal attention, output projection, residual,
+layer norm, MLP with GELU, residual — runs end-to-end through GRXCP libraries
+and matches a PyTorch block at **every one of its twelve stages**, on three
+shapes including a causal one. Worst deviation anywhere is 8.05e-07.
+`tests/libs/test_grxdnn_block.cpp`, PHASE 6 EXIT GATE in `ci/run_real.sh`.
+
+Two ops were added to get there — `grxdnnGeluForward` (both the erf and tanh
+forms, because a model needs the one it was trained with) and
+`grxdnnAddBiasForward`. The residual needed nothing new: it is `grxblasSaxpy`,
+already gated.
+
+**No permute anywhere, and that is a result rather than an optimisation.**
+torch projects to [S, D], reshapes to [S, H, Dh] and permutes to [H, S, Dh] for
+attention, then permutes back. GRXCP has no permute op and does not need one:
+head *h*'s projection weights are a column block at offset `h*Dh` with the same
+leading dimension, so one strided-batched GEMM lands directly in [H][S][Dh] —
+attention's layout — and coming back out, head *h*'s slice of `Wo` is a row
+block, so the output projection is one accumulating GEMM per head. Every GEMM in
+the block is `N, N` with the operands swapped; attention is the only op that
+still needs an explicit transpose flag, and it owns it.
+
+The gate compares **stage by stage and stops at the first disagreement**, so a
+failure names the op rather than reporting that a ten-stage block is wrong
+somewhere. Watched failing two ways, and both are worth the space:
+
+- Making the output projection overwrite per head instead of accumulating leaves
+  the H=1 case passing *entirely* — correctly, there is nothing to accumulate
+  with one head — and fails both H=2 cases at exactly `p`, by 0.283 and 0.495,
+  with every earlier stage green. That is a hand-off bug between two ops that
+  are each correct and each individually gated, which is precisely what a
+  composition gate is for.
+- Substituting the exact GELU where the weights expect the tanh form fails at
+  exactly `act`, by 2.33e-04. This one found a defect *in the gate*: the
+  original tolerance was three orders of magnitude looser than anything observed
+  and let the wrong activation through on two of three cases. It is now set from
+  the measurement.
+
+What remains for the phase is breadth rather than the gate: conv2d, grxFFT,
+grxRAND, grxSPARSE, `grx::par`, `grx::tex<>`, `grxrtc`, and promoting `grxcc` to
+a proper Clang `ToolChain`. Fusion is the other direction — bias into the GEMM
+epilogue, and a flash-style single-pass attention — each with its own numerical
+gate, now that there is a whole-block comparison to hold them to.
 
 ---
 

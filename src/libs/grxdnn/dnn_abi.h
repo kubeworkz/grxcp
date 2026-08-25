@@ -44,6 +44,34 @@ struct grxdnn_layernorm_args {
 // `seq_len` columns with row stride `ld`. `rows` is batch*heads*seq_len and the
 // row index encodes both the head and the query position, so nothing here needs
 // to know how many heads there are.
+// y[i][j] = x[i][j] + bias[j]; bias has `cols` entries.
+struct grxdnn_bias_args {
+  uint32_t abi_version;
+  uint32_t rows;
+  uint32_t cols;
+  int32_t  ldx;
+  int32_t  ldy;
+  uint32_t pad;
+  uint64_t x;
+  uint64_t bias;
+  uint64_t y;
+  uint64_t cycles;
+};
+
+// y = gelu(x). `mode` is 0 for the erf form and 1 for the tanh approximation —
+// see grxdnn.h for why the caller has to choose rather than get a default.
+struct grxdnn_gelu_args {
+  uint32_t abi_version;
+  uint32_t rows;
+  uint32_t cols;
+  int32_t  ldx;
+  int32_t  ldy;
+  uint32_t mode;
+  uint64_t x;
+  uint64_t y;
+  uint64_t cycles;
+};
+
 struct grxdnn_mask_args {
   uint32_t abi_version;
   uint32_t rows;
