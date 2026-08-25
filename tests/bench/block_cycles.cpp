@@ -156,6 +156,12 @@ bool profile(grxblasHandle_t bh, grxdnnHandle_t dh, const Shape& sh,
   int cap = grxdnnCycleSlotsNeeded(dh, S * F);
   const int blas_cap = grxblasCycleSlotsNeeded(bh, F, S) * H;
   if (blas_cap > cap) cap = blas_cap;
+  // Attention needs room for FOUR launches at once, each in its own region, so
+  // that summarising the buffer gives the span of all four rather than of
+  // whichever wrote last. It refuses outright if the probe is too small, which
+  // is why this is asked rather than guessed.
+  const int attn_cap = grxdnnAttentionCycleSlotsNeeded(dh, 1, H, S, Dh);
+  if (attn_cap > cap) cap = attn_cap;
   if (cap <= 0) return false;
   Probe probe(cap + 8);
   if (!probe.dev) return false;
@@ -212,10 +218,17 @@ bool profile(grxblasHandle_t bh, grxdnnHandle_t dh, const Shape& sh,
   // and the probe records only the LAST of them, so it is measured as a whole
   // by summing what its internals report. Reported as one line because that is
   // how a caller buys it.
-  grxdnnAttentionForward(dh, 1, H, S, Dh, q.f(), k.f(), v.f(),
-                         GRXDNN_ATTN_MASK_CAUSAL, ws.p, ws_bytes, a.f());
+  // ATTENTION AS A WHOLE, which it was not before. The probe used to record
+  // only the last of attention's four launches, so its two GEMMs -- the ones
+  // that make it seqLen-squared -- were missing from the profile entirely and
+  // the block's GEMM share was understated. Each launch now writes its own
+  // region, and a span across the buffer covers all four.
   {
-    StageCost c = probe.take("attention (softmax pass)");
+    const grxdnnStatus_t st =
+        grxdnnAttentionForward(dh, 1, H, S, Dh, q.f(), k.f(), v.f(),
+                               GRXDNN_ATTN_MASK_CAUSAL, ws.p, ws_bytes, a.f());
+    StageCost c = probe.take("attention (2 GEMMs+mask+softmax)");
+    if (st != GRXDNN_STATUS_SUCCESS) c.valid = false;
     out->push_back(c);
   }
 

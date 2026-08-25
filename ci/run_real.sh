@@ -486,6 +486,32 @@ else
 fi
 
 echo
+echo "==> SGEMM_RB GATE: the register-blocked kernel against the reference one"
+# The tuned sgemm is a SEPARATE entry point, not an edit of the reference, and
+# that is what lets the reference be its oracle: both kernels run on the device
+# over the same operands and must agree BIT FOR BIT. sgemm_rb changes which
+# thread computes which output and how often B is loaded; it does not change the
+# order of the accumulation, so == is the right comparison and there is no
+# tolerance to hide in.
+#
+# Nine shapes x four transpose combinations, concentrated on the tail where the
+# blocked kernel clamps rows it must discard. Its last section perturbs an input
+# and requires the output to change, without which everything above would pass
+# just as happily if both runs were the same kernel.
+if [[ -n "$GRXGPU" && -d "$TOOLDIR/llvm-vortex" ]]; then
+  $CXX $CXXFLAGS -I"$ROOT/tests/unit" -c "$ROOT/tests/libs/test_grxblas_rb.cpp" \
+    -o "$BUILD/test_grxblas_rb.o"
+  $CXX "${OBJS[@]}" "$BUILD/grxblas.o" "$BUILD/test_grxblas_rb.o" $LIBS \
+    -o "$BUILD/test_grxblas_rb"
+  if ! "$BUILD/test_grxblas_rb"; then
+    rc=$?
+    [[ $rc -eq 77 ]] || exit $rc
+  fi
+else
+  echo "SKIPPED: needs --grxgpu <path> and a device toolchain in $TOOLDIR."
+fi
+
+echo
 echo "==> grxDNN GATE: softmax and layer norm vs a CPU reference"
 # Row-wise reductions, one warp per row, checked against a host reference on
 # five shapes -- including rows shorter than a warp, rows longer than one, and a

@@ -179,17 +179,29 @@ unsigned warps_in(const Shape& shape, unsigned warp_size) {
 // checking the capacity against the launch that is about to happen. Returns
 // KERNEL_NOT_FOUND-free status; a probe too small is INVALID_VALUE rather than
 // a partial record, matching grxblasSetCycleProbe.
+// `offset` is where in the probe buffer this launch may write, and is advanced
+// by what it uses. Zero for a single-launch op; for attention, which issues
+// four launches, it is what stops each from overwriting the last -- the slot
+// index is derived from the block and warp, so two launches with different
+// grids collide at the low indices and the earliest start is simply lost.
+//
+// A span is min(start) to max(end) across the whole buffer, so four launches
+// writing four disjoint regions summarise to exactly the span of all four:
+// attention's cost as its caller experiences it, gaps between launches
+// included.
 grxdnnStatus_t attach_probe(const Context& ctx, const Shape& shape,
-                            uint64_t* cycles_field) {
+                            uint64_t* cycles_field, int* offset = nullptr) {
   if (!ctx.probe) return GRXDNN_STATUS_SUCCESS;
   int device = 0;
   grxDeviceProp_t prop{};
   if (grxGetDevice(&device) != grxSuccess ||
       grxGetDeviceProperties(&prop, device) != grxSuccess || prop.warpSize <= 0)
     return GRXDNN_STATUS_NOT_INITIALIZED;
-  const unsigned warps = warps_in(shape, (unsigned)prop.warpSize);
-  if ((unsigned)ctx.probe_capacity < warps) return GRXDNN_STATUS_INVALID_VALUE;
-  *cycles_field = (uint64_t)(uintptr_t)ctx.probe;
+  const int base  = offset ? *offset : 0;
+  const int warps = (int)warps_in(shape, (unsigned)prop.warpSize);
+  if (base + warps > ctx.probe_capacity) return GRXDNN_STATUS_INVALID_VALUE;
+  *cycles_field = (uint64_t)(uintptr_t)(ctx.probe + base);
+  if (offset) *offset = base + warps;
   return GRXDNN_STATUS_SUCCESS;
 }
 
@@ -488,6 +500,29 @@ grxdnnStatus_t grxdnnAttentionWorkspaceSize(int batch, int heads, int seqLen,
   return GRXDNN_STATUS_SUCCESS;
 }
 
+int grxdnnAttentionCycleSlotsNeeded(grxdnnHandle_t handle, int batch, int heads,
+                                    int seqLen, int headDim) {
+  if (!handle || batch <= 0 || heads <= 0 || seqLen <= 0 || headDim <= 0) return 0;
+  Context* ctx = reinterpret_cast<Context*>(handle);
+  std::lock_guard<std::mutex> lock(ctx->mutex);
+  // The internal grxBLAS handle may not exist yet, and grxblasCycleSlotsNeeded
+  // ignores its handle anyway -- it asks the device. A temporary is not needed.
+  const int nheads = batch * heads;
+  const int rows   = nheads * seqLen;
+  Shape shape{};
+  if (launch_shape(rows, &shape) != GRXDNN_STATUS_SUCCESS) return 0;
+  int device = 0;
+  grxDeviceProp_t prop{};
+  if (grxGetDevice(&device) != grxSuccess ||
+      grxGetDeviceProperties(&prop, device) != grxSuccess || prop.warpSize <= 0)
+    return 0;
+  const int per_row_launch = (int)warps_in(shape, (unsigned)prop.warpSize);
+  // scores GEMM + mask + softmax + output GEMM, each in its own region.
+  return grxblasCycleSlotsNeeded(ctx->blas, seqLen, seqLen) * nheads +
+         per_row_launch * 2 +
+         grxblasCycleSlotsNeeded(ctx->blas, headDim, seqLen) * nheads;
+}
+
 grxdnnStatus_t grxdnnAttentionForward(grxdnnHandle_t handle,
                                       int batch, int heads,
                                       int seqLen, int headDim,
@@ -538,6 +573,16 @@ grxdnnStatus_t grxdnnAttentionForward(grxdnnHandle_t handle,
   if (grxblasSetStream(ctx->blas, ctx->stream) != GRXBLAS_STATUS_SUCCESS)
     return GRXDNN_STATUS_NOT_INITIALIZED;
 
+  // Cycle instrumentation across FOUR launches sharing one probe buffer. Each
+  // gets its own region, because the slot index comes from the block and warp
+  // and two different grids collide at the low indices -- the earliest start
+  // would simply be lost, and attention would report the cost of whichever
+  // launch happened to write last.
+  //
+  // The GEMMs go on grxDNN's OWN grxBLAS handle, which no caller can see, so
+  // setting a probe on it cannot disturb a handle the caller is using.
+  int probe_off = 0;
+
   float* scores = reinterpret_cast<float*>(workspace);
   const int nheads = batch * heads;              // heads are contiguous
   const long long qkv_stride = (long long)seqLen * headDim;
@@ -561,6 +606,15 @@ grxdnnStatus_t grxdnnAttentionForward(grxdnnHandle_t handle,
   // The scale is alpha. It needs no kernel and no second pass over the matrix.
   const float scale = 1.0f / std::sqrt((float)headDim);
   const float zero = 0.0f, one = 1.0f;
+
+  if (ctx->probe) {
+    const int need = grxblasCycleSlotsNeeded(ctx->blas, seqLen, seqLen) * nheads;
+    if (probe_off + need > ctx->probe_capacity) return GRXDNN_STATUS_INVALID_VALUE;
+    grxblasSetCycleProbe(ctx->blas, ctx->probe + probe_off,
+                         ctx->probe_capacity - probe_off);
+    probe_off += need;
+  }
+
   grxblasStatus_t bs = grxblasSgemmStridedBatched(
       ctx->blas, GRXBLAS_OP_T, GRXBLAS_OP_N,
       seqLen, seqLen, headDim, &scale,
@@ -586,7 +640,7 @@ grxdnnStatus_t grxdnnAttentionForward(grxdnnHandle_t handle,
     margs.ld      = seqLen;
     margs.scores  = (uint64_t)(uintptr_t)scores;
 
-    st = attach_probe(*ctx, shape, &margs.cycles);
+    st = attach_probe(*ctx, shape, &margs.cycles, &probe_off);
     if (st != GRXDNN_STATUS_SUCCESS) return st;
 
     st = map_launch(grxLaunchFunction(ctx->causal_mask,
@@ -615,7 +669,7 @@ grxdnnStatus_t grxdnnAttentionForward(grxdnnHandle_t handle,
     sargs.x    = (uint64_t)(uintptr_t)scores;
     sargs.y    = (uint64_t)(uintptr_t)scores;   // in place
 
-    st = attach_probe(*ctx, shape, &sargs.cycles);
+    st = attach_probe(*ctx, shape, &sargs.cycles, &probe_off);
     if (st != GRXDNN_STATUS_SUCCESS) return st;
 
     st = map_launch(grxLaunchFunction(ctx->softmax,
@@ -632,6 +686,14 @@ grxdnnStatus_t grxdnnAttentionForward(grxdnnHandle_t handle,
   // and Vᵀ and Pᵀ are just V's and P's memory read column-major. So neither
   // operand is transposed and the two simply swap places -- V first. m is
   // headDim here, not seqLen, because the column-major result is outᵀ.
+  if (ctx->probe) {
+    const int need = grxblasCycleSlotsNeeded(ctx->blas, headDim, seqLen) * nheads;
+    if (probe_off + need > ctx->probe_capacity) return GRXDNN_STATUS_INVALID_VALUE;
+    grxblasSetCycleProbe(ctx->blas, ctx->probe + probe_off,
+                         ctx->probe_capacity - probe_off);
+    probe_off += need;
+  }
+
   bs = grxblasSgemmStridedBatched(
       ctx->blas, GRXBLAS_OP_N, GRXBLAS_OP_N,
       headDim, seqLen, seqLen, &one,

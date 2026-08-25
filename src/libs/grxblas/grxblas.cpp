@@ -65,6 +65,10 @@ struct Context {
   // the fallback for a device with no tensor unit.
   grxModule_t   module = nullptr;
   grxFunction_t sgemm_fn = nullptr;
+  // The register-blocked sgemm, when the loaded image has one. Optional: an
+  // older module still serves sgemm perfectly well, and refusing to load it
+  // over a kernel the caller never asked for would be absurd.
+  grxFunction_t sgemm_rb_fn = nullptr;
   std::string   sgemm_path;   // which file actually got loaded
   // Level 1 and 2, resolved from the same module. Absent in an older module,
   // which is why they are looked up lazily and reported rather than assumed.
@@ -91,6 +95,24 @@ struct Context {
 
   std::mutex    mutex;
 };
+
+// Outputs each thread of sgemm_rb computes. MUST match RM in
+// kernels/sgemm.cpp: the host sizes the grid from it and the kernel slices the
+// rows by it, and a disagreement is a grid that covers the wrong number of
+// outputs -- silently, in whichever direction the two drifted.
+constexpr int kSgemmRowsPerThread = 4;
+
+// Two ways the register-blocked kernel earns its keep, and it needs EITHER.
+// See the measured table at the launch site for where these came from.
+//
+//   k >= kSgemmMinK          the per-thread setup is amortised over the k loop
+//   ceil(m/RM) >= warpSize   the stores stay coalesced
+//
+// The second is the one that is easy to miss. Thread `sub` owns column
+// `idx / row_blocks`, so when row_blocks is smaller than the warp the column
+// CHANGES WITHIN A WARP and consecutive lanes stop writing consecutive
+// addresses. At warp 4 and RM 4 that boundary is m = 16.
+constexpr int kSgemmMinK = 16;
 
 // One warp per block, so one slot per block. Kept as a function because the
 // launch geometry below has to agree with it exactly, and two places computing
@@ -144,6 +166,8 @@ grxblasStatus_t ensure_module_locked(Context& ctx) {
       }
       ctx.module     = mod;
       ctx.sgemm_fn   = fn;
+      if (grxModuleGetFunction(&ctx.sgemm_rb_fn, mod, "sgemm_rb") != grxSuccess)
+        ctx.sgemm_rb_fn = nullptr;
       ctx.sgemm_path = path;
       // Best effort: a module built before these existed still serves sgemm,
       // and the level-1/2 calls report NOT_SUPPORTED instead of the whole
@@ -938,22 +962,72 @@ static grxblasStatus_t sgemm_batched(grxblasHandle_t handle,
   args.stride_b = (int64_t)strideB;
   args.stride_c = (int64_t)strideC;
 
-  // One thread per output element. The block is a whole warp so no lane is
-  // wasted, and the grid covers m*n with the tail masked by the kernel. The
-  // batch is the grid's second dimension, which is the whole reason batching
-  // costs one launch here instead of `batch` of them.
+  // WHICH KERNEL, and why the choice is a threshold rather than "always the
+  // fast one".
+  //
+  // sgemm_rb gives each thread RM = 4 outputs down a column, so it launches a
+  // quarter of the threads and loads B once per four multiply-adds instead of
+  // once each. It buys that with a fixed per-thread cost -- four row indices,
+  // four accumulators, four stores -- which is paid once and amortised over the
+  // k loop. At m < RM it is pure waste, every thread but one discarding.
+  //
+  // SO IT ALSO LOSES WHEN k IS SMALL, and that is measured, not guessed. On the
+  // transformer block (tests/bench/block_cycles.cpp, one SM, four lanes),
+  // blocked against reference over the same stages:
+  //
+  //   stage        m    k     naive -> blocked        ratio
+  //   mlp GEMM 2   16   64     70031 -> 43253          1.62x
+  //   mlp GEMM 1   64   16     84379 -> 53614          1.57x
+  //   qkv proj      8   16     62815 -> 45236          1.39x
+  //   out proj     16    8     13056 -> 10171          1.28x
+  //   attention     8    8     13834 -> 17690          0.78x  -- SLOWER
+  //
+  // k ALONE DOES NOT EXPLAIN THAT. The output projection has k = 8 and is 1.28x
+  // faster; attention has k = 8 and is slower. They differ in m: 16 against 8.
+  //
+  // The mechanism is coalescing. Thread `sub` owns column `idx / row_blocks`,
+  // so once row_blocks drops below the warp width the column changes WITHIN a
+  // warp and consecutive lanes stop writing consecutive addresses. At warp 4
+  // and RM 4 that boundary is exactly m = 16 -- which is where the output
+  // projection sits and attention does not.
+  //
+  // So blocking pays when EITHER the k loop amortises the setup OR the stores
+  // stay coalesced, and attention is the only stage here with neither.
+  //
+  // FITTED TO FIVE POINTS ON ONE CONFIGURATION, and provisional. The k
+  // crossover is bracketed by 8 and 16 with nothing swept between; the
+  // coalescing boundary has a mechanism behind it but only one measurement
+  // either side. A shape near either edge gets the reference kernel: correct,
+  // merely not the fastest, which is the right way round.
+  //
+  // GRXBLAS_SGEMM_NAIVE=1 forces the reference. tests/libs/test_grxblas_rb.cpp
+  // uses it to run both kernels over the same operands and compare them, which
+  // is what makes the naive one an oracle rather than merely a fallback.
+  const bool force_naive = std::getenv("GRXBLAS_SGEMM_NAIVE") != nullptr;
+  const int row_blocks = (m + kSgemmRowsPerThread - 1) / kSgemmRowsPerThread;
+  const bool rb_pays = (k >= kSgemmMinK) || (row_blocks >= prop.warpSize);
+  const bool use_rb = ctx->sgemm_rb_fn && !force_naive &&
+                      m >= kSgemmRowsPerThread && rb_pays;
+
   const unsigned block = (unsigned)prop.warpSize;
-  const unsigned total = (unsigned)((size_t)m * (size_t)n);
-  const unsigned grid  = (total + block - 1) / block;
+  const unsigned outputs = use_rb
+      ? (unsigned)((size_t)((m + kSgemmRowsPerThread - 1) / kSgemmRowsPerThread)
+                   * (size_t)n)
+      : (unsigned)((size_t)m * (size_t)n);
+  const unsigned grid = (outputs + block - 1) / block;
 
   if (ctx->probe) {
     // The probe is one slot per block, and the grid is now two-dimensional.
-    if (ctx->probe_capacity < slots_for(m, n, prop.warpSize) * batch)
+    // Sized against the LAUNCH rather than against m*n, because the blocked
+    // kernel launches fewer blocks and a capacity check that ignored that
+    // would refuse probes that are perfectly large enough.
+    if (ctx->probe_capacity < (int)grid * batch)
       return GRXBLAS_STATUS_INVALID_VALUE;
     args.cycles = (uint64_t)(uintptr_t)ctx->probe;
   }
 
-  e = grxLaunchFunction(ctx->sgemm_fn, dim3_t{grid, (unsigned)batch, 1},
+  e = grxLaunchFunction(use_rb ? ctx->sgemm_rb_fn : ctx->sgemm_fn,
+                        dim3_t{grid, (unsigned)batch, 1},
                         dim3_t{block, 1, 1}, &args, sizeof(args),
                         /*sharedMem=*/0, ctx->stream);
   return from_grx(e);

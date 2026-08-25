@@ -978,9 +978,48 @@ already says why: sgemm v0 is one thread per output element with no blocking,
 correct and not fast. Tuning it is worth more than everything else on this list
 combined.
 
+**Done, and it is worth 1.34× on the whole block.** `sgemm_rb` is a register-
+blocked kernel: one thread owns RM = 4 outputs down a column, so B is loaded
+once per four multiply-adds instead of once each, and the loop overhead and
+index arithmetic are amortised over four outputs. A **separate entry point**,
+not an edit of the reference, which is what `kernels/sgemm.cpp` said the tuned
+path would be — and that turns the reference into an **oracle**: both kernels
+run on the device over the same operands and must agree **bit for bit**, since
+blocking changes which thread computes what, not the order of the accumulation.
+`tests/libs/test_grxblas_rb.cpp`, 36 shape × transpose combinations, `==` with
+no tolerance to hide in.
+
+| stage | m | k | naive → blocked | |
+|---|---|---|---|---|
+| mlp GEMM 2 | 16 | 64 | 70031 → 43253 | 1.62× |
+| mlp GEMM 1 | 64 | 16 | 84379 → 53614 | 1.57× |
+| qkv projection | 8 | 16 | 62815 → 45236 | 1.39× |
+| output projection | 16 | 8 | 13056 → 9987 | 1.31× |
+| attention | 8 | 8 | 13834 → 17690 | **0.78×** |
+| **whole block** | | | **304145 → 226405** | **1.34×** |
+
+Attention got *slower*, and chasing that is where the interesting part is. k
+alone does not explain it: the output projection also has k = 8 and is 1.31×
+faster. They differ in **m**, 16 against 8 — and thread `sub` owns column
+`idx / row_blocks`, so once `row_blocks` falls below the warp width the column
+changes *within a warp* and consecutive lanes stop writing consecutive
+addresses. At warp 4 and RM 4 that boundary is exactly m = 16.
+
+So blocking pays when **either** the k loop amortises the setup **or** the
+stores stay coalesced, and attention is the only stage with neither. With that
+rule in the host, no stage regresses and the block is 1.34× faster.
+
+The rule is **fitted to five points on one configuration and is provisional**:
+the k crossover is bracketed by 8 and 16 with nothing swept between, and the
+coalescing boundary has a mechanism behind it but one measurement either side. A
+shape near either edge gets the reference kernel — correct, merely not the
+fastest, which is the right way round. A proper sweep of both boundaries is
+owed, and so is the obvious next step: a 2D micro-tile (RM × RN) reuses **both**
+operands instead of one, and 4 loads per 4 outputs beats 5.
+
 **Fusing the bias into the GEMM epilogue would save about 2%.** That was the
 obvious next optimisation before anyone measured, and the measurement says not
-to bother yet.
+to bother yet — the GEMM itself returned 25% for comparable effort.
 
 **GELU costs more than attention and both layer norms together**, which is
 surprising for an elementwise op until the per-element figures are compared:

@@ -257,6 +257,17 @@ typedef enum {
 grxdnnStatus_t grxdnnAttentionWorkspaceSize(int batch, int heads, int seqLen,
                                             int headDim, size_t* bytes);
 
+// How many probe slots grxdnnAttentionForward will use at this shape.
+//
+// More than one launch's worth: attention is four launches -- the scores GEMM,
+// the mask, the softmax, the output GEMM -- and each writes its own region of
+// the probe buffer so none overwrites another's start. Summarising the whole
+// buffer afterwards therefore gives the span of all four, which is attention's
+// cost as a caller experiences it. A probe too small for that is refused rather
+// than silently recording one launch out of four.
+int grxdnnAttentionCycleSlotsNeeded(grxdnnHandle_t handle, int batch, int heads,
+                                    int seqLen, int headDim);
+
 // `workspace` must be a device allocation of at least the size above.
 // In-place is NOT allowed: out must not alias Q, K or V.
 grxdnnStatus_t grxdnnAttentionForward(grxdnnHandle_t handle,
