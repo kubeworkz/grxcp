@@ -306,10 +306,68 @@ is now stated in `grxdnn.h` where the API is declared, since it produces a
 silent record of nothing rather than an error.
 
 What the report says, and it is not what intuition said: the GEMMs are **76%** of
-the block, GELU is **11.5%** — more than attention and both layer norms
-together, because the transcendental costs about 9× a bias add per element — and
-fusing the bias into the GEMM epilogue, the obvious next optimisation, would
-save about **2%**. See the roadmap's phase 6 progress note for the table.
+the block in the four stages named as GEMMs — **80.3%** counting attention's own
+two — GELU is **11.5%**, more than attention and both layer norms together
+because the transcendental costs about 8.5× a bias add per element, and fusing
+the bias into the GEMM epilogue, the obvious next optimisation, would save about
+**2%**. See the roadmap's phase 6 progress note for the table.
+
+The bench now also writes its raw spans with `--out`, and runs a second time
+with `GRXBLAS_SGEMM_NAIVE=1`. That second run is the only bench execution added
+for the baselines rather than reused, and it earns its minutes twice: it pins
+the register-blocking speedup to a measured pair, and it is the control that
+proves the kernel selection does anything at all.
+
+The **PERF BASELINE GATE** (`ci/check_perf.py`, `ci/perf/baselines/`) compares
+152 measured cycle counts against stored golden files. AGENTS.md section 4 had
+said since the first commit that a moved number means real cycles moved, and
+`grxcp_architecture.md` section 10 listed `ci/perf/baselines/` among five
+verification gates — while no such directory existed and nothing compared any
+number to anything. The benches printed and a human was expected to remember
+last week's figure.
+
+Tolerance is **zero**, and that is a measurement rather than a preference: three
+consecutive runs of both benches were byte-identical, every stage and every
+shape, and rebuilding `src/libs/kernels_all.cpp` produced a bit-identical
+`.vxbin`. Only raw integers are stored — shares, cycles per element and speedups
+are derived at compare time, because a stored `4.6%` drifts against its own
+rounding and needs a tolerance to survive it while a stored `13834` does not.
+
+Three things it refuses to do. It will not compare across a **different device
+record** — a different core width or SM count is not a regression and not a
+pass, it is numbers about another machine, so that outcome is REFUSED rather
+than failed. It will not report a **renamed or reordered stage** as a
+regression; structure is part of the metric key, so that is a separate verdict
+with a separate fix. And it will not run the benches itself: the two steps above
+already wrote the files, so what is gated is exactly what was printed.
+
+It is also the one gate here that is **deferred rather than fatal**. Everything
+else exits on the spot; a moved cycle count must not hide a correctness
+regression in a gate below it, so this one is recorded and re-raised at the end.
+
+Watched failing, twice over. Planting a wasted 32-iteration loop in `dnn_gelu`
+turned it red with gelu the largest mover at **+42.3%**, five times the next
+entry — and moved all ten other stages too, between **−6.0%** and **+8.7%**,
+with their source untouched, because the `.vxbin` relinks and every kernel's
+addresses move with it. The planted build was itself reproducible run to run,
+and reverting restored all 152 metrics to exact, so that spread is layout and
+not noise. The report therefore ranks movers by magnitude and names the largest
+on its own line: when the image changed, rank is the signal; when it did not,
+the exact value is. A band wide enough to absorb 8.7% of layout would also
+swallow a genuine 8% regression, which is the worse trade.
+
+Separately, `check_perf.py --self-test` runs in **tier 1**, where there is no
+device: it checks that the comparator refuses a different machine, fails on one
+cycle of drift, calls a renamed stage a structural change, honours a declared
+tolerance *and says so*, and that two configurations with identical cycles fail
+the naive/register-blocked control. Four ablations turn it red. That self-test
+was itself wrong once — it read the real baselines directory, so the day real
+baselines appeared its missing-baseline case stopped reaching the
+missing-baseline path.
+
+Regenerating is `ci/check_perf.py --results build-real --regenerate`, and the
+point of it is the diff: a moved number is meant to arrive in review beside the
+code that moved it, never as a quiet edit to make a red gate green.
 
 The **ATTENTION GATE** (`tests/libs/test_grxdnn_attn.cpp`) is the last quarter
 of the phase 6 exit gate, and the only gate here whose reference is a third

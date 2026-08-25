@@ -53,6 +53,10 @@ struct Point {
   double   warp_per_element; // secondary: summed warp windows / output element
   double   tensor_per_element;   // the same, for the tensor kernel
   uint64_t tensor_span;
+  // Kept so the baseline can hold the raw pair warp_per_element derives from
+  // rather than the quotient.
+  int      nslots = 0;
+  uint64_t busy_median = 0;
 };
 
 // Runs a launch with the probe attached and summarises what came back.
@@ -80,9 +84,60 @@ grxCycleSummary measure(grxblasHandle_t h, void* dSlots, int nslots,
   return sum;
 }
 
+// The machine-readable half, for ci/perf/baselines/. Raw integers only --
+// spans and the median busy window. Cycles per element, per MAC and the
+// GemmEx speedup all derive from these and from the shape, so ci/check_perf.py
+// computes them rather than storing them; a stored 104.6 would need a
+// tolerance to survive its own rounding, and a stored 33512 does not.
+void write_json(const char* path, const grxDeviceProp_t& prop, bool have_tensor,
+                int tm, int tn, int tk, const std::vector<Point>& points) {
+  std::FILE* f = std::fopen(path, "w");
+  if (!f) {
+    std::printf("  could not write %s\n", path);
+    ++failures;
+    return;
+  }
+  std::fprintf(f, "{\n  \"bench\": \"gemm_cycles\",\n");
+  std::fprintf(f,
+               "  \"device\": {\"name\": \"%s\", \"sms\": %d, \"warp\": %d, "
+               "\"mhz\": %d, \"warp_slots\": %d},\n",
+               prop.name, prop.multiProcessorCount, prop.warpSize,
+               prop.clockRateMHz,
+               prop.warpSize ? prop.maxThreadsPerBlock / prop.warpSize : 0);
+  if (have_tensor)
+    std::fprintf(f, "  \"tensor_tile\": {\"m\": %d, \"n\": %d, \"k\": %d},\n",
+                 tm, tn, tk);
+  else
+    std::fprintf(f, "  \"tensor_tile\": null,\n");
+  std::fprintf(f, "  \"shapes\": [\n");
+  for (size_t i = 0; i < points.size(); ++i) {
+    const Point& p = points[i];
+    std::fprintf(f,
+                 "    {\"m\": %d, \"n\": %d, \"k\": %d, \"sgemm_span\": %llu, "
+                 "\"tensor_span\": %llu, \"nslots\": %d, \"busy_median\": %llu}%s\n",
+                 p.m, p.n, p.k, (unsigned long long)p.span,
+                 (unsigned long long)p.tensor_span, p.nslots,
+                 (unsigned long long)p.busy_median,
+                 i + 1 == points.size() ? "" : ",");
+  }
+  std::fprintf(f, "  ]\n}\n");
+  std::fclose(f);
+  std::printf("  wrote %s\n", path);
+}
+
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
+  const char* out_path = nullptr;
+  for (int i = 1; i < argc; ++i) {
+    if (std::strcmp(argv[i], "--out") == 0 && i + 1 < argc) {
+      out_path = argv[++i];
+    } else {
+      std::printf("usage: gemm_cycles [--out <results.json>]\n");
+      return 2;
+    }
+  }
+
   int count = 0;
   if (grxGetDeviceCount(&count) != grxSuccess || count <= 0) {
     std::printf("no devices; skipping\n");
@@ -178,6 +233,8 @@ int main() {
     p.warp_per_element = scalar.busyMedian
                              ? (double)scalar.busyMedian * (double)nslots / elems
                              : 0.0;
+    p.nslots      = nslots;
+    p.busy_median = scalar.busyMedian;
 
     if (have_tensor) {
       bool tok = false;
@@ -299,6 +356,8 @@ int main() {
       expect(met, "GemmEx costs at most a fifth of sgemm per output element");
     }
   }
+
+  if (out_path) write_json(out_path, prop, have_tensor, tm, tn, tk, points);
 
   grxblasDestroy(h);
   if (failures) { std::printf("FAILED (%d)\n", failures); return 1; }

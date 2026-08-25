@@ -109,6 +109,15 @@ mkdir -p "$BUILD"
 echo "==> DOCS GATE: every documented path, link and section reference resolves"
 python3 "$ROOT/ci/check_docs.py"
 
+# Only the comparator's LOGIC, which needs no device: that it refuses a
+# different machine rather than comparing it, fails on one cycle of drift,
+# calls a renamed stage a structural change rather than a regression, and
+# announces any tolerance it honours. The numbers themselves are gated in
+# tier 2, which is the only tier that can produce them.
+echo
+echo "==> PERF COMPARATOR: the baseline checker's own logic, without a device"
+python3 "$ROOT/ci/check_perf.py" --self-test
+
 echo
 echo "==> compiling runtime"
 RT_OBJS=()

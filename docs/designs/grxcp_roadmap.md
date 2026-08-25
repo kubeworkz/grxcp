@@ -975,15 +975,21 @@ baseline the tuning below is measured from, not the current state:
 
 | stage | share | notes |
 |---|---|---|
-| mlp GEMM 1 (D→F) | 27.8% | |
-| mlp GEMM 2 (F→D) | 23.1% | |
-| qkv projection (3 GEMMs) | 20.8% | |
+| mlp GEMM 1 (D→F) | 27.7% | |
+| mlp GEMM 2 (F→D) | 23.0% | |
+| qkv projection (3 GEMMs) | 20.7% | |
 | **GELU** | **11.5%** | |
-| attention | 4.6% | 8.5% at S=16 — its scores are seqLen-squared |
+| attention | 4.5% | 8.5% at S=16 — its scores are seqLen-squared |
 | output projection | 4.3% | |
-| layer norm ×2 | 4.7% | |
-| bias ×3 | 2.0% | |
+| layer norm ×2 | 5.0% | |
+| bias ×3 | 2.1% | |
 | residual | 1.1% | |
+
+Every share above is derived from `ci/perf/baselines/block_cycles.naive.json`,
+which holds the raw spans and is gated exactly by the PERF BASELINE GATE. Four
+of these entries were off by a tenth of a point and one — layer norm — by three,
+against a table nobody could check when it was written. They are recomputed now,
+and a reader who does not believe them can divide the numbers in that file.
 
 Attention's figure was wrong when first taken, and the correction is worth
 recording. `grxdnnAttentionForward` calls grxBLAS on an internal handle nothing
@@ -993,12 +999,20 @@ attention is four launches, the slot index comes from the block and warp, and
 four different grids collide at the low indices — the earliest start is simply
 lost. Each launch now writes its own region of the probe buffer.
 
-The fix validated itself against theory. Attention's share now goes 4.6% → 8.5%
-when the sequence doubles, a ratio of 1.93 against the ~2× that a
-seqLen-squared stage among linear ones must show. With only its softmax counted
-it was 1.25.
+The fix validated itself against theory. Attention's share goes 4.55% → 8.47%
+when the sequence doubles — 13834/304145 against 53008/626196, both from the
+baseline file — a ratio of **1.86** against the ~2× that a seqLen-squared stage
+among linear ones must show. With only its softmax counted, the figures recorded
+at the time were 4.6% and 5.7%, a ratio of 1.24; those two are history and do
+not reproduce from this tree, because the bug that produced them is fixed.
 
-**GEMMs are 76% of the block.** That is where the work is, and `grxblas.h`
+This paragraph previously claimed 1.93, which did not follow from its own two
+numbers (8.5/4.6 is 1.85) and which nothing checked. That is the second reason
+the shares above are now derived from a gated file rather than transcribed.
+
+**GEMMs are 76% of the block** — 75.7% in the four stages named as GEMMs above,
+and 80.3% once attention's own two are counted, which is the number that matters
+and the one the profile hole was hiding. That is where the work is, and `grxblas.h`
 already says why: sgemm v0 is one thread per output element with no blocking,
 correct and not fast. Tuning it is worth more than everything else on this list
 combined.
@@ -1020,10 +1034,19 @@ no tolerance to hide in.
 | mlp GEMM 1 | 64 | 16 | 84379 → 53614 | 1.57× |
 | qkv projection | 8 | 16 | 62815 → 45236 | 1.39× |
 | output projection | 16 | 8 | 13056 → 9987 | 1.31× |
-| attention | 8 | 8 | 13834 → 17690 | **0.78×** |
+| attention | 8 | 8 | 13834 → 13861 | 1.00× — takes the reference |
 | **whole block** | | | **304145 → 226405** | **1.34×** |
 
-Attention got *slower*, and chasing that is where the interesting part is. k
+Both columns are the shipping build, and every number in them is a span from
+`ci/perf/baselines/block_cycles.{naive,register-blocked}.json`, gated exactly.
+The attention row previously read 17690 and **0.78×**, which was a real
+measurement of a build that no longer exists: it is what attention cost *before*
+the crossover rule below, and it is why that rule exists. Leaving it in a column
+labelled "blocked" made the table mix two builds, and the total did not then
+follow from its own rows.
+
+Attention got *slower* in that provisional build, and chasing it is where the
+interesting part is. k
 alone does not explain it: the output projection also has k = 8 and is 1.31×
 faster. They differ in **m**, 16 against 8 — and thread `sub` owns column
 `idx / row_blocks`, so once `row_blocks` falls below the warp width the column
@@ -1048,8 +1071,10 @@ to bother yet — the GEMM itself returned 25% for comparable effort.
 
 **GELU costs more than attention and both layer norms together**, which is
 surprising for an elementwise op until the per-element figures are compared:
-68 cycles/element against 7.8 for a bias add — roughly 9× — while layer norm,
-with three passes and two warp reductions, is 60. The cost is the
+68 cycles/element against 8.0 for a bias add over the same 512 elements —
+roughly 8.5× — while layer norm, with three passes and two warp reductions, is
+60. (35057/512, 4118/512 and 7781/128, from the naive baseline file; the bias
+figure read 7.8 before there was a file to divide.) The cost is the
 transcendental, not the memory traffic. `dev_gelu_tanh` goes through `dev_exp`
 (range reduction plus a degree-5 polynomial) once per element. A cheaper direct
 rational approximation of `tanh` is a real candidate, and it would need its

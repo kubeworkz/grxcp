@@ -637,10 +637,28 @@ if [[ -n "$GRXGPU" && -d "$TOOLDIR/llvm-vortex" ]]; then
     -o "$BUILD/block_cycles.o"
   $CXX "${OBJS[@]}" "$BUILD/grxblas.o" "$BUILD/grxdnn.o" \
     "$BUILD/block_cycles.o" $LIBS -o "$BUILD/block_cycles"
-  if ! "$BUILD/block_cycles"; then
+  if ! "$BUILD/block_cycles" --out "$BUILD/perf_block_rb.json"; then
     rc=$?
     [[ $rc -eq 77 ]] || exit $rc
   fi
+
+  # The same block with the register-blocked sgemm forced off. This is the ONLY
+  # bench run added for the baselines rather than reused from a step that was
+  # already here, and it earns its minutes twice over: it is what pins the
+  # register-blocking speedup to a measured pair instead of a remembered
+  # figure, and it is the control that proves the kernel selection does
+  # anything at all -- sgemm_rb is an optional symbol lookup and falls back
+  # silently, so two labels over identical cycles is a live failure mode.
+  echo "--- the same block with GRXBLAS_SGEMM_NAIVE=1, for the pair"
+  if ! GRXBLAS_SGEMM_NAIVE=1 "$BUILD/block_cycles" \
+        --out "$BUILD/perf_block_naive.json" > "$BUILD/block_naive.log" 2>&1; then
+    rc=$?
+    if [[ $rc -ne 77 ]]; then
+      tail -5 "$BUILD/block_naive.log" | sed 's/^/        /'
+      exit $rc
+    fi
+  fi
+  grep -E "TOTAL" "$BUILD/block_naive.log" | sed 's/^/     /' || true
 else
   echo "SKIPPED: needs --grxgpu <path> and a device toolchain in $TOOLDIR."
 fi
@@ -708,12 +726,41 @@ if [[ -n "$GRXGPU" && -d "$TOOLDIR/llvm-vortex" ]]; then
   $CXX $CXXFLAGS -c "$ROOT/tests/bench/gemm_cycles.cpp" -o "$BUILD/gemm_cycles.o"
   $CXX "${OBJS[@]}" "$BUILD/grxblas.o" "$BUILD/gemm_cycles.o" $LIBS \
     -o "$BUILD/sgemm_bench"
-  if ! "$BUILD/sgemm_bench"; then
+  if ! "$BUILD/sgemm_bench" --out "$BUILD/perf_gemm.json"; then
     rc=$?
     [[ $rc -eq 77 ]] || exit $rc
   fi
 else
   echo "SKIPPED: needs --grxgpu <path> and a device toolchain in $TOOLDIR."
+fi
+
+echo
+echo "==> PERF BASELINE GATE: measured cycles against ci/perf/baselines/"
+# AGENTS.md section 4 has always said a moved number means real cycles moved.
+# Until now nothing compared any number to anything: the benches printed and a
+# human was expected to remember last week's figure.
+#
+# It compares files rather than running anything -- the two bench steps above
+# wrote them with --out, so what is gated here is exactly what was printed, and
+# no bench runs twice to be checked. Tolerance is ZERO, because three
+# consecutive runs of both benches were byte-identical and kernels_all.cpp
+# rebuilds to a bit-identical .vxbin; a band would only hide small regressions.
+#
+# A red gate is not an invitation to regenerate. Root-cause it, or regenerate
+# as a reviewed step so the baseline diff travels with the code that moved it.
+#
+# DEFERRED, alone among the gates here. Every other step exits on the spot,
+# and this one does not: a moved cycle count must not hide a CORRECTNESS
+# regression in the gates below it. It is recorded and re-raised at the end of
+# the script, so the run still fails and the contributor still sees everything
+# that is wrong in one pass rather than one gate per run.
+PERF_FAILED=0
+if [[ -n "$GRXGPU" && -d "$TOOLDIR/llvm-vortex" ]]; then
+  python3 "$ROOT/ci/check_perf.py" --results "$BUILD" || PERF_FAILED=1
+else
+  echo "SKIPPED: needs --grxgpu <path> and a device toolchain in $TOOLDIR."
+  echo "         The comparator's own logic is checked in tier 1, which needs"
+  echo "         no device: ci/build_mock.sh runs check_perf.py --self-test."
 fi
 
 echo
@@ -923,4 +970,12 @@ echo "==> conformance report against the real device"
 "$BUILD/grx-conform" | tail -14
 
 echo
+if [[ "${PERF_FAILED:-0}" -ne 0 ]]; then
+  echo "tier 2 FAILED on $DRIVER: the PERF BASELINE GATE above is red."
+  echo "Everything after it was still run, deliberately, so that a cycle count"
+  echo "moving cannot hide a wrong answer. Root-cause the delta, or regenerate"
+  echo "with ci/check_perf.py --results $BUILD --regenerate and put the baseline"
+  echo "diff in the same change as the code that moved it."
+  exit 1
+fi
 echo "tier 2 passed on $DRIVER"

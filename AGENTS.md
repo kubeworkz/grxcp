@@ -70,6 +70,11 @@ These are the rules most likely to be violated by a well-meaning change.
 - **Perf baselines are golden data.** Never hand-edit a baseline to make a
   red gate green. A moved number means real cycles moved: root-cause it, or
   regenerate the baseline as a reviewed step so the delta is visible.
+  They live in `ci/perf/baselines/` and are gated exactly, with zero
+  tolerance, by `ci/check_perf.py`; regenerate with `--regenerate` and put the
+  baseline diff in the same change as the code that moved it. Expect touching
+  ANY device kernel to move every stage — the image relinks — so read the
+  ranked report rather than one number.
 - **Allocator invariants are load-bearing.** The interval map must never
   return a stale mapping; a freed extent is unmapped before it is reusable.
   Add a test with every allocator change.

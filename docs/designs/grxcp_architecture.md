@@ -683,17 +683,20 @@ GRXCP inherits the GRX-G100 project's verification discipline, adapted:
    also the honest measure of how complete the platform is: publish the pass
    rate, the way the chipStar work publishes its ~36% rv32 conformance
    number rather than hiding it.
-4. **Perf baselines — NOT BUILT.** The intent is a ci/perf/baselines/ tree of
-   golden JSON, never hand-edited, the same rule as `grxgpu/AGENTS.md` §4.
-   Nothing there exists yet, and this line claimed it did until the docs gate
-   opened the path — which is also why that directory is named here without
-   backticks, since in these documents a `backticked/path` asserts a file that
-   is in the tree and this one is a plan. What stands in for it today: `tests/bench/gemm_cycles.cpp` and
-   `tests/bench/block_cycles.cpp` measure device cycles, and the BLOCK CYCLES
-   step in `ci/run_real.sh` prints them — against no stored number, so a perf
-   regression is visible to a reader of the log and to nothing else. The rule
-   in AGENTS.md §4 about never hand-editing a baseline is therefore a rule
-   with no baselines to govern.
+4. **Perf baselines.** `ci/perf/baselines/`, golden JSON, never hand-edited —
+   the same rule as `grxgpu/AGENTS.md` §4. `tests/bench/gemm_cycles.cpp` and
+   `tests/bench/block_cycles.cpp` write their raw spans with `--out`, and
+   `ci/check_perf.py` compares 152 metrics against the stored files as the PERF
+   BASELINE GATE in `ci/run_real.sh`. Tolerance is **zero**, because three
+   consecutive runs of both benches were byte-identical and the kernel image
+   rebuilds bit-identically; a moved number is a moved number. Only raw
+   integers are stored — shares and speedups are derived at compare time, so no
+   figure carries its own rounding, and the gate is deferred rather than fatal
+   so a cycle count cannot hide a wrong answer in a gate below it.
+
+   This line asserted all of that for months while there was no `ci/perf` at
+   all, and nothing noticed until the docs gate opened the path. What is written
+   above is now true, which is a different claim from the one that stood here.
 5. **No fabricated capability.** A GRXCP entry point either works or returns
    `grxErrorNotSupported`. Emulating a hardware feature in software behind
    an API that implies hardware is banned; it produces performance cliffs

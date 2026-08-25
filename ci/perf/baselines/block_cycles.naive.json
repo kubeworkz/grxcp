@@ -1,0 +1,162 @@
+{
+  "bench": "block_cycles",
+  "config": {
+    "sgemm": "naive"
+  },
+  "device": {
+    "name": "GRX-G100 (simx)",
+    "sms": 1,
+    "warp": 4,
+    "mhz": 400
+  },
+  "shapes": [
+    {
+      "seq": 8,
+      "dim": 16,
+      "heads": 2,
+      "ff": 64,
+      "stages": [
+        {
+          "name": "layernorm 1",
+          "span": 7377,
+          "warps": 8,
+          "valid": true
+        },
+        {
+          "name": "qkv proj (3 GEMMs)",
+          "span": 62815,
+          "warps": 32,
+          "valid": true
+        },
+        {
+          "name": "attention (2 GEMMs+mask+softmax)",
+          "span": 13834,
+          "warps": 96,
+          "valid": true
+        },
+        {
+          "name": "out proj (H GEMMs)",
+          "span": 13056,
+          "warps": 32,
+          "valid": true
+        },
+        {
+          "name": "bias",
+          "span": 2261,
+          "warps": 8,
+          "valid": true
+        },
+        {
+          "name": "residual (saxpy)",
+          "span": 3436,
+          "warps": 32,
+          "valid": true
+        },
+        {
+          "name": "layernorm 2",
+          "span": 7781,
+          "warps": 8,
+          "valid": true
+        },
+        {
+          "name": "mlp GEMM 1 (D->F)",
+          "span": 84379,
+          "warps": 128,
+          "valid": true
+        },
+        {
+          "name": "bias",
+          "span": 4118,
+          "warps": 8,
+          "valid": true
+        },
+        {
+          "name": "gelu",
+          "span": 35057,
+          "warps": 8,
+          "valid": true
+        },
+        {
+          "name": "mlp GEMM 2 (F->D)",
+          "span": 70031,
+          "warps": 32,
+          "valid": true
+        }
+      ]
+    },
+    {
+      "seq": 16,
+      "dim": 16,
+      "heads": 2,
+      "ff": 64,
+      "stages": [
+        {
+          "name": "layernorm 1",
+          "span": 14129,
+          "warps": 16,
+          "valid": true
+        },
+        {
+          "name": "qkv proj (3 GEMMs)",
+          "span": 127584,
+          "warps": 64,
+          "valid": true
+        },
+        {
+          "name": "attention (2 GEMMs+mask+softmax)",
+          "span": 53008,
+          "warps": 256,
+          "valid": true
+        },
+        {
+          "name": "out proj (H GEMMs)",
+          "span": 26212,
+          "warps": 64,
+          "valid": true
+        },
+        {
+          "name": "bias",
+          "span": 3951,
+          "warps": 16,
+          "valid": true
+        },
+        {
+          "name": "residual (saxpy)",
+          "span": 7134,
+          "warps": 64,
+          "valid": true
+        },
+        {
+          "name": "layernorm 2",
+          "span": 14936,
+          "warps": 16,
+          "valid": true
+        },
+        {
+          "name": "mlp GEMM 1 (D->F)",
+          "span": 166587,
+          "warps": 256,
+          "valid": true
+        },
+        {
+          "name": "bias",
+          "span": 7338,
+          "warps": 16,
+          "valid": true
+        },
+        {
+          "name": "gelu",
+          "span": 64504,
+          "warps": 16,
+          "valid": true
+        },
+        {
+          "name": "mlp GEMM 2 (F->D)",
+          "span": 140813,
+          "warps": 64,
+          "valid": true
+        }
+      ]
+    }
+  ]
+}

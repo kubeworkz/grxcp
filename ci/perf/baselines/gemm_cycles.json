@@ -1,0 +1,62 @@
+{
+  "bench": "gemm_cycles",
+  "device": {
+    "name": "GRX-G100 (simx)",
+    "sms": 1,
+    "warp": 4,
+    "mhz": 400,
+    "warp_slots": 16
+  },
+  "tensor_tile": {
+    "m": 8,
+    "n": 4,
+    "k": 8
+  },
+  "shapes": [
+    {
+      "m": 16,
+      "n": 16,
+      "k": 16,
+      "sgemm_span": 26767,
+      "tensor_span": 8702,
+      "nslots": 64,
+      "busy_median": 26040
+    },
+    {
+      "m": 16,
+      "n": 16,
+      "k": 32,
+      "sgemm_span": 44343,
+      "tensor_span": 10699,
+      "nslots": 64,
+      "busy_median": 43429
+    },
+    {
+      "m": 16,
+      "n": 16,
+      "k": 64,
+      "sgemm_span": 79611,
+      "tensor_span": 14503,
+      "nslots": 64,
+      "busy_median": 77610
+    },
+    {
+      "m": 32,
+      "n": 32,
+      "k": 32,
+      "sgemm_span": 168003,
+      "tensor_span": 29893,
+      "nslots": 256,
+      "busy_median": 39047
+    },
+    {
+      "m": 32,
+      "n": 32,
+      "k": 64,
+      "sgemm_span": 311500,
+      "tensor_span": 45194,
+      "nslots": 256,
+      "busy_median": 75217
+    }
+  ]
+}

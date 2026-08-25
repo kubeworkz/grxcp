@@ -43,6 +43,7 @@
 #include <grx/grx_cycles.h>
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -304,9 +305,64 @@ double report(const Shape& sh, const std::vector<StageCost>& stages,
   return (double)total;
 }
 
+// The machine-readable half, for ci/perf/baselines/. Written from the SAME
+// StageCost records the prose report prints, so the two cannot disagree.
+//
+// Only raw integers go in: spans and warp counts. Shares, totals-per-element
+// and speedups are derived by ci/check_perf.py from these. A baseline holding
+// "4.6%" would drift against its own rounding and would have to carry a
+// tolerance to survive it; a baseline holding 13834 does not.
+void write_json(const char* path, const grxDeviceProp_t& prop,
+                const char* sgemm_config, const Shape* shapes,
+                const std::vector<StageCost>* stages, int nshapes) {
+  std::FILE* f = std::fopen(path, "w");
+  if (!f) {
+    std::printf("  could not write %s\n", path);
+    ++failures;
+    return;
+  }
+  std::fprintf(f, "{\n  \"bench\": \"block_cycles\",\n");
+  std::fprintf(f, "  \"config\": {\"sgemm\": \"%s\"},\n", sgemm_config);
+  std::fprintf(f,
+               "  \"device\": {\"name\": \"%s\", \"sms\": %d, \"warp\": %d, "
+               "\"mhz\": %d},\n",
+               prop.name, prop.multiProcessorCount, prop.warpSize,
+               prop.clockRateMHz);
+  std::fprintf(f, "  \"shapes\": [\n");
+  for (int i = 0; i < nshapes; ++i) {
+    std::fprintf(f,
+                 "    {\"seq\": %d, \"dim\": %d, \"heads\": %d, \"ff\": %d,\n"
+                 "     \"stages\": [\n",
+                 shapes[i].seq, shapes[i].dim, shapes[i].heads, shapes[i].ff);
+    for (size_t j = 0; j < stages[i].size(); ++j) {
+      const StageCost& c = stages[i][j];
+      std::fprintf(f,
+                   "       {\"name\": \"%s\", \"span\": %llu, \"warps\": %d, "
+                   "\"valid\": %s}%s\n",
+                   c.name.c_str(), (unsigned long long)c.span, c.warps,
+                   c.valid ? "true" : "false",
+                   j + 1 == stages[i].size() ? "" : ",");
+    }
+    std::fprintf(f, "     ]}%s\n", i + 1 == nshapes ? "" : ",");
+  }
+  std::fprintf(f, "  ]\n}\n");
+  std::fclose(f);
+  std::printf("  wrote %s\n", path);
+}
+
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
+  const char* out_path = nullptr;
+  for (int i = 1; i < argc; ++i) {
+    if (std::strcmp(argv[i], "--out") == 0 && i + 1 < argc) {
+      out_path = argv[++i];
+    } else {
+      std::printf("usage: block_cycles [--out <results.json>]\n");
+      return 2;
+    }
+  }
+
   int count = 0;
   if (grxGetDeviceCount(&count) != grxSuccess || count <= 0) {
     std::printf("no devices; skipping\n");
@@ -345,15 +401,15 @@ int main() {
   // Two sequence lengths, everything else held fixed. The second is the control.
   const Shape shapes[2] = {{8, 16, 2, 64}, {16, 16, 2, 64}};
   double totals[2] = {0, 0}, attn_share[2] = {0, 0};
+  std::vector<StageCost> stages[2];
 
   for (int i = 0; i < 2; ++i) {
-    std::vector<StageCost> stages;
-    if (!profile(bh, dh, shapes[i], &stages)) {
+    if (!profile(bh, dh, shapes[i], &stages[i])) {
       std::printf("could not size the probe; skipping\n");
       grxdnnDestroy(dh); grxblasDestroy(bh);
       return 77;
     }
-    totals[i] = report(shapes[i], stages, &attn_share[i]);
+    totals[i] = report(shapes[i], stages[i], &attn_share[i]);
   }
 
   std::printf("\ndoes the measurement respond to its input?\n");
@@ -368,6 +424,17 @@ int main() {
               attn_share[0], shapes[0].seq, attn_share[1], shapes[1].seq);
   expect(attn_share[1] > attn_share[0],
          "and attention's SHARE grows, as a seqLen-squared stage must");
+
+  if (out_path) {
+    // The label records what was ASKED FOR, not what grxBLAS did -- the
+    // register-blocked kernel is an optional symbol lookup and can fall back
+    // silently. Nothing here can tell the difference, so nothing here claims
+    // to: ci/check_perf.py runs both configurations and requires their numbers
+    // to DIFFER, which is what actually proves the selection took effect.
+    const char* naive = std::getenv("GRXBLAS_SGEMM_NAIVE");
+    const char* label = (naive && naive[0] == '1') ? "naive" : "register-blocked";
+    write_json(out_path, prop, label, shapes, stages, 2);
+  }
 
   grxdnnDestroy(dh);
   grxblasDestroy(bh);
