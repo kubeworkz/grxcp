@@ -11,6 +11,81 @@ simulator, no FPGA; a few seconds.
 What it proves: the code compiles and links, the device record is internally
 consistent, the error surface behaves, and the honesty flags are still set.
 
+The **NPU BACKEND GATE** drives `src/backends/npu_c930/` through four register
+models — a bus with nothing on it, a bus that floats high, a live device, and a
+device that accepts a launch and never finishes. The backend has no Vortex
+dependency, so this needs no sysroot and no c930; register access goes through
+injectable hooks precisely so those four states can be produced on a machine
+that has none.
+
+Two of them found bugs. `npu_c930_detect` read `STATUS` and accepted anything
+that was not `0xFFFFFFFF` and not above `0x7` — its own comment said an absent
+NPU reads `0x0`, and `0x0` passes that test, so any host where `/dev/mem` opens
+grew an NPU it did not have. `npu_c930_gemm` waited for `!BUSY` with no `ERROR`
+and never read the latched `DONE` bit, so a device that ignored every write
+looked finished and the function reported success over a GEMM that never ran,
+leaving `C` holding whatever it held before. Both fixed and both watched
+failing: ablating the write-readback probe fails exactly the absent-bus case,
+ablating the `DONE` check fails exactly the wedged case.
+
+**A register model is not hardware.** A green run here says this backend's logic
+is right. It says nothing about the c930, and must never be reported as the NPU
+working — the same rule `tests/mock/` lives under.
+
+The **NPU GROUNDWORK** gate is phase 7 work that can be checked before there is
+an NPU. `grxcp_architecture.md` section 6 fixes the c930 NPU's profile as
+`GRX_CAP_GEMM` without `GRX_CAP_KERNEL_LAUNCH`, and fixes what a launch on it
+must do: return `grxErrorNotSupported`, and **not** silently run the work on the
+GPU. A fallback is the bad outcome precisely because it is not a wrong answer —
+it is the right answer on the wrong engine, invisible until someone measures.
+
+The runtime derives that capability from the device's own warp geometry rather
+than from a device-type test, so the mock reaches the condition with
+`GRXMOCK_NUM_WARPS=0` and no capability ID has to be invented for hardware that
+does not exist yet. The gate runs the binary twice — once with zero warps, once
+on the default device — because a refusal on its own would pass against a
+runtime that refused every launch everywhere. Watched failing: with the
+capability check removed, the zero-warp launch comes back as `launch exceeds a
+per-core resource bound`, which describes a grid that does not fit rather than a
+device that cannot run grids, and would send someone off to shrink their block
+size.
+
+It also runs the **CMAKE GATE**, which configures and builds the project through
+its own `CMakeLists.txt` and checks that every library and tool the file claims
+to produce exists. Everything else in tier 1 compiles GRXCP by hand, so nothing
+had ever run the build system this project ships to its users — and it did not
+work. The top level had `if(X) add_subdirectory(y) endif()` on one line, which
+CMake rejects as a parse error rather than accepting as a terse spelling of the
+same thing, and `src/CMakeLists.txt` and `cmake/grxrt.pc.in` did not exist at
+all. That went unnoticed from the first commit until the GRX930 team asked
+whether `cmake -DGRXCP_ENABLE_NPU=ON` builds.
+
+That flag is checked here too, and it is checked for **building**: the NPU
+backend exists in `src/backends/npu_c930/`, so both configurations are
+configured and built, because "the GPU path is unchanged when the flag is off"
+is a claim and not an assumption. The gate also asserts that the NPU test
+targets were produced — `GRXCP_ENABLE_NPU` used to switch the source glob and
+nothing else, so `npu_c930.cpp` went into `libgrxrt` while every
+`#ifdef GRXCP_ENABLE_NPU` block in `context.cpp` compiled to nothing — and that
+**no NPU is enumerated** on this machine, which has none. A build flag says what
+code exists, not what hardware is attached.
+
+It also runs the **CMAKE GATE**, which configures and builds the project through
+its own `CMakeLists.txt` and checks that every library and tool the file claims
+to produce exists. Everything else in tier 1 compiles GRXCP by hand, so nothing
+had ever run the build system this project ships to its users — and it did not
+work. The top level had `if(X) add_subdirectory(y) endif()` on one line, which
+CMake rejects as a parse error rather than accepting as a terse spelling of the
+same thing, and `src/CMakeLists.txt` and `cmake/grxrt.pc.in` did not exist at
+all. That went unnoticed from the first commit until the GRX930 team asked
+whether `cmake -DGRXCP_ENABLE_NPU=ON` builds.
+
+That flag is checked here too, and it is checked for **refusing**: this tree has
+no `src/backends/npu_c930/`, so a configure that succeeded with the flag on
+would be a GPU build wearing an NPU flag. It fails by name, with the reason. If
+the backend lands, this control becomes stale and should be replaced by a gate
+that runs something on the NPU — the gate says so when it fires.
+
 What it does **not** prove: anything about hardware. The mock returns synthetic
 capability values. A green tier-1 run says the runtime is not broken; it says
 nothing about whether the device works.
@@ -115,6 +190,34 @@ available to hide a wrong answer behind — unlike the sgemm gate, which needs
 one because the device accumulates in a different order. It has been watched
 failing: reverting sgemv's transposed load to the classic wrong index makes all
 five transposed cases fail and leaves the untransposed ones passing.
+
+`tests/libs/test_grxdnn.cpp` is the grxDNN gate: softmax and layer norm against
+a host reference on five shapes — rows shorter than a warp, rows longer than
+one, a padded leading dimension, in place, and the argument checks that must
+refuse. Two cases carry numerical controls, and the controls are themselves
+checked to discriminate: a row that overflows the naive `exp` before the max is
+subtracted, and a row whose mean is large next to its spread, which the one-pass
+`E[x²] − E[x]²` variance gets wrong. Watched failing for real — the first
+`dev_rsqrt` was the `0x5f3759df` estimate with one Newton step and a comment
+claiming 2e-6 relative error. It is 1.7e-3. Every layer-norm case failed and
+every softmax case passed, which is the signature of the only thing the two do
+not share.
+
+The **CROSS-LIBRARY GATE** (`tests/libs/test_libs_together.cpp`) is the one that
+matters for the phase 6 exit gate, because that gate is a transformer layer and
+a transformer layer is two libraries in one process. grxBLAS and grxDNN are
+called interleaved — blas, dnn, blas, dnn — with the numbers checked on both
+sides of the other library's call, and then grxBLAS's handle is destroyed while
+grxDNN keeps using the module.
+
+It runs **twice**. Once against the shared image, where it must pass; once
+against a directory holding two separate per-library images and no combined one,
+where it must fail *and* the log must contain `address range overlaps`. A
+control that fails for some other reason is reported as a failure of the gate,
+not as a pass. Both halves of the fix were watched failing: without
+`kernels_all.cpp` the two images collide, and without the reference count in
+`grxModuleUnload` exactly one case fails — the one where grxBLAS is destroyed
+first, which is what a fix that unloads to make room would ship with.
 
 `tests/kernels/cg/` is the cooperative-groups gate: `thread_block`,
 `thread_block_tile` at two widths, `coalesced_group` taken inside a divergent

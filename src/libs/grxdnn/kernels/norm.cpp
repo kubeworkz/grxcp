@@ -1,0 +1,203 @@
+// grxDNN row-wise reductions: softmax and layer normalisation.
+//
+// ONE WARP PER ROW, and that is the whole design.
+//
+// Both ops reduce along a row and then rescale it, so the reduction's width is
+// the natural unit of work. Giving a row to a whole BLOCK would need a
+// block-wide reduction -- shared memory, two stages, and a __syncthreads()
+// between them -- and grx_cg.h deliberately has no block reduce, because the
+// barrier is the part of this machine that is easiest to get wrong (see
+// cuda_mapping.md 7.20). A warp reduce is one butterfly of xor shuffles, needs
+// no shared memory and no barrier at all, and every lane ends up holding the
+// result, so there is nothing to broadcast afterwards.
+//
+// The cost is that a row is walked by warp_size lanes rather than blockDim.
+// For a transformer that is the right trade anyway: rows are tokens x heads
+// and there are thousands of them, so the machine fills across rows.
+//
+// BOTH OPS ARE MULTI-PASS OVER THE ROW, deliberately.
+//
+//   softmax    max, then sum of exp, then write        3 passes
+//   layernorm  mean, then variance, then write         3 passes
+//
+// A single-pass softmax (the "online" form) and a single-pass variance (sum
+// and sum-of-squares together) both exist and both trade accuracy for
+// bandwidth. v0 takes the accurate form: the numbers are checked against a CPU
+// reference, and a library whose first version is fast and slightly wrong is
+// harder to fix than one that is correct and slow.
+
+#include <grx/device/grx_cg.h>
+#include <grx/device/grx_cycles.h>
+
+#include "../dnn_abi.h"
+
+namespace {
+
+namespace cg = grx::cg;
+
+// The largest finite float, negated: the identity for a max reduction. Lanes
+// with no element must contribute something that cannot win, and 0 would win
+// over a row of negatives.
+constexpr float kNegInf = -3.402823466e+38f;
+
+// exp() for the device. The device build is -nostdlib, so the libm one is not
+// available; this is the standard range-reduction, and it is here rather than
+// in a header because softmax is the only thing that needs it so far.
+//
+//   e^x = 2^k * e^r,  k = round(x / ln2),  r = x - k*ln2,  |r| <= ln2/2
+//
+// e^r over that range is a degree-5 Taylor series, whose worst-case relative
+// error is about 1e-7 -- below fp32's own resolution, so the polynomial is not
+// what limits the result.
+__forceinline__ float dev_exp(float x) {
+  // Clamp before scaling: without this, a large negative x produces a huge
+  // negative k and 2^k underflows to a denormal or a NaN rather than to zero.
+  if (x < -88.0f) return 0.0f;
+  if (x >  88.0f) x = 88.0f;
+
+  const float kInvLn2 = 1.44269504088896340736f;
+  const float kLn2Hi  = 0.693359375f;
+  const float kLn2Lo  = -2.12194440e-4f;
+
+  const int   k = (int)(x * kInvLn2 + (x >= 0.0f ? 0.5f : -0.5f));
+  const float r = (x - (float)k * kLn2Hi) - (float)k * kLn2Lo;
+
+  const float r2 = r * r;
+  const float p  = 1.0f + r +
+                   r2 * (0.5f + r * (0.16666666666f +
+                         r * (0.04166666666f + r * 0.00833333333f)));
+
+  // 2^k by building the exponent field directly. k is within +-127 here
+  // because x was clamped to +-88 and 88/ln2 < 127.
+  union { float f; uint32_t u; } scale;
+  scale.u = (uint32_t)((k + 127) & 0xFF) << 23;
+  return p * scale.f;
+}
+
+__forceinline__ float dev_rsqrt(float x) {
+  // The HARDWARE square root. The device is -march=rv64imafd, so fsqrt.s is a
+  // real instruction and __builtin_sqrtf lowers to it, correctly rounded.
+  //
+  // The first version of this was the famous 0x5f3759df estimate with one
+  // Newton step, and the comment above it claimed "about 2e-6 relative". That
+  // was wrong -- one Newton step off that estimate is about 1.7e-3 -- and the
+  // gate caught it: every layer-norm case failed by 1e-4 to 2e-3 while every
+  // softmax case passed, which is the signature of the only thing the two do
+  // not share. A reciprocal square root is not worth approximating on a
+  // machine that has one.
+  return 1.0f / __builtin_sqrtf(x);
+}
+
+// Which row this warp owns, and how many warps the grid has in total.
+struct RowMap {
+  uint32_t row;      // the row this warp starts on
+  uint32_t stride;   // how far to jump for the next row
+  uint32_t lane;
+  uint32_t width;
+};
+
+__forceinline__ RowMap row_map() {
+  const uint32_t w = grx::warp_size();
+  RowMap m;
+  m.lane   = grx::lane_id();
+  m.width  = w;
+  const uint32_t warps_per_block = (blockDim.x + w - 1u) / w;
+  m.row    = blockIdx.x * warps_per_block + (threadIdx.x / w);
+  m.stride = gridDim.x * warps_per_block;
+  return m;
+}
+
+}  // namespace
+
+// y[i][j] = exp(x[i][j] - max_i) / sum_i exp(x[i][j] - max_i)
+__global__ void dnn_softmax(grxdnn_softmax_args* __UNIFORM__ arg) {
+  if (arg->abi_version != GRXDNN_ABI_VERSION) return;
+  grx::cycle_probe probe(reinterpret_cast<grxCycleSlot*>(arg->cycles));
+
+  const float* x = reinterpret_cast<const float*>(arg->x);
+  float*       y = reinterpret_cast<float*>(arg->y);
+  const uint32_t rows = arg->rows, cols = arg->cols;
+  const int32_t  ldx = arg->ldx, ldy = arg->ldy;
+
+  const RowMap m = row_map();
+  auto tile = cg::tiled_partition<VX_CFG_NUM_THREADS>(cg::this_thread_block());
+
+  for (uint32_t r = m.row; r < rows; r += m.stride) {
+    const float* xr = x + (size_t)r * (size_t)ldx;
+    float*       yr = y + (size_t)r * (size_t)ldy;
+
+    // Pass 1: the row maximum. Lanes past the end contribute -FLT_MAX, which
+    // cannot win; contributing 0 would, on a row of negatives.
+    float part = kNegInf;
+    for (uint32_t j = m.lane; j < cols; j += m.width)
+      if (xr[j] > part) part = xr[j];
+    const float row_max = tile.reduce(part, cg::greater<float>());
+
+    // Pass 2: the sum of the shifted exponentials.
+    float sum = 0.0f;
+    for (uint32_t j = m.lane; j < cols; j += m.width)
+      sum += dev_exp(xr[j] - row_max);
+    const float row_sum = tile.reduce(sum, cg::plus<float>());
+
+    // A row of zero width would divide by zero. The host refuses cols == 0, so
+    // this is belt and braces -- but a NaN written here would propagate through
+    // every downstream layer and be blamed on something else.
+    const float inv = (row_sum > 0.0f) ? (1.0f / row_sum) : 0.0f;
+
+    // Pass 3: write. Recomputing the exponential is cheaper than staging the
+    // row anywhere a third pass could read it back from.
+    for (uint32_t j = m.lane; j < cols; j += m.width)
+      yr[j] = dev_exp(xr[j] - row_max) * inv;
+  }
+}
+
+// y[i][j] = gamma[j] * (x[i][j] - mean_i) * rsqrt(var_i + eps) + beta[j]
+__global__ void dnn_layernorm(grxdnn_layernorm_args* __UNIFORM__ arg) {
+  if (arg->abi_version != GRXDNN_ABI_VERSION) return;
+  grx::cycle_probe probe(reinterpret_cast<grxCycleSlot*>(arg->cycles));
+
+  const float* x     = reinterpret_cast<const float*>(arg->x);
+  float*       y     = reinterpret_cast<float*>(arg->y);
+  const float* gamma = reinterpret_cast<const float*>(arg->gamma);
+  const float* beta  = reinterpret_cast<const float*>(arg->beta);
+  const uint32_t rows = arg->rows, cols = arg->cols;
+  const int32_t  ldx = arg->ldx, ldy = arg->ldy;
+  const float eps = arg->eps;
+
+  const RowMap m = row_map();
+  auto tile = cg::tiled_partition<VX_CFG_NUM_THREADS>(cg::this_thread_block());
+  const float inv_n = 1.0f / (float)cols;
+
+  for (uint32_t r = m.row; r < rows; r += m.stride) {
+    const float* xr = x + (size_t)r * (size_t)ldx;
+    float*       yr = y + (size_t)r * (size_t)ldy;
+
+    // Pass 1: the mean.
+    float s = 0.0f;
+    for (uint32_t j = m.lane; j < cols; j += m.width) s += xr[j];
+    const float mean = tile.reduce(s, cg::plus<float>()) * inv_n;
+
+    // Pass 2: the variance, from deviations rather than from E[x^2] - E[x]^2.
+    // The one-pass identity cancels two large numbers when the mean is large
+    // relative to the spread, and can even come out negative; this form
+    // cannot. It costs one extra read of the row.
+    float v = 0.0f;
+    for (uint32_t j = m.lane; j < cols; j += m.width) {
+      const float d = xr[j] - mean;
+      v += d * d;
+    }
+    // BIASED: divided by cols, not cols-1. PyTorch's LayerNorm, cuDNN and
+    // every transformer implementation do the same, and the unbiased form
+    // would make a ported model's outputs quietly differ.
+    const float var = tile.reduce(v, cg::plus<float>()) * inv_n;
+    const float scale = dev_rsqrt(var + eps);
+
+    // Pass 3: write.
+    for (uint32_t j = m.lane; j < cols; j += m.width) {
+      float t = (xr[j] - mean) * scale;
+      if (gamma) t *= gamma[j];
+      if (beta)  t += beta[j];
+      yr[j] = t;
+    }
+  }
+}

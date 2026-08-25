@@ -486,6 +486,92 @@ else
 fi
 
 echo
+echo "==> grxDNN GATE: softmax and layer norm vs a CPU reference"
+# Row-wise reductions, one warp per row, checked against a host reference on
+# five shapes -- including rows shorter than a warp, rows longer than one, and a
+# padded leading dimension. Two of the cases carry their own controls: a row
+# that overflows the naive softmax, and a row whose mean is large next to its
+# spread, which the one-pass variance identity gets wrong. Both controls are
+# themselves checked to fail on the naive form, because a control that passes
+# either way is decoration.
+#
+# The kernels come from the COMBINED image, which is also what the cross-library
+# gate below needs, so it is built once here.
+if [[ -n "$GRXGPU" && -d "$TOOLDIR/llvm-vortex" ]]; then
+  $CXX $CXXFLAGS -c "$ROOT/src/libs/grxdnn/grxdnn.cpp" -o "$BUILD/grxdnn.o"
+  "$ROOT/ci/build_kernel.sh" --grxgpu "$GRXGPU" --tooldir "$TOOLDIR" \
+    "$ROOT/src/libs/kernels_all.cpp" -o "$BUILD/grxlibs_kernels.vxbin" >/dev/null
+
+  $CXX $CXXFLAGS -I"$ROOT/tests/unit" -c "$ROOT/tests/libs/test_grxdnn.cpp" \
+    -o "$BUILD/test_grxdnn.o"
+  $CXX "${OBJS[@]}" "$BUILD/grxdnn.o" "$BUILD/test_grxdnn.o" $LIBS \
+    -o "$BUILD/test_grxdnn"
+  if ! "$BUILD/test_grxdnn"; then
+    rc=$?
+    [[ $rc -eq 77 ]] || exit $rc
+  fi
+else
+  echo "SKIPPED: needs --grxgpu <path> and a device toolchain in $TOOLDIR."
+fi
+
+echo
+echo "==> CROSS-LIBRARY GATE: grxBLAS and grxDNN in one process"
+# The claim: a program can call two GRXCP libraries and both find their kernels.
+# It is not free. Every .vxbin links at STARTUP_ADDR, so the device holds one
+# module at a time (cuda_mapping.md 7.13), and the two libraries do not know
+# about each other -- each just calls grxModuleLoad.
+#
+# Run TWICE, because passing once only shows that something works:
+#
+#   POSITIVE  the combined image, where both libraries must succeed, the numbers
+#             must be right on both sides of the other library's call, and both
+#             must report the SAME file.
+#   NEGATIVE  a directory holding two SEPARATE per-library images and no
+#             combined one, where the run MUST fail. That is the configuration
+#             the shared image exists to prevent, and if it passes then this
+#             gate is measuring nothing.
+if [[ -n "$GRXGPU" && -d "$TOOLDIR/llvm-vortex" ]]; then
+  $CXX $CXXFLAGS -I"$ROOT/tests/unit" \
+    -c "$ROOT/tests/libs/test_libs_together.cpp" -o "$BUILD/test_libs_together.o"
+  $CXX "${OBJS[@]}" "$BUILD/grxblas.o" "$BUILD/grxdnn.o" \
+    "$BUILD/test_libs_together.o" $LIBS -o "$BUILD/test_libs_together"
+
+  echo "--- positive: one shared image"
+  if ! "$BUILD/test_libs_together"; then
+    rc=$?
+    [[ $rc -eq 77 ]] || exit $rc
+  fi
+
+  echo "--- negative control: two separate images, which must NOT work"
+  split="$BUILD/split_images"
+  rm -rf "$split"; mkdir -p "$split"
+  "$ROOT/ci/build_kernel.sh" --grxgpu "$GRXGPU" --tooldir "$TOOLDIR" \
+    "$ROOT/src/libs/grxdnn/kernels/norm.cpp" \
+    -o "$split/grxdnn_kernels.vxbin" >/dev/null
+  cp "$BUILD/grxblas_kernels.vxbin" "$split/"
+  # No grxlibs_kernels.vxbin here on purpose; that absence IS the control.
+  if GRXBLAS_KERNEL_PATH="$split" GRXDNN_KERNEL_PATH="$split" \
+     "$BUILD/test_libs_together" > "$split/control.log" 2>&1; then
+    echo "FAIL  two separate images loaded fine, so the positive result above"
+    echo "      is not evidence for the shared image. Either the one-module"
+    echo "      constraint (cuda_mapping.md 7.13) has been lifted -- in which"
+    echo "      case say so there and delete this control -- or the gate is"
+    echo "      not loading what it thinks it is."
+    tail -12 "$split/control.log" | sed 's/^/        /'
+    exit 1
+  elif grep -q "address range overlaps" "$split/control.log"; then
+    echo "  ok    refused with an address overlap, which is the stated cause"
+  else
+    echo "FAIL  the control failed, but not for the reason this gate claims."
+    echo "      Expected an address overlap from the second grxModuleLoad."
+    tail -12 "$split/control.log" | sed 's/^/        /'
+    exit 1
+  fi
+else
+  echo "SKIPPED: needs --grxgpu <path> and a device toolchain in $TOOLDIR."
+fi
+
+echo
 echo "==> PHASE 3 EXIT GATE: scalar against tensor, in device cycles"
 if [[ -n "$GRXGPU" && -d "$TOOLDIR/llvm-vortex" ]]; then
   $CXX $CXXFLAGS -c "$ROOT/tests/bench/gemm_cycles.cpp" -o "$BUILD/gemm_cycles.o"

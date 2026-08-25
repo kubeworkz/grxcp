@@ -463,8 +463,43 @@ That is why `src/libs/grxblas/kernels/all.cpp` exists: a library offering both
 by trying, when the second `grxModuleLoad` returned "address range overlaps
 with existing allocation".
 
-The real fix is relocatable device images. A cheaper one is a per-module link
-address, which the toolchain already accepts as a `--defsym`.
+**Across libraries it is worse, and the obvious fix does not finish the job.**
+grxDNN made this bite between libraries rather than inside one: a transformer
+layer calls grxBLAS for the GEMM and grxDNN for the norms, in one process, so
+the second library to initialise fails to load its kernels. `src/libs/
+kernels_all.cpp` answers that with one image carrying both libraries' entry
+points — and with that image built and both libraries pointed at it, grxDNN
+*still* failed:
+
+```
+Error: address range overlaps with existing allocation -
+  requested=[0x180000000-0x180002000], existing=[0x180000000, 0x180002000]
+```
+
+The same file collides with itself. Each library calls `grxModuleLoad`
+independently — neither knows the other exists — and the second call asks for a
+range the first is already holding. Sharing the image removes the *different*
+images; it does nothing about the second load of the *same* one.
+
+So the runtime counts references: `load_module_tracked` compares the incoming
+bytes against every module already resident on the device and, on a match, hands
+back the resident one with its count raised; `grxModuleUnload` releases the
+driver handle only when the count reaches zero. Identity is the full post-patch
+image rather than the path, so a rebuild between two loads is correctly a
+different module, and a sanitized load never shares with an unsanitized one.
+
+Both halves are load-bearing and both have been watched failing.
+`tests/libs/test_libs_together.cpp` is the gate; `ci/run_real.sh` runs it twice,
+once against the shared image and once against a directory holding two separate
+per-library images, where it must fail. Ablating the reference count in
+`grxModuleUnload` fails exactly one case — the one where grxBLAS is destroyed
+while grxDNN is still using the module — which is the failure a fix that unloads
+to make room would ship with.
+
+The real fix is still relocatable device images. A cheaper one is a per-module
+link address, which the toolchain already accepts as a `--defsym`. The reference
+counting stays useful either way: it is what `cuModuleLoad` does with a file
+already loaded in the context.
 
 ### 7.14 DXA pads outer dimensions only — **HW / DOC, sharp edge**
 

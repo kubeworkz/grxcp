@@ -79,6 +79,26 @@ grxError_t pack_arguments(const KernelBinding& k, void** args,
 
 grxError_t validate(const grxDeviceProp_t& prop, const KernelBinding& k,
                     const dim3_t& grid, const dim3_t& block, size_t shared) {
+  // CAN THIS DEVICE RUN A KERNEL AT ALL? Checked first, because every check
+  // below it is about whether a launch FITS, and on a device with no
+  // programmable pipeline the question does not arise.
+  //
+  // Today every device sets this bit, so this branch is unreachable in
+  // production and reachable only through the mock. That is on purpose. The
+  // GRX930 NPU is a systolic array with no SIMT pipeline: it advertises
+  // GRX_CAP_GEMM and not GRX_CAP_KERNEL_LAUNCH, and the architecture spec
+  // (section 6) fixes what must happen when someone calls grxLaunchKernel after
+  // grxSetDevice(npu) -- grxErrorNotSupported, and specifically NOT a silent
+  // fall back to the GPU, which would turn a device-selection mistake into a
+  // performance mystery.
+  //
+  // Written before the NPU exists rather than after, because the alternative is
+  // discovering on the first heterogeneous machine that the launch path never
+  // asked. tests/unit/test_launch.cpp drives it through the mock's capability
+  // override.
+  if (!(prop.capabilities & GRX_CAP_KERNEL_LAUNCH))
+    return grxErrorNotSupported;
+
   const uint32_t threads = volume(block);
   if (threads == 0) return grxErrorInvalidValue;
 

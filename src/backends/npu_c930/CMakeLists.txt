@@ -20,3 +20,13 @@ target_include_directories(test_npu_c930 PRIVATE
 )
 
 add_test(NAME npu_c930_unit COMMAND test_npu_c930)
+
+# The decisions, driven through a register model: detection against a bus with
+# nothing on it, and completion against a device that accepts a launch and never
+# finishes. test_npu_c930.cc cannot reach either and says so.
+add_executable(test_npu_c930_model
+    test_npu_c930_model.cc
+    npu_c930.cpp
+)
+target_include_directories(test_npu_c930_model PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+add_test(NAME npu_c930_model COMMAND test_npu_c930_model)

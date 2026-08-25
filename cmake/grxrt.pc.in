@@ -1,10 +1,14 @@
 prefix=@CMAKE_INSTALL_PREFIX@
+exec_prefix=${prefix}
 libdir=${prefix}/lib
 includedir=${prefix}/include
 
 Name: grxrt
-Description: GRX Compute Platform runtime (CUDA-class runtime API for GRX-G100)
+Description: GRX Compute Platform runtime for GRX-G100
 Version: @PROJECT_VERSION@
+# The GRX-G100 driver, found the same way GRXCP itself finds it. A program
+# linking libgrxrt needs libvortex resolvable at run time, so it belongs in
+# Requires rather than being folded into Libs.
 Requires: vortex-runtime
 Libs: -L${libdir} -lgrxrt
 Cflags: -I${includedir}

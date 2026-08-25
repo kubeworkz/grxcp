@@ -14,9 +14,32 @@
   allocator's own map
 - [grx-prof](designs/grx_prof.md) — the kernel timeline and the performance
   counters, and why the host clock and device cycles are never mixed
+- [Heterogeneous devices](designs/heterogeneous_devices.md) — **design, not
+  built**: where the backend seam goes for the GRX930 NPU, why abstracting the
+  driver is the wrong answer, and which of it can be gated before a c930 exists
 - [grxcc](designs/grxcc.md) — the single-source driver: why it orchestrates
   rather than parses, where the two passes are cut, and exactly what a
   text-level rewriter cannot see
+
+## Libraries
+
+Each library's contract is stated at the top of its public header, which is the
+document — the conventions that would be footnotes elsewhere are load-bearing
+here, so they live where a caller cannot miss them.
+
+- `include/grx/grxblas.h` — BLAS. **Column-major**, as cuBLAS is. Level 1, 2 and
+  3, plus `grxblasGemmEx` on the tensor unit.
+- `include/grx/grxdnn.h` — NN primitives. **Row-major**, as cuDNN is, and the
+  header says so in capitals: two libraries in one platform with opposite
+  conventions is a trap, and silently transposing one to match the other would
+  give a ported model plausible numbers and wrong answers. v0 is softmax and
+  layer norm, fp32, forward only.
+
+Both ship precompiled device kernels and both load them from **one** image,
+`grxlibs_kernels.vxbin`, built from `src/libs/kernels_all.cpp`. That is not
+packaging convenience: every `.vxbin` links at the same address, so the device
+holds one module at a time. See `designs/cuda_mapping.md` 7.13 for what that
+costs and what it took to make two libraries coexist in one process.
 
 ## Reports
 

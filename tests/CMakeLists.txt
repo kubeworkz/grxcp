@@ -6,8 +6,29 @@ enable_testing()
 file(GLOB UNIT_SRC CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/unit/*.cpp")
 foreach(src ${UNIT_SRC})
   get_filename_component(name ${src} NAME_WE)
+
+  # Some unit tests call the mock driver's inspection helpers (grxmock_*) to
+  # assert on what the runtime SUBMITTED, not just on what it returned -- a
+  # launch's grid dimensions, the argument blob's size. Those symbols exist only
+  # in tests/mock, so with a real driver these do not link. Skipped by reading
+  # the source rather than by a hand-kept list, because a hand-kept list is one
+  # more thing to forget when a test starts using the mock.
+  file(READ ${src} _src_text)
+  if(_src_text MATCHES "grxmock_" AND NOT GRXCP_USE_MOCK_DRIVER)
+    message(STATUS "grxcp: skipping ${name} -- needs -DGRXCP_USE_MOCK_DRIVER=ON")
+    continue()
+  endif()
+
   add_executable(${name} ${src})
   target_link_libraries(${name} PRIVATE grxrt)
+  # A few unit tests include the driver's own VX_types.h to check GRXCP's view
+  # of a descriptor field for field against the definition it has to match. That
+  # header lives in the sysroot's KERNEL include directory, not the runtime one,
+  # and it is deliberately not on grxrt's public interface: a program using
+  # GRXCP should never need it.
+  if(VORTEX_KERNEL_FOUND)
+    target_include_directories(${name} PRIVATE ${VORTEX_KERNEL_INCLUDE_DIRS})
+  endif()
   add_test(NAME ${name} COMMAND ${name})
   # Exit 77 is the skip convention: no device present is not a failure.
   set_tests_properties(${name} PROPERTIES SKIP_RETURN_CODE 77)
@@ -18,14 +39,29 @@ endforeach()
 # kernel, which this build does not produce (see src/libs/CMakeLists.txt); the
 # gate skips with 77 when the kernel is missing rather than reporting a
 # numerical failure against a file nobody compiled.
+#
+# Which libraries a gate links is read from what it INCLUDES, not from its file
+# name. The name is a bad key: test_grxblas_ex.cpp and test_grxblas_l12.cpp both
+# test grxblas, and stripping "test_" gives two library names that do not exist,
+# so both gates silently vanished from the cmake build. A gate that exercises two
+# libraries at once -- test_libs_together.cpp does, deliberately -- has no single
+# name to strip down to at all.
 file(GLOB LIB_TEST_SRC CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/libs/*.cpp")
 foreach(src ${LIB_TEST_SRC})
   get_filename_component(name ${src} NAME_WE)
-  string(REGEX REPLACE "^test_" "" lib ${name})
-  if(TARGET ${lib})
+  file(READ ${src} _src_text)
+
+  set(_libs "")
+  foreach(lib grxblas grxdnn grxfft grxrand grxsparse)
+    if(TARGET ${lib} AND _src_text MATCHES "include[ \t]*<grx/${lib}\\.h>")
+      list(APPEND _libs ${lib})
+    endif()
+  endforeach()
+
+  if(_libs)
     add_executable(${name} ${src})
     target_include_directories(${name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/unit)
-    target_link_libraries(${name} PRIVATE ${lib} grxrt)
+    target_link_libraries(${name} PRIVATE ${_libs} grxrt)
     add_test(NAME ${name} COMMAND ${name})
     set_tests_properties(${name} PROPERTIES SKIP_RETURN_CODE 77)
   endif()

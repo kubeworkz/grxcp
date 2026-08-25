@@ -113,8 +113,30 @@ void populate_properties(Device& d) {
 
   // --- capability profile ---------------------------------------------------
   const uint64_t isa = query_or(h, VX_CAPS_ISA_FLAGS, 0);
-  unsigned caps = GRX_CAP_KERNEL_LAUNCH | GRX_CAP_STREAMS | GRX_CAP_EVENTS |
-                  GRX_CAP_MEMCPY | GRX_CAP_COOPERATIVE_LAUNCH;
+  unsigned caps = GRX_CAP_STREAMS | GRX_CAP_EVENTS | GRX_CAP_MEMCPY;
+
+  // KERNEL LAUNCH IS DERIVED, NOT ASSUMED.
+  //
+  // It used to be an unconditional bit, which was true of every device this
+  // function could see -- it only ever populates a GPU. It stops being true one
+  // device along: populate_npu_properties builds a profile with GRX_CAP_GEMM and
+  // no GRX_CAP_KERNEL_LAUNCH, because the c930 is a systolic array with no SIMT
+  // pipeline, and validate() in launch.cpp now refuses on that bit rather than
+  // falling back to the GPU.
+  //
+  // A device with no warps or no lanes has no programmable pipeline, and that is
+  // the condition rather than a device-type test: it is a fact the driver
+  // already reports, it needs no new capability ID, and it stays true of
+  // anything else in that shape. Without it the launch path computed
+  // maxThreadsPerBlock = 0 and refused with "launch out of resources", which
+  // describes a grid that does not fit rather than a device that cannot run
+  // grids at all.
+  //
+  // Cooperative launch is a strictly narrower claim and moves with it: a
+  // grid-wide barrier needs the very pipeline this bit reports.
+  if (p.warpSize > 0 && p.maxWarpsPerMultiProcessor > 0)
+    caps |= GRX_CAP_KERNEL_LAUNCH | GRX_CAP_COOPERATIVE_LAUNCH;
+
   if (isa & VX_ISA_EXT_TCU) caps |= GRX_CAP_TENSOR_CORE | GRX_CAP_GEMM;
   if (isa & VX_ISA_EXT_DXA) caps |= GRX_CAP_ASYNC_COPY;
   if (isa & VX_ISA_EXT_RTU) caps |= GRX_CAP_RAY_TRACING;

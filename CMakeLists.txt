@@ -59,10 +59,31 @@ else()
   target_link_libraries(grxrt PUBLIC PkgConfig::VORTEX_RUNTIME)
 endif()
 
+# enable_testing() belongs at the TOP level, not in tests/. CTest only walks the
+# directory tree below where it was enabled, so with it declared in tests/ alone
+# every add_test() from src/backends/npu_c930/ was registered into nothing --
+# `ctest -R npu_c930` answered "No tests were found!!!" over two test targets
+# that had just been built.
+if(GRXCP_BUILD_TESTS)
+  enable_testing()
+endif()
+
 add_subdirectory(src)
-if(GRXCP_BUILD_LIBS)  add_subdirectory(src/libs) endif()
-if(GRXCP_BUILD_TOOLS) add_subdirectory(tools)    endif()
-if(GRXCP_BUILD_TESTS) add_subdirectory(tests)    endif()
+# One command per line. CMake has no statement separator, so `if(X) cmd() endif()`
+# on one line is a parse error and not a terse spelling of the same thing -- the
+# whole file fails to configure. That is what these four lines were, from the
+# first commit until the NPU note arrived asking whether
+# `cmake -DGRXCP_ENABLE_NPU=ON` works; it never had, because no gate ran cmake at
+# all. ci/build_mock.sh now configures this file. See ci/README.md, CMAKE GATE.
+if(GRXCP_BUILD_LIBS)
+  add_subdirectory(src/libs)
+endif()
+if(GRXCP_BUILD_TOOLS)
+  add_subdirectory(tools)
+endif()
+if(GRXCP_BUILD_TESTS)
+  add_subdirectory(tests)
+endif()
 
 install(DIRECTORY include/ DESTINATION include)
 install(TARGETS grxrt EXPORT grxcpTargets LIBRARY DESTINATION lib)

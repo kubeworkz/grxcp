@@ -45,6 +45,7 @@ extern "C" {
 #define NPU_C930_REG_A_BASE  (NPU_C930_MMIO_BASE + 0x14)
 #define NPU_C930_REG_B_BASE  (NPU_C930_MMIO_BASE + 0x18)
 #define NPU_C930_REG_C_BASE  (NPU_C930_MMIO_BASE + 0x1C)
+#define NPU_C930_REG_PREC    (NPU_C930_MMIO_BASE + 0x20)
 
 // ---- CTRL bits ----
 #define NPU_C930_CTRL_START  0x1u
@@ -53,6 +54,12 @@ extern "C" {
 #define NPU_C930_STATUS_BUSY  0x1u
 #define NPU_C930_STATUS_DONE  0x2u
 #define NPU_C930_STATUS_ERROR 0x4u
+
+// ---- Precision modes ----
+#define NPU_C930_PREC_INT8   0u
+#define NPU_C930_PREC_INT16  1u
+#define NPU_C930_PREC_FP16   2u
+#define NPU_C930_PREC_BF16   3u
 
 // ---- NPU hardware limits (from c930_soc_top.sv defaults) ----
 #define NPU_C930_MAX_M  8
@@ -75,6 +82,26 @@ typedef enum {
     NPU_C930_FP32  = 3
 } npu_c930_dtype_t;
 
+// ---- Register access, and why it is indirect ----
+//
+// The register block is normally an mmap of physical memory. It does not have
+// to be: this header already contemplates simulation ("DPI or backdoor
+// access"), and there is a more immediate reason. Every interesting behaviour
+// of this backend is a response to what the registers do -- a device that is
+// absent, a device that is present, a device that accepts a START and never
+// finishes -- and none of those can be produced on a machine with no c930.
+//
+// So reads and writes go through function pointers. Leave them null and the
+// mmap'd base is used, which is the hardware path and the default. Point them
+// at a register model and the detection, launch and completion logic can be
+// driven through states real hardware would take days to reproduce on purpose.
+//
+// A model is NOT hardware and no result obtained through one may be reported as
+// the NPU working -- the same rule tests/mock lives under. What it checks is
+// this file's logic, which is the half that was wrong.
+typedef uint32_t (*npu_c930_read_fn)(void* ctx, uint32_t offset);
+typedef void     (*npu_c930_write_fn)(void* ctx, uint32_t offset, uint32_t v);
+
 // ---- NPU device handle ----
 typedef struct npu_c930_device {
     int      fd;            // /dev/mem file descriptor (Linux) or 0 (bare-metal)
@@ -82,7 +109,19 @@ typedef struct npu_c930_device {
     int      present;      // 1 if NPU detected
     int      busy;         // last known BUSY state
     int      error;        // last known ERROR state
+
+    // Injected register model. Null on the hardware path.
+    npu_c930_read_fn  read32;
+    npu_c930_write_fn write32;
+    void*             io_ctx;
 } npu_c930_device_t;
+
+// Point a device at a register model instead of at MMIO. Call BEFORE
+// npu_c930_detect; detect then skips the mmap and probes the model.
+void npu_c930_attach_model(npu_c930_device_t* dev,
+                           npu_c930_read_fn read32,
+                           npu_c930_write_fn write32,
+                           void* ctx);
 
 // ---- Detection ----
 
@@ -116,6 +155,15 @@ uint32_t npu_c930_read_status(npu_c930_device_t* dev);
 // Wait for the NPU to become idle (polls STATUS.BUSY).
 // Returns 0 on success, -1 on timeout.
 int npu_c930_wait_idle(npu_c930_device_t* dev, int timeout_us);
+
+// Set the precision mode (must be called before npu_c930_gemm).
+// mode: NPU_C930_PREC_INT8, NPU_C930_PREC_INT16, etc.
+// Returns 0 on success, -1 on error.
+int npu_c930_set_precision(npu_c930_device_t* dev, uint32_t mode);
+
+// Read the current precision mode.
+// Returns the mode value (0-3), or -1 on error.
+int npu_c930_get_precision(npu_c930_device_t* dev);
 
 #ifdef __cplusplus
 }  // extern "C"

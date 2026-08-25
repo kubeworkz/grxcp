@@ -44,6 +44,32 @@ struct ModuleState {
   std::string path;
   std::string elf;
   bool        sanitized = false;
+
+  // HOW MANY CALLERS HOLD THIS, and the bytes that decide whether a new load is
+  // this same module arriving again.
+  //
+  // Every .vxbin links at STARTUP_ADDR, so the device can hold one image at a
+  // time (cuda_mapping.md 7.13). The obvious consequence is that two DIFFERENT
+  // images collide. The consequence that actually bit is that the SAME image
+  // collides with itself: grxBLAS and grxDNN ship their kernels in one shared
+  // file precisely so both can be resident, and then each calls grxModuleLoad
+  // on it, and the second call asks the driver to reserve a range the first
+  // call already owns. The driver refuses, correctly, and the second library
+  // reports that it cannot find its kernels -- in a file it is looking straight
+  // at.
+  //
+  // So an identical image loaded again is the FIRST one, handed back with the
+  // reference count raised. That is what CUDA does with cuModuleLoad of a file
+  // already loaded in the context, and it is the only shape that works for two
+  // libraries that do not know about each other.
+  //
+  // Identity is the full post-patch bytes, not the path. Path is not enough: a
+  // rebuild between two loads is a different module from the same name, and
+  // sharing it would run yesterday's kernels. Comparing AFTER the sanitizer's
+  // patch is deliberate too -- a sanitized and an unsanitized load of one file
+  // are different images and must not share.
+  int                  refs = 1;
+  std::vector<uint8_t> bytes;
 };
 
 struct FunctionState {
@@ -293,6 +319,25 @@ grxError_t load_module_tracked(grxModule_t* module, const void* image,
     if (sanitized) image = patched.data();
   }
 
+  // Already resident on this device, byte for byte? Hand back the one that is
+  // there. Done before touching the driver, because the driver's answer to the
+  // second load is a range-overlap error and not a module.
+  {
+    std::lock_guard<std::mutex> lock(g_module_mutex());
+    for (auto& kv : g_modules()) {
+      ModuleState* s = kv.second;
+      if (s->device != d->index || s->bytes.size() != size) continue;
+      if (std::memcmp(s->bytes.data(), image, size) != 0) continue;
+      ++s->refs;
+      // The first loader's provenance wins and is not overwritten. It is the
+      // image that is actually resident, and grx-sanitize resolves addresses
+      // against that ELF; adopting the second caller's path would name a file
+      // whose bytes happen to match rather than the one that was loaded.
+      *module = kv.first;
+      return grxSuccess;
+    }
+  }
+
   vx_module_h mod = nullptr;
   e = load_module(*d, image, size, &mod);
   if (e != grxSuccess) return set_error(e);
@@ -303,6 +348,7 @@ grxError_t load_module_tracked(grxModule_t* module, const void* image,
   s->path     = path ? path : "";
   s->elf      = sanitized ? elf_path : "";
   s->sanitized = sanitized;
+  s->bytes.assign((const uint8_t*)image, (const uint8_t*)image + size);
 
   auto handle = reinterpret_cast<grxModule_t>(s);
   {
@@ -381,6 +427,13 @@ grxError_t grxModuleUnload(grxModule_t module) {
     if (it == grxcp::g_modules().end())
       return grxcp::set_error(grxErrorInvalidResourceHandle);
     s = it->second;
+
+    // Another caller still holds this module. Drop this reference and stop:
+    // releasing the driver handle here would pull the image out from under a
+    // library that never asked for it, and invalidating the functions below
+    // would break kernels the other caller resolved and still holds.
+    if (--s->refs > 0) return grxSuccess;
+
     grxcp::g_modules().erase(it);
 
     // Functions resolved from this module become invalid with it.

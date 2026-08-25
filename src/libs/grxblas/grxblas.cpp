@@ -109,7 +109,26 @@ grxblasStatus_t ensure_module_locked(Context& ctx) {
   // Order matters: the combined module carries sgemm too, so trying it first
   // means a device that can run the tensor path gets both entry points, and a
   // device that cannot falls back to the scalar-only image.
-  static const char* const kModules[] = {"grxblas_kernels.vxbin",
+  //
+  // grxlibs_kernels.vxbin FIRST, and it is the one that matters for a program
+  // using more than one GRXCP library. Only ONE module can be resident at a
+  // time -- every image links at STARTUP_ADDR, so loading a second returns an
+  // address overlap (cuda_mapping.md 7.13). A program calling grxBLAS and
+  // grxDNN would otherwise have the second library fail to load its kernels,
+  // with an error that says nothing about the real cause. src/libs/
+  // kernels_all.cpp builds the image that carries both libraries' entry points.
+  //
+  // That is necessary and NOT sufficient: both libraries still call
+  // grxModuleLoad on it, and the second call overlaps the first. The runtime
+  // hands back the resident module instead of loading it twice -- see the
+  // reference count in src/runtime/module.cpp. Measured in
+  // tests/libs/test_libs_together.cpp, which fails without either half.
+  //
+  // The library-specific images stay as fallbacks: a grxBLAS-only program does
+  // not have to ship grxDNN's kernels, and a device with no tensor unit falls
+  // back to the scalar-only one.
+  static const char* const kModules[] = {"grxlibs_kernels.vxbin",
+                                         "grxblas_kernels.vxbin",
                                          "grxblas_sgemm.vxbin"};
   grxError_t last = grxSuccess;
   for (const char* name : kModules) {
@@ -139,8 +158,9 @@ grxblasStatus_t ensure_module_locked(Context& ctx) {
   // Say which file is missing, because "internal error" from a BLAS call is
   // among the least actionable messages a library can produce.
   std::fprintf(stderr,
-               "grxblas: cannot load grxblas_kernels.vxbin or "
-               "grxblas_sgemm.vxbin (last error: %s).\n"
+               "grxblas: cannot load grxlibs_kernels.vxbin, "
+               "grxblas_kernels.vxbin or\n"
+               "         grxblas_sgemm.vxbin (last error: %s).\n"
                "         Set GRXBLAS_KERNEL_PATH or call grxblasSetKernelPath.\n",
                grxGetErrorString(last));
   return GRXBLAS_STATUS_NOT_INITIALIZED;

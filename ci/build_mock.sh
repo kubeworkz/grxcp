@@ -216,4 +216,141 @@ GRXMOCK_MEM_BANKS=8 GRXMOCK_MEM_BANK_SIZE=17179869184 \
 GRXMOCK_CLOCK_MHZ=2000 GRXMOCK_PEAK_BW_MBS=6400000 \
   "${RUN[@]}" "$BUILD/grx-smi"
 
+echo
+echo "==> NPU BACKEND GATE: what it decides, against a register model"
+# The c930 backend has no Vortex dependency and needs no sysroot, so this runs
+# in tier 1 on any machine with a compiler.
+#
+# test_npu_c930.cc covers the offline half -- register offsets, validation,
+# INT8 packing, a GEMM reference -- and says out loud that it cannot reach the
+# rest: "[SKIP] Mock mode requires mmap infrastructure". Both bugs were in the
+# part it skipped. src/backends/npu_c930/test_npu_c930_model.cc drives the
+# backend through four register models instead, two of which are the states a
+# machine WITHOUT a c930 produces.
+#
+# A model is not hardware. Passing here says the backend's logic is right; it
+# says nothing about the c930, and no result from it may be reported as the NPU
+# working.
+NPU_DIR="$ROOT/src/backends/npu_c930"
+if [[ -f "$NPU_DIR/test_npu_c930_model.cc" ]]; then
+  $CXX -std=c++17 -Wall -Wextra -O1 -I"$NPU_DIR" \
+    "$NPU_DIR/test_npu_c930_model.cc" "$NPU_DIR/npu_c930.cpp" \
+    -o "$BUILD/test_npu_c930_model"
+  "${RUN[@]}" "$BUILD/test_npu_c930_model"
+
+  # The offline suite too, since nothing else built it: src/CMakeLists.txt globs
+  # this directory's *.cpp into libgrxrt and never adds the subdirectory, so the
+  # test_npu_c930 target it defines was never configured.
+  $CXX -std=c++17 -O1 -I"$NPU_DIR" \
+    "$NPU_DIR/test_npu_c930.cc" "$NPU_DIR/npu_c930.cpp" \
+    -o "$BUILD/test_npu_c930"
+  "${RUN[@]}" "$BUILD/test_npu_c930" | tail -3
+else
+  echo "SKIPPED: no NPU backend in this tree."
+fi
+
+echo
+echo "==> NPU GROUNDWORK: a device with no pipeline refuses launches"
+# Phase 7 begins here, before there is an NPU to talk to. The c930 NPU is a
+# systolic array with no SIMT pipeline, and grxcp_architecture.md section 6
+# fixes the contract: grxLaunchKernel on it returns grxErrorNotSupported and
+# does NOT silently fall back to the GPU. A fallback would give the right answer
+# on the wrong engine, which is invisible until someone measures.
+#
+# Run TWICE. The refusal on its own would pass against a runtime that refused
+# every launch on every device, so the default configuration is the control.
+echo "--- a device reporting zero warps"
+GRXMOCK_NUM_WARPS=0 "${RUN[@]}" "$BUILD/test_no_kernel_launch"
+echo "--- control: the same binary on the default device, which CAN launch"
+"${RUN[@]}" "$BUILD/test_no_kernel_launch"
+
+echo
+echo "==> CMAKE GATE: the project's own build system configures and builds"
+# Everything above this line compiles GRXCP by hand, because that is what a
+# mock build needs. Nothing checked that CMakeLists.txt worked -- and it did
+# not, from the first commit until the GRX930 team asked whether
+# `cmake -DGRXCP_ENABLE_NPU=ON` builds. The top-level file had
+# `if(X) add_subdirectory(y) endif()` on one line, which CMake parses as an
+# error and not as a terse spelling; src/CMakeLists.txt and cmake/grxrt.pc.in
+# did not exist at all. A build system nobody runs is a build system that does
+# not work, and this project ships one to its users.
+#
+# The NPU flag is checked HERE rather than left to be discovered, and it is
+# checked for REFUSING: there is no src/backends/npu_c930/ in this tree, so a
+# configure that succeeded with the flag on would be a GPU build wearing an NPU
+# flag. See docs/designs/grxcp_roadmap.md phase 7.
+if [[ -n "$HOST_TRIPLE" ]]; then
+  echo "SKIPPED: cross build; the cmake gate runs on the native host."
+elif ! command -v cmake >/dev/null 2>&1; then
+  echo "SKIPPED: no cmake on this machine."
+else
+  CMBUILD="$BUILD/cmake"
+  rm -rf "$CMBUILD"
+  # The same PKG_CONFIG_PATH the rest of this script uses, so cmake finds the
+  # sysroot's .pc files rather than reporting the project broken when the only
+  # thing missing is a search path.
+  export PKG_CONFIG_PATH="${VORTEX_PATH:+$VORTEX_PATH/lib/pkgconfig:}${PKG_CONFIG_PATH:-}"
+  cmake -S "$ROOT" -B "$CMBUILD" -DCMAKE_BUILD_TYPE=Release \
+    -DGRXCP_USE_MOCK_DRIVER=ON \
+    -DGRXCP_VORTEX_INCLUDE_DIR="$VORTEX_INCLUDE" \
+    > "$CMBUILD.log" 2>&1 || {
+      echo "FAILED: cmake could not configure this project."
+      tail -20 "$CMBUILD.log" | sed 's/^/        /'; exit 1; }
+  cmake --build "$CMBUILD" -j"$(nproc 2>/dev/null || echo 4)" \
+    >> "$CMBUILD.log" 2>&1 || {
+      echo "FAILED: cmake configured but could not build."
+      grep -E "error:" "$CMBUILD.log" | head -10 | sed 's/^/        /'; exit 1; }
+  echo "  ok    configured and built"
+
+  # Every library and tool the file claims to produce, produced.
+  missing=0
+  for f in libgrxrt.so src/libs/libgrxblas.so src/libs/libgrxdnn.so \
+           tools/grx-smi tools/grxcc tools/grxify; do
+    [[ -e "$CMBUILD/$f" ]] || { echo "  FAIL  cmake did not build $f"; missing=1; }
+  done
+  [[ $missing -eq 0 ]] || exit 1
+  echo "  ok    grxrt, grxblas, grxdnn and the tools are all present"
+
+  # The NPU flag, which is the thing the GRX930 team asked about. Both
+  # configurations are built, because "the GPU path is unchanged when the flag
+  # is off" is a claim and not an assumption.
+  if ! cmake -S "$ROOT" -B "$BUILD/cmake-npu" -DGRXCP_ENABLE_NPU=ON \
+       -DGRXCP_USE_MOCK_DRIVER=ON \
+       -DGRXCP_VORTEX_INCLUDE_DIR="$VORTEX_INCLUDE" \
+       > "$BUILD/cmake-npu.log" 2>&1 ||
+     ! cmake --build "$BUILD/cmake-npu" -j"$(nproc 2>/dev/null || echo 4)" \
+       >> "$BUILD/cmake-npu.log" 2>&1; then
+    echo "  FAIL  -DGRXCP_ENABLE_NPU=ON does not build."
+    grep -E "error:|Error|CMake Error" "$BUILD/cmake-npu.log" | head -8 |
+      sed 's/^/        /'
+    exit 1
+  fi
+  echo "  ok    -DGRXCP_ENABLE_NPU=ON configures and builds"
+
+  # The flag has to reach the COMPILER, not just the source glob. It did not:
+  # npu_c930.cpp was compiled into libgrxrt while every #ifdef GRXCP_ENABLE_NPU
+  # block in context.cpp compiled to nothing, so the build contained the backend
+  # and could not enumerate the device it drives. The test targets next to the
+  # backend were never configured either.
+  for t in test_npu_c930 test_npu_c930_model; do
+    if [[ ! -x "$BUILD/cmake-npu/src/backends/npu_c930/$t" ]]; then
+      echo "  FAIL  the NPU build did not produce $t"
+      exit 1
+    fi
+  done
+  echo "  ok    the NPU backend's own test targets were configured and built"
+
+  # AND THE NPU MUST NOT BE ENUMERATED HERE. There is no c930 in CI. A build
+  # flag says what code exists, not what hardware is attached, and a device that
+  # appears in grx-smi on a machine that has none is the failure this whole
+  # section exists to prevent.
+  npu_seen="$("$BUILD/cmake-npu/tools/grx-smi" 2>/dev/null | grep -c 'NPU' || true)"
+  if [[ "$npu_seen" != "0" ]]; then
+    echo "  FAIL  a GRX930 NPU was enumerated on a machine that has none:"
+    "$BUILD/cmake-npu/tools/grx-smi" 2>&1 | grep -i npu | sed 's/^/        /'
+    exit 1
+  fi
+  echo "  ok    and no NPU is enumerated on this machine, which has none"
+fi
+
 echo "all mock checks passed"

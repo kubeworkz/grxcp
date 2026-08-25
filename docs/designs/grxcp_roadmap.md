@@ -876,6 +876,27 @@ layernorm + softmax) runs end-to-end through GRXCP libraries with numerical
 agreement against a PyTorch CPU reference; conformance pass rate hits the
 target set at Phase 4.
 
+**Progress.** grxDNN v0 has landed: `grxdnnSoftmaxForward` and
+`grxdnnLayerNormForward`, fp32, forward only, row-major, one warp per row,
+checked against a host reference on five shapes with two controls that are
+themselves verified to discriminate (`tests/libs/test_grxdnn.cpp`). No conv,
+no backward pass, no attention fusion — absent rather than stubbed, so a port
+that needs them fails to compile.
+
+Landing it turned up the part of the exit gate nobody had costed: the exit
+gate names **two libraries in one process**, and that did not work. Every
+`.vxbin` links at `STARTUP_ADDR`, so the second library to initialise could
+not load its kernels. `src/libs/kernels_all.cpp` puts both libraries' entry
+points in one image, and that alone was still not enough — both libraries
+call `grxModuleLoad` on that one file, and the second call overlapped the
+first. The runtime now hands back an already-resident image with a reference
+count. Gated both ways in `ci/run_real.sh` (CROSS-LIBRARY GATE), and written
+up in `cuda_mapping.md` 7.13.
+
+What remains for the exit gate is the workload itself: attention, and a
+PyTorch reference to compare a whole layer against rather than one op at a
+time.
+
 ---
 
 ## Phase 7 — NPU as a second device, and the native host (≈3 engineer-months)
@@ -897,6 +918,74 @@ target set at Phase 4.
 GPU device and on the NPU device by changing only `grxSetDevice`, with
 matching results; `libgrxrt` passes the conformance suite compiled natively
 for riscv64.
+
+### Where the NPU actually stands
+
+The backend landed in `src/backends/npu_c930/` — MMIO register map, INT8 GEMM
+dispatch, device-table entry with the capability profile section 6 specifies,
+`grxblasGemmEx` routing, and a numerical test against a CPU reference. The
+shape is right and it follows the spec.
+
+Four claims came with it. Checked, before building on them:
+
+| Claim | State when checked |
+|---|---|
+| `cmake -DGRXCP_ENABLE_NPU=ON` builds | **No** — and not for any NPU reason. The top-level `CMakeLists.txt` had `if(X) add_subdirectory(y) endif()` on one line, which CMake rejects as a parse error. `cmake` could not configure this project *at all*, with the flag or without it, and no gate had ever run cmake. |
+| `grxblasGemmEx` on an NPU device with INT8 | Routing is written and correct, but unreachable: `GRXCP_ENABLE_NPU` was a CMake variable and never a compile definition, so every `#ifdef GRXCP_ENABLE_NPU` block in `context.cpp` — the probe, the device-table entry, the property population — compiled to nothing. The build contained the backend and could not enumerate the device it drives. |
+| The DMA fetches A/B, runs, writes C back | A hardware claim this repo cannot check. What it *can* check is whether the host believes it: `npu_c930_gemm` waited for `!BUSY` with no `ERROR` and never read `STATUS.DONE`. A device that ignored every write satisfies both instantly, so the function returned success over a GEMM that never ran, leaving C untouched. |
+| The GPU path is unchanged with the flag off | Now true and now gated — both configurations build and run in CI. It was not *checkable* before, since neither configured. |
+
+And one nobody claimed, which was the worst of them: `npu_c930_detect` read
+`STATUS` and accepted anything that was not `0xFFFFFFFF` and not above `0x7`.
+Its own comment said an absent NPU reads `0x0`. `0x0` passes that test. On any
+host where `/dev/mem` opens, GRXCP grew a GRX930 NPU it did not have — and
+combined with the missing `DONE` check, that phantom accepted GEMMs and
+reported them successful.
+
+All fixed, and each watched failing first:
+
+- Detection is a **write-readback** on a documented R/W register, restoring the
+  original value. Unbacked memory reads zeros and a dead bus reads ones; neither
+  can return a value it was never given.
+- `npu_c930_gemm` requires `STATUS.DONE` and says so by name when it is absent.
+- `GRXCP_ENABLE_NPU` becomes a compile definition, and the backend's own test
+  targets are configured (`add_subdirectory` was never called on them).
+  `enable_testing()` moved to the top level, without which `ctest -R npu_c930`
+  answered *"No tests were found!!!"* over two freshly built test binaries.
+- The register access goes through injectable read/write hooks, so the backend's
+  decisions can be driven through four register models — absent, dead bus, live,
+  and accepts-a-launch-and-never-finishes. `test_npu_c930_model.cc`; NPU BACKEND
+  GATE in `ci/build_mock.sh`; needs no sysroot and no c930.
+- CI asserts that **no NPU is enumerated** on a machine that has none, with the
+  flag on. A build flag says what code exists, not what hardware is attached.
+
+**A register model is not hardware.** Nothing above says the c930 works, and no
+green run may be reported as the NPU working. What is now true is that the host
+side is honest about what it can see, and that it can be exercised without one.
+
+### What is still blocked, and on what
+
+1. **Anything that requires a c930.** `CTRL.START` reaching real silicon,
+   `STATUS.DONE` coming back from it, the DMA reading DDR — none of it can be
+   gated here. The phase 7 exit gate needs both devices present at once. This
+   is the item to hand back: GRXCP needs *access* to hardware or to a simulation
+   that answers on the register map, not more host code.
+2. **`GRX_CAP_KERNEL_LAUNCH` refusals across the rest of the API.** Launch is
+   done — a device without the bit returns `grxErrorNotSupported` rather than
+   falling back to the GPU (`tests/unit/test_no_kernel_launch.cpp`, run both
+   ways; with the check ablated the launch returns *out of resources*, which
+   describes a grid that does not fit rather than a device that cannot run
+   grids). `grxModuleLoad` on such a device should refuse for the same reason
+   and does not yet.
+3. **Cross-device pointers.** The GPU's addresses come from the driver; the
+   NPU's are physical DDR. A pointer from one used on the other must be caught,
+   not dereferenced. Nothing checks this today.
+4. **Real workloads and tuning** — items 2 and 3 of the original list. Both sit
+   behind item 1 above: there is nothing to tune against until a GEMM can be
+   observed running on hardware.
+
+The seam the device table needs in order to hold both is written up in
+[`heterogeneous_devices.md`](heterogeneous_devices.md).
 
 ---
 
