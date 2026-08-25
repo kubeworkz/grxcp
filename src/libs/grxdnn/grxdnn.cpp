@@ -80,7 +80,14 @@ struct Context {
   // not pay for a grxBLAS context, and grxBLAS loads its module lazily too, so
   // creating one early would not even warm anything.
   grxblasHandle_t blas = nullptr;
+
+  // Device cycle instrumentation. Null is off and off is the default: the same
+  // kernel runs either way, so a measured run and a shipped run are the same
+  // code. See grxdnnSetCycleProbe.
+  grxCycleSlot* probe = nullptr;
+  int           probe_capacity = 0;
 };
+
 
 grxdnnStatus_t ensure_module_locked(Context& ctx) {
   if (ctx.module) return GRXDNN_STATUS_SUCCESS;
@@ -160,6 +167,32 @@ grxdnnStatus_t launch_shape(int rows, Shape* out) {
   return GRXDNN_STATUS_SUCCESS;
 }
 
+// How many warps a launch over `rows` rows will actually use. This is the one
+// place that answers it, because the probe's capacity check and the launch
+// geometry have to agree exactly and two places computing the same thing from
+// memory is how they stop agreeing.
+unsigned warps_in(const Shape& shape, unsigned warp_size) {
+  return warp_size ? (shape.grid * (shape.block / warp_size)) : 0u;
+}
+
+// Point a kernel's argument block at the probe, if one is attached, after
+// checking the capacity against the launch that is about to happen. Returns
+// KERNEL_NOT_FOUND-free status; a probe too small is INVALID_VALUE rather than
+// a partial record, matching grxblasSetCycleProbe.
+grxdnnStatus_t attach_probe(const Context& ctx, const Shape& shape,
+                            uint64_t* cycles_field) {
+  if (!ctx.probe) return GRXDNN_STATUS_SUCCESS;
+  int device = 0;
+  grxDeviceProp_t prop{};
+  if (grxGetDevice(&device) != grxSuccess ||
+      grxGetDeviceProperties(&prop, device) != grxSuccess || prop.warpSize <= 0)
+    return GRXDNN_STATUS_NOT_INITIALIZED;
+  const unsigned warps = warps_in(shape, (unsigned)prop.warpSize);
+  if ((unsigned)ctx.probe_capacity < warps) return GRXDNN_STATUS_INVALID_VALUE;
+  *cycles_field = (uint64_t)(uintptr_t)ctx.probe;
+  return GRXDNN_STATUS_SUCCESS;
+}
+
 grxdnnStatus_t map_launch(grxError_t e) {
   return (e == grxSuccess) ? GRXDNN_STATUS_SUCCESS
                            : GRXDNN_STATUS_EXECUTION_FAILED;
@@ -225,6 +258,32 @@ grxdnnStatus_t grxdnnSetKernelPath(const char* dir) {
   return GRXDNN_STATUS_SUCCESS;
 }
 
+grxdnnStatus_t grxdnnSetCycleProbe(grxdnnHandle_t handle,
+                                   grxCycleSlot* slots, int capacity) {
+  if (!handle) return GRXDNN_STATUS_NOT_INITIALIZED;
+  if (slots && capacity <= 0) return GRXDNN_STATUS_INVALID_VALUE;
+  Context* ctx = reinterpret_cast<Context*>(handle);
+  std::lock_guard<std::mutex> lock(ctx->mutex);
+  ctx->probe          = slots;
+  ctx->probe_capacity = slots ? capacity : 0;
+  return GRXDNN_STATUS_SUCCESS;
+}
+
+int grxdnnCycleSlotsNeeded(grxdnnHandle_t handle, int rows) {
+  if (!handle || rows <= 0) return 0;
+  // Asked of the same launch_shape the call itself will use, so the answer is
+  // the launch's warp count rather than an estimate that has to be kept in
+  // step with it.
+  Shape shape{};
+  if (launch_shape(rows, &shape) != GRXDNN_STATUS_SUCCESS) return 0;
+  int device = 0;
+  grxDeviceProp_t prop{};
+  if (grxGetDevice(&device) != grxSuccess ||
+      grxGetDeviceProperties(&prop, device) != grxSuccess || prop.warpSize <= 0)
+    return 0;
+  return (int)warps_in(shape, (unsigned)prop.warpSize);
+}
+
 grxdnnStatus_t grxdnnGetLoadedKernelPath(grxdnnHandle_t handle,
                                          const char** path) {
   if (!handle || !path) return GRXDNN_STATUS_INVALID_VALUE;
@@ -264,6 +323,9 @@ grxdnnStatus_t grxdnnSoftmaxForward(grxdnnHandle_t handle,
   args.ldy  = ldy;
   args.x    = (uint64_t)(uintptr_t)x;
   args.y    = (uint64_t)(uintptr_t)y;
+
+  st = attach_probe(*ctx, shape, &args.cycles);
+  if (st != GRXDNN_STATUS_SUCCESS) return st;
 
   return map_launch(grxLaunchFunction(ctx->softmax,
                                       dim3_t{shape.grid, 1, 1},
@@ -306,6 +368,9 @@ grxdnnStatus_t grxdnnLayerNormForward(grxdnnHandle_t handle,
   args.gamma = (uint64_t)(uintptr_t)gamma;
   args.beta  = (uint64_t)(uintptr_t)beta;
 
+  st = attach_probe(*ctx, shape, &args.cycles);
+  if (st != GRXDNN_STATUS_SUCCESS) return st;
+
   return map_launch(grxLaunchFunction(ctx->layernorm,
                                       dim3_t{shape.grid, 1, 1},
                                       dim3_t{shape.block, 1, 1},
@@ -345,6 +410,9 @@ grxdnnStatus_t grxdnnAddBiasForward(grxdnnHandle_t handle,
   args.bias = (uint64_t)(uintptr_t)bias;
   args.y    = (uint64_t)(uintptr_t)y;
 
+  st = attach_probe(*ctx, shape, &args.cycles);
+  if (st != GRXDNN_STATUS_SUCCESS) return st;
+
   return map_launch(grxLaunchFunction(ctx->add_bias,
                                       dim3_t{shape.grid, 1, 1},
                                       dim3_t{shape.block, 1, 1},
@@ -383,6 +451,9 @@ grxdnnStatus_t grxdnnGeluForward(grxdnnHandle_t handle,
   args.mode = (mode == GRXDNN_GELU_TANH) ? 1u : 0u;
   args.x    = (uint64_t)(uintptr_t)x;
   args.y    = (uint64_t)(uintptr_t)y;
+
+  st = attach_probe(*ctx, shape, &args.cycles);
+  if (st != GRXDNN_STATUS_SUCCESS) return st;
 
   return map_launch(grxLaunchFunction(ctx->gelu,
                                       dim3_t{shape.grid, 1, 1},
@@ -515,6 +586,9 @@ grxdnnStatus_t grxdnnAttentionForward(grxdnnHandle_t handle,
     margs.ld      = seqLen;
     margs.scores  = (uint64_t)(uintptr_t)scores;
 
+    st = attach_probe(*ctx, shape, &margs.cycles);
+    if (st != GRXDNN_STATUS_SUCCESS) return st;
+
     st = map_launch(grxLaunchFunction(ctx->causal_mask,
                                       dim3_t{shape.grid, 1, 1},
                                       dim3_t{shape.block, 1, 1},
@@ -540,6 +614,9 @@ grxdnnStatus_t grxdnnAttentionForward(grxdnnHandle_t handle,
     sargs.ldy  = seqLen;
     sargs.x    = (uint64_t)(uintptr_t)scores;
     sargs.y    = (uint64_t)(uintptr_t)scores;   // in place
+
+    st = attach_probe(*ctx, shape, &sargs.cycles);
+    if (st != GRXDNN_STATUS_SUCCESS) return st;
 
     st = map_launch(grxLaunchFunction(ctx->softmax,
                                       dim3_t{shape.grid, 1, 1},

@@ -32,18 +32,35 @@ __forceinline__ uint64_t cycle_counter() { return vx_rdcycle_sync(); }
 // The cost when enabled is two serializing reads and one 24-byte store per
 // warp. The pipeline flush is not free and it IS inside the measured region;
 // for a kernel short enough that this matters, measure a loop of them.
+//
+// IT FINISHES ITSELF. The destructor calls finish(), so a kernel that
+// constructs one and returns is measured whether or not anyone remembered the
+// call. That is not tidiness: forgetting it produces a probe that records
+// NOTHING and reports no error, and the host then summarises an array of zeros
+// into "no warps wrote a slot" -- a silent absence that reads like a device
+// problem. Every grxDNN kernel shipped in exactly that state, and it took
+// pointing the profiler at a real workload to notice, because nothing else had
+// ever read a grxDNN slot.
+//
+// finish() is idempotent, so calling it explicitly to end the measured region
+// early still works and the destructor then does nothing. grxBLAS's kernels do
+// that and their numbers are unchanged.
 class cycle_probe {
  public:
   __forceinline__ explicit cycle_probe(grxCycleSlot* slots)
       : slots_(slots), start_(slots ? cycle_counter() : 0) {}
 
+  __forceinline__ ~cycle_probe() { finish(); }
+
   __forceinline__ void finish() {
     if (!slots_) return;
     const uint64_t end = cycle_counter();
+    grxCycleSlot* const slots = slots_;
+    slots_ = nullptr;              // idempotent: the destructor will not redo it
     // One writer per warp. Every lane holds the same values, so letting them
     // all store would be correct and wasteful.
     if (lane_id() != 0) return;
-    grxCycleSlot* s = &slots_[block_index() * warps_per_cta() + warp_id()];
+    grxCycleSlot* s = &slots[block_index() * warps_per_cta() + warp_id()];
     s->start = start_;
     s->end   = end;
     s->core  = (uint32_t)vx_core_id();

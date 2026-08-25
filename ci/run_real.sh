@@ -596,6 +596,30 @@ else
 fi
 
 echo
+echo "==> BLOCK CYCLES: where a transformer block's cycles actually go"
+# A REPORT, not a gate -- except its last section, which is a gate and the only
+# reason the rest is worth reading: the block runs at two sequence lengths and
+# attention's SHARE must grow, because its scores matrix is seqLen squared while
+# every other stage is linear. "The total went up" would be satisfied by almost
+# anything; that differential would not.
+#
+# Running it is what found that every grxDNN kernel constructed a cycle_probe
+# and never reached finish(), so the instrumentation recorded nothing and said
+# nothing. grx::cycle_probe now finishes itself in its destructor.
+if [[ -n "$GRXGPU" && -d "$TOOLDIR/llvm-vortex" ]]; then
+  $CXX $CXXFLAGS -c "$ROOT/tests/bench/block_cycles.cpp" \
+    -o "$BUILD/block_cycles.o"
+  $CXX "${OBJS[@]}" "$BUILD/grxblas.o" "$BUILD/grxdnn.o" \
+    "$BUILD/block_cycles.o" $LIBS -o "$BUILD/block_cycles"
+  if ! "$BUILD/block_cycles"; then
+    rc=$?
+    [[ $rc -eq 77 ]] || exit $rc
+  fi
+else
+  echo "SKIPPED: needs --grxgpu <path> and a device toolchain in $TOOLDIR."
+fi
+
+echo
 echo "==> CROSS-LIBRARY GATE: grxBLAS and grxDNN in one process"
 # The claim: a program can call two GRXCP libraries and both find their kernels.
 # It is not free. Every .vxbin links at STARTUP_ADDR, so the device holds one

@@ -37,6 +37,7 @@
 #ifndef GRXDNN_H
 #define GRXDNN_H
 
+#include "grx_cycles.h"
 #include "grx_runtime.h"
 #include "grx_types.h"
 #include "grxblas.h"
@@ -123,6 +124,39 @@ grxdnnStatus_t grxdnnLayerNormForward(grxdnnHandle_t handle,
                                       const float* gamma, const float* beta,
                                       float eps,
                                       float* y, int ldy);
+
+// --- instrumentation -------------------------------------------------------
+//
+// Attach an array of cycle slots and the NEXT grxDNN call records how long each
+// warp took, measured by the DEVICE's own cycle counter — the only clock that
+// measures the device rather than the simulator (see grx_cycles.h). NULL turns
+// it off, and off is the default: the same kernel runs either way, so the
+// number describes the kernel that ships rather than an instrumented variant.
+//
+// Every grxDNN kernel has carried a `cycle_probe` since it was written and no
+// host call could reach it, so the path was dead code until a whole transformer
+// block existed to point it at. `tests/bench/block_cycles.cpp` is what it is
+// for: where a real workload's cycles actually go, which is a different
+// question from whether any one kernel is correct.
+//
+// `slots` IS A DEVICE ALLOCATION — grxMalloc, not a host array. The kernel
+// writes it, so a host pointer here is an address the device cannot reach and
+// the result is a silent record of nothing: every stage reports zero cycles and
+// the summary looks like a kernel that never ran. Zero it with grxMemset before
+// the call and grxMemcpy it back afterwards; tests/bench/block_cycles.cpp is
+// the worked example, and it got this wrong first.
+//
+// The probe stays attached across calls until it is cleared. One slot per warp;
+// grxdnnCycleSlotsNeeded says how many a given shape will use. A capacity too
+// small is an error rather than a partial record.
+grxdnnStatus_t grxdnnSetCycleProbe(grxdnnHandle_t handle,
+                                   grxCycleSlot* slots, int capacity);
+
+// How many slots a call over `rows` rows will write. Every grxDNN kernel is one
+// warp per row and strides over them, so this is the launch's warp count and
+// not the row count — a 4096-row softmax on a narrow device uses a handful of
+// warps, each going round many times.
+int grxdnnCycleSlotsNeeded(grxdnnHandle_t handle, int rows);
 
 // ---------------------------------------------------------------------------
 // Bias broadcast

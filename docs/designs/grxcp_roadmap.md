@@ -957,6 +957,47 @@ somewhere. Watched failing two ways, and both are worth the space:
   and let the wrong activation through on two of three cases. It is now set from
   the measurement.
 
+**The block has now been PROFILED, and the profile contradicts the obvious
+optimisation.** `tests/bench/block_cycles.cpp` reports device cycles per stage
+(one SM, four lanes, S=8 D=16 H=2 F=64):
+
+| stage | share | notes |
+|---|---|---|
+| mlp GEMM 1 (D→F) | 27.8% | |
+| mlp GEMM 2 (F→D) | 23.1% | |
+| qkv projection (3 GEMMs) | 20.8% | |
+| **GELU** | **11.5%** | |
+| attention | 4.6% | grows with seqLen; 5.7% at S=16 |
+| output projection | 4.3% | |
+| layer norm ×2 | 4.7% | |
+| bias ×3 | 2.0% | |
+| residual | 1.1% | |
+
+**GEMMs are 76% of the block.** That is where the work is, and `grxblas.h`
+already says why: sgemm v0 is one thread per output element with no blocking,
+correct and not fast. Tuning it is worth more than everything else on this list
+combined.
+
+**Fusing the bias into the GEMM epilogue would save about 2%.** That was the
+obvious next optimisation before anyone measured, and the measurement says not
+to bother yet.
+
+**GELU costs more than attention and both layer norms together**, which is
+surprising for an elementwise op until the per-element figures are compared:
+68 cycles/element against 7.8 for a bias add — roughly 9× — while layer norm,
+with three passes and two warp reductions, is 60. The cost is the
+transcendental, not the memory traffic. `dev_gelu_tanh` goes through `dev_exp`
+(range reduction plus a degree-5 polynomial) once per element. A cheaper direct
+rational approximation of `tanh` is a real candidate, and it would need its
+accuracy re-measured against PyTorch by the GELU gate before it could ship.
+
+Running the profiler is also what found that **every grxDNN kernel constructed a
+`cycle_probe` and never called `finish()`**, so the instrumentation recorded
+nothing and reported no error — a silent absence that reads like a device
+problem. `grx::cycle_probe` now finishes itself in its destructor and `finish()`
+is idempotent, so it cannot be forgotten again and grxBLAS's explicit calls are
+unaffected.
+
 What remains for the phase is breadth rather than the gate: conv2d, grxFFT,
 grxRAND, grxSPARSE, `grx::par`, `grx::tex<>`, `grxrtc`, and promoting `grxcc` to
 a proper Clang `ToolChain`. Fusion is the other direction — bias into the GEMM

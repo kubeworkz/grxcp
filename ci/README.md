@@ -241,6 +241,33 @@ tolerance was three orders of magnitude looser than anything observed and let
 the wrong activation through on two of three cases. It is now set from the
 measurement.
 
+**BLOCK CYCLES** (`tests/bench/block_cycles.cpp`) is a report rather than a
+gate, except for its last section — which is a gate, and is the only reason the
+rest is worth reading. The block runs at two sequence lengths and attention's
+**share** must grow, because its scores matrix is seqLen squared while every
+other stage is linear in seqLen. "The total went up" would be satisfied by
+almost anything, including a counter that was really counting launches; that
+differential would not.
+
+Running it found that every grxDNN kernel constructed a `grx::cycle_probe` and
+never called `finish()`. The slot was never written, the host summarised an
+array of zeros, and nothing reported an error — the instrumentation had been
+dead in every kernel since it was written, and only pointing it at a real
+workload surfaced that, because nothing else had ever read a grxDNN slot. The
+probe now finishes itself in its destructor and `finish()` is idempotent, so it
+cannot be forgotten and grxBLAS's explicit calls still behave identically.
+
+The first version of the bench also had every stage reporting zero because its
+probe array was a `std::vector` — a host pointer the device cannot write. That
+is now stated in `grxdnn.h` where the API is declared, since it produces a
+silent record of nothing rather than an error.
+
+What the report says, and it is not what intuition said: the GEMMs are **76%** of
+the block, GELU is **11.5%** — more than attention and both layer norms
+together, because the transcendental costs about 9× a bias add per element — and
+fusing the bias into the GEMM epilogue, the obvious next optimisation, would
+save about **2%**. See the roadmap's phase 6 progress note for the table.
+
 The **ATTENTION GATE** (`tests/libs/test_grxdnn_attn.cpp`) is the last quarter
 of the phase 6 exit gate, and the only gate here whose reference is a third
 party's arithmetic. Attention is where grxDNN's row-major convention meets
