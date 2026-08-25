@@ -95,3 +95,11 @@ These are the rules most likely to be violated by a well-meaning change.
 Update this file when you find a footgun the next contributor will hit.
 Include the *why*. Remove rules that have gone stale — a stale rule is worse
 than no rule. Do not duplicate content from `docs/`; link to it.
+
+**In prose, a `backticked/path` is a claim that the file is in this tree**, and
+`ci/check_docs.py` opens every one of them on every tier-1 build. Write a path
+that does not exist yet without backticks, the way section 10 item 4 of the
+architecture document names its unbuilt perf-baseline directory; put
+intended-layout trees in a fenced block, which the checker does not read. The
+rule exists because six references rotted unnoticed through several careful
+readings of these documents, and reading is not what catches that.

@@ -101,6 +101,15 @@ CXXFLAGS="-std=c++17 -Wall -Wextra -O1 -g -I$ROOT/include -I$VORTEX_INCLUDE $VOR
 
 mkdir -p "$BUILD"
 
+# First, because it needs nothing built and a docs-only change deserves a
+# verdict in a second rather than after a full compile. A hand sweep found six
+# dangling references that several readings had not; this is that sweep, made
+# mechanical, over every markdown file in the tree rather than the thirteen the
+# hand version happened to glob. It self-tests before it reports.
+echo "==> DOCS GATE: every documented path, link and section reference resolves"
+python3 "$ROOT/ci/check_docs.py"
+
+echo
 echo "==> compiling runtime"
 RT_OBJS=()
 for src in "$ROOT"/src/runtime/*.cpp; do

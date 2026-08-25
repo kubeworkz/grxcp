@@ -11,6 +11,49 @@ simulator, no FPGA; a few seconds.
 What it proves: the code compiles and links, the device record is internally
 consistent, the error surface behaves, and the honesty flags are still set.
 
+The **DOCS GATE** (`ci/check_docs.py`) runs first, because it needs nothing
+built. It opens every `path/like/this` written in backticks in every markdown
+file, resolves every markdown link relative to the page making it, and checks
+that a reference like `cuda_mapping.md 7.13` names a section that document
+actually has. It exists because a sweep done by hand found six dangling
+references that several careful readings had not — a bench file renamed out from
+under two documents, three GRXGPU paths written as if they were ours, and a
+phase 6 exit clause quoting a Phase 4 target that was never set. None were wrong
+when written. Reading does not catch this; only opening the path does.
+
+Made mechanical, it immediately found two more. A ci/perf/baselines/\*.json tree
+was listed in `grxcp_architecture.md` section 10 as one of five verification
+gates, alongside three that exist — there is no ci/perf, there never was, and the
+AGENTS.md section 4 rule about never hand-editing a baseline governs no
+baselines. And `gpu_chip_design.md` §15 exposed a bug in the checker itself,
+which demanded a dotted section number and so mistook a reference into another
+repository for a section existing nowhere.
+
+The hand sweep globbed thirteen markdown files; this reads all seventeen, so the
+five READMEs under `src/`, `tests/` and `tools/` are covered for the first time.
+Fenced blocks are deliberately not read — `grxcp_architecture.md` section 9 is
+an intended-layout tree listing a dozen files nobody has written yet, and
+opening those would report a plan as a defect. Measured: zero reference-shaped
+strings currently live inside a fence, so that rule costs no coverage today.
+
+What it does **not** prove: that a reference points at the *right* place. A bare
+`section 7.10`, three lines below a sentence naming `cuda_mapping.md`, is only
+readable as such by a human; the checker requires the number to exist in some
+document here, which is the strongest rule with no false positives. Paths into
+other repositories — `grxgpu/...`, `c930/...`, fragments like `hw/dpi` — cannot
+be resolved from this checkout and are counted and printed rather than dropped,
+so if `tests/` were ever deleted its seventy-odd references would move from
+checked to unchecked in plain sight instead of quietly passing.
+
+Watched failing, on every run: `--self-test` plants one broken reference of each
+of the four kinds in a fixture tree, next to a sound one of each, and fails
+unless all four are caught and none of the sound ones are reported. Five
+ablations turn it red — suppressing the missing-path report, reporting every
+path as missing, letting a named reference ignore its leading path (which made
+`grxgpu/AGENTS.md` §4 resolve against *our* AGENTS.md, silently and
+successfully, since ours does have a section 4), accepting any section number,
+and reading fenced blocks.
+
 The **NPU BACKEND GATE** drives `src/backends/npu_c930/` through four register
 models — a bus with nothing on it, a bus that floats high, a live device, and a
 device that accepts a launch and never finishes. The backend has no Vortex

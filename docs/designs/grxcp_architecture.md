@@ -621,6 +621,14 @@ it can ship in Phase 2 rather than at the end.
 
 ## 9. Repository layout
 
+This is the INTENDED shape, not an inventory. Several entries below are still
+plans — `grxrand.h`, `grxfft.h`, `grxsparse.h`, `grx_cg.h`, the conformance,
+regression and benchmark test directories, `grx-sanitize`, and ci/regression.sh
+among them. `ci/check_docs.py` deliberately does not read fenced blocks, so
+nothing here is checked against the tree; take the prose, where a backticked
+path is a claim that gets opened on every build, as the statement of what
+exists.
+
 ```
 grxcp/
 ├── AGENTS.md                     # invariants and footguns (mirrors grxgpu's)
@@ -675,8 +683,17 @@ GRXCP inherits the GRX-G100 project's verification discipline, adapted:
    also the honest measure of how complete the platform is: publish the pass
    rate, the way the chipStar work publishes its ~36% rv32 conformance
    number rather than hiding it.
-4. **Perf baselines.** `ci/perf/baselines/*.json`, golden data, never
-   hand-edited — the same rule as `grxgpu/AGENTS.md` §4.
+4. **Perf baselines — NOT BUILT.** The intent is a ci/perf/baselines/ tree of
+   golden JSON, never hand-edited, the same rule as `grxgpu/AGENTS.md` §4.
+   Nothing there exists yet, and this line claimed it did until the docs gate
+   opened the path — which is also why that directory is named here without
+   backticks, since in these documents a `backticked/path` asserts a file that
+   is in the tree and this one is a plan. What stands in for it today: `tests/bench/gemm_cycles.cpp` and
+   `tests/bench/block_cycles.cpp` measure device cycles, and the BLOCK CYCLES
+   step in `ci/run_real.sh` prints them — against no stored number, so a perf
+   regression is visible to a reader of the log and to nothing else. The rule
+   in AGENTS.md §4 about never hand-editing a baseline is therefore a rule
+   with no baselines to govern.
 5. **No fabricated capability.** A GRXCP entry point either works or returns
    `grxErrorNotSupported`. Emulating a hardware feature in software behind
    an API that implies hardware is banned; it produces performance cliffs
