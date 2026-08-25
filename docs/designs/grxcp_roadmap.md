@@ -171,7 +171,7 @@ usable by someone who is not on the team.
   `vx_active_threads`, plus the **LMEM-staged shuffle fallback**),
   `grx_cg.h` (cooperative groups over the thread mask and `vx_gbar`).
 - `grx-prof` v1: kernel timeline from event timestamps, occupancy report,
-  MPM stall breakdown, Perfetto export reusing `ci/perfetto.py`.
+  MPM stall breakdown, Perfetto export reusing `grxgpu/ci/perfetto.py`.
 - `grx-sanitize` v1 on SimX: out-of-bounds global/shared access, use of
   uninitialized shared memory, and barrier-divergence detection.
 - `grxify` v0: mechanical `cudaX → grxX` source rewriting.
@@ -250,11 +250,11 @@ complementary check: against the mock driver, which refuses
 count, **no** device counter may appear on any slice. Absent, not zero.
 
 One planned item changed shape. The roadmap said "Perfetto export reusing
-`ci/perfetto.py`"; that script converts instruction-level simulator logs and
+`grxgpu/ci/perfetto.py`"; that script converts instruction-level simulator logs and
 needs a debug simulator build, which answers "what is this warp doing in cycle
 4,182" rather than "which kernel is expensive and why". grx-prof writes the
 same trace *format* from what the runtime and the counters already know, with
-no special build, and `perfetto.py` remains the next zoom level down
+no special build, and `grxgpu/ci/perfetto.py` remains the next zoom level down
 (`grx_prof.md` section 5).
 
 **Progress — `grx_cg.h` is done, and phase 2 with it.**
@@ -343,7 +343,7 @@ produce the number.
 Both are fixed rather than waived. Measurement is `grx::cycle_probe` reading
 the device's own counter, calibrated by `tests/kernels/cycles/` — which runs
 the same kernel at 1x, 2x and 4x the work and fails unless the count follows.
-The baseline is `tests/bench/sgemm_cycles.cpp`, and it is a number this project
+The baseline is `tests/bench/gemm_cycles.cpp`, and it is a number this project
 produces itself instead of one it hopes to be handed:
 
 | shape | span (cycles) | cycles / output element |
@@ -873,8 +873,19 @@ semantics remain correct under the conformance suite.
 
 **Exit gate.** A transformer inference workload (attention + GEMM +
 layernorm + softmax) runs end-to-end through GRXCP libraries with numerical
-agreement against a PyTorch CPU reference; conformance pass rate hits the
-target set at Phase 4.
+agreement against a PyTorch CPU reference; **API coverage reaches 57 of 83
+tracked entry points (69%)**, which is every one this phase's scope can move.
+
+*(This clause used to read "conformance pass rate hits the target set at Phase
+4". Phase 4 set a direction — "improves measurably over Phase 1's published
+number" — and no target, so the reference dangled. The number above is derived
+rather than invented: of the 29 entry points not implemented at 54/83, exactly
+**three** are in Phase 6's scope — `cudaCreateTextureObject`,
+`cudaDestroyTextureObject` and `cudaMallocArray`, which `grx::tex<>` would
+supply. The rest belong to Phase 5 (streams), sit behind hardware, or are
+deliberately out of scope for v1 (graphs, IPC, interop — `cuda_mapping.md`
+7.15). A phase whose scope is library breadth barely moves a CUDA **runtime**
+API count: grxFFT and grxSPARSE are not entry points in this table.)*
 
 **Progress.** grxDNN v0 has landed: `grxdnnSoftmaxForward`,
 `grxdnnLayerNormForward` and `grxdnnAttentionForward`, fp32, forward only,
@@ -958,8 +969,9 @@ somewhere. Watched failing two ways, and both are worth the space:
   the measurement.
 
 **The block has now been PROFILED, and the profile contradicts the obvious
-optimisation.** `tests/bench/block_cycles.cpp` reports device cycles per stage
-(one SM, four lanes, S=8 D=16 H=2 F=64):
+optimisation.** `tests/bench/block_cycles.cpp` reports device cycles per stage.
+One SM, four lanes, S=8 D=16 H=2 F=64, **against the naive sgemm** — this is the
+baseline the tuning below is measured from, not the current state:
 
 | stage | share | notes |
 |---|---|---|
@@ -967,11 +979,24 @@ optimisation.** `tests/bench/block_cycles.cpp` reports device cycles per stage
 | mlp GEMM 2 (F→D) | 23.1% | |
 | qkv projection (3 GEMMs) | 20.8% | |
 | **GELU** | **11.5%** | |
-| attention | 4.6% | grows with seqLen; 5.7% at S=16 |
+| attention | 4.6% | 8.5% at S=16 — its scores are seqLen-squared |
 | output projection | 4.3% | |
 | layer norm ×2 | 4.7% | |
 | bias ×3 | 2.0% | |
 | residual | 1.1% | |
+
+Attention's figure was wrong when first taken, and the correction is worth
+recording. `grxdnnAttentionForward` calls grxBLAS on an internal handle nothing
+probed, so its **two GEMMs were missing from the profile entirely** and the
+block's GEMM share was understated. Attaching a probe was not enough either:
+attention is four launches, the slot index comes from the block and warp, and
+four different grids collide at the low indices — the earliest start is simply
+lost. Each launch now writes its own region of the probe buffer.
+
+The fix validated itself against theory. Attention's share now goes 4.6% → 8.5%
+when the sequence doubles, a ratio of 1.93 against the ~2× that a
+seqLen-squared stage among linear ones must show. With only its softmax counted
+it was 1.25.
 
 **GEMMs are 76% of the block.** That is where the work is, and `grxblas.h`
 already says why: sgemm v0 is one thread per output element with no blocking,

@@ -134,7 +134,7 @@ exercise the partial-warp path.
 measurement: it runs the same kernel at 1x, 2x and 4x the work and fails unless
 the measured count follows. Nothing else in the tree may quote a cycle figure
 without this passing — a measurement nobody has watched respond to its input is
-not a measurement. `tests/bench/sgemm_cycles.cpp` then reports what sgemm v0
+not a measurement. `tests/bench/gemm_cycles.cpp` then reports what sgemm v0
 costs, which is the baseline the tuned tensor-core kernel is gated against;
 it is a report, and it fails only if the measurement itself is broken.
 

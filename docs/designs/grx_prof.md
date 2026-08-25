@@ -130,9 +130,10 @@ because the simulator does not tick the core to serve a DCR read. On a backend
 where it does not, the report says what one sample pair costs and a kernel
 whose cycle count is near that number has not really been measured.
 
-## 5. Why not `ci/perfetto.py`
+## 5. Why not `grxgpu/ci/perfetto.py`
 
-The roadmap's phase 2 line says "Perfetto export reusing `ci/perfetto.py`".
+The roadmap's phase 2 line says "Perfetto export reusing
+`grxgpu/ci/perfetto.py`".
 That turned out to be the wrong tool for this job, and the difference is worth
 recording rather than quietly ignoring.
 

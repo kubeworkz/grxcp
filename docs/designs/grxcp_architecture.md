@@ -607,9 +607,9 @@ plugs into, and it is the single library most ported code touches first.
 | Tool | Function | Backing (mostly exists) |
 |---|---|---|
 | `grx-smi` | device enumeration, memory, utilization, backend | `vx_device_query`, `vx_device_memory_info` |
-| `grx-prof` | kernel timeline, occupancy, stall breakdown, roofline | MPM counters (`vx_device_mpm_query`), Perfetto export (`ci/perfetto.py`), `perf/roofline.py` |
+| `grx-prof` | kernel timeline, occupancy, stall breakdown, roofline | MPM counters (`vx_device_mpm_query`), Perfetto export (`grxgpu/ci/perfetto.py`), `grxgpu/perf/roofline.py` |
 | `grx-sanitize` | out-of-bounds, uninitialized shared, race detection | SimX instrumentation — cheap on a functional simulator, and a genuine advantage over silicon-only tooling |
-| `grx-gdb` | source-level kernel debugging | existing GDB/OpenOCD path (`docs/kernel_debugging.md`) |
+| `grx-gdb` | source-level kernel debugging | existing GDB/OpenOCD path (`grxgpu/docs/kernel_debugging.md`) |
 | `grxify` | CUDA source → GRXCP source translator | clang-tidy-style rewriter; the `hipify` analogue |
 
 `grx-sanitize` deserves emphasis: because SimX is a functional model with
