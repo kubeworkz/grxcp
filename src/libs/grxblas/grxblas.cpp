@@ -369,13 +369,7 @@ static void ensure_npu_detected() {
   });
 }
 
-// Check if the current device is an NPU (deviceType == GRX_DEVICE_TYPE_NPU).
-static bool current_device_is_npu() {
-  grxDeviceProp_t prop{};
-  if (grxGetDeviceProperties(&prop, grxGetDevice(nullptr)) != grxSuccess)
-    return false;
-  return prop.deviceType == GRX_DEVICE_TYPE_NPU;
-}
+
 
 // NPU GEMM path: INT8 in, INT32 out, via the C930 systolic array.
 //
@@ -437,6 +431,25 @@ static grxblasStatus_t npu_gemm_path(
     return GRXBLAS_STATUS_NOT_SUPPORTED;
   }
 
+  // THE ADDRESS REGISTERS ARE 32 BITS. A_BASE/B_BASE/C_BASE are 32-bit MMIO
+  // words and a device pointer is 64. Casting one to the other truncates in
+  // silence and the DMA then reads whatever lives at the low half: a wrong
+  // answer with no error, which is the failure class this project bans. Refused
+  // by name instead, so the caller learns the buffer is out of the engine's
+  // reach rather than that its GEMM is mysteriously wrong.
+  const void* bufs[3] = {A, B, C};
+  const char* names[3] = {"A", "B", "C"};
+  for (int i = 0; i < 3; ++i) {
+    const uint64_t addr = (uint64_t)(uintptr_t)bufs[i];
+    if (addr > 0xFFFFFFFFull) {
+      std::fprintf(stderr,
+                   "grxblas: NPU %s is at 0x%llx, past the 32-bit reach of the"
+                   " engine's base registers.\n",
+                   names[i], (unsigned long long)addr);
+      return GRXBLAS_STATUS_NOT_SUPPORTED;
+    }
+  }
+
   // Launch the GEMM through the NPU MMIO interface.
   const uint32_t a_addr = (uint32_t)(uintptr_t)A;
   const uint32_t b_addr = (uint32_t)(uintptr_t)B;
@@ -449,9 +462,74 @@ static grxblasStatus_t npu_gemm_path(
 
 #endif  // GRXCP_ENABLE_NPU
 
+// THE DISPATCH RULE, in one place, so that asking and doing cannot disagree.
+//
+// The current device decides. Nothing here consults a preference, and nothing
+// here falls back to another engine: a call the current device's engine cannot
+// take is refused, because the alternative is the same source line running on
+// different silicon depending on state set somewhere else.
+//
+// out_device reports the index the decision was made ABOUT. It is the current
+// device or this function is wrong, and it is reported rather than assumed so a
+// test can say which -- the predecessor of this code passed grxGetDevice(NULL),
+// whose return value is an ERROR CODE, and so decided about device 1 forever.
+grxblasEngine_t decide_gemm_engine(grxDataType_t Atype, grxDataType_t Btype,
+                                   grxDataType_t Ctype, int* out_device) {
+  int index = -1;
+  if (grxGetDevice(&index) != grxSuccess) return GRXBLAS_ENGINE_NONE;
+  if (out_device) *out_device = index;
+
+  grxDeviceProp_t prop{};
+  if (grxGetDeviceProperties(&prop, index) != grxSuccess)
+    return GRXBLAS_ENGINE_NONE;
+
+  const bool int8 = (Atype == GRX_R_8I && Btype == GRX_R_8I &&
+                     Ctype == GRX_R_32I);
+
+  if (prop.deviceType == GRX_DEVICE_TYPE_NPU) {
+    // A GEMM-only device has exactly one engine and it does INT8. Anything
+    // else has nowhere to go ON THIS DEVICE, and the GPU is not an answer to
+    // a question about this one.
+#ifdef GRXCP_ENABLE_NPU
+    return int8 ? GRXBLAS_ENGINE_NPU_C930 : GRXBLAS_ENGINE_NONE;
+#else
+    // The device could not have been enumerated without the flag; if it was,
+    // saying NONE is the only honest answer.
+    (void)int8;
+    return GRXBLAS_ENGINE_NONE;
+#endif
+  }
+
+  // Which pairings the tensor unit accepts is a property of the loaded module,
+  // not of the routing, so that stays where it is and this reports the engine.
+  return GRXBLAS_ENGINE_GPU_TENSOR;
+}
+
 }  // namespace
 
 extern "C" {
+
+const char* grxblasGetEngineString(grxblasEngine_t engine) {
+  switch (engine) {
+    case GRXBLAS_ENGINE_NONE:       return "none (the call would be refused)";
+    case GRXBLAS_ENGINE_GPU_TENSOR: return "GRX-G100 tensor unit";
+    case GRXBLAS_ENGINE_NPU_C930:   return "GRX930 c930 NPU";
+  }
+  return "unknown engine";
+}
+
+grxblasStatus_t grxblasGetGemmEngine(grxblasHandle_t handle,
+                                     int m, int n, int k,
+                                     grxDataType_t Atype, grxDataType_t Btype,
+                                     grxDataType_t Ctype,
+                                     grxblasEngine_t* engine, int* device) {
+  if (!handle || !engine) return GRXBLAS_STATUS_INVALID_VALUE;
+  if (m <= 0 || n <= 0 || k <= 0) return GRXBLAS_STATUS_INVALID_VALUE;
+  int index = -1;
+  *engine = decide_gemm_engine(Atype, Btype, Ctype, &index);
+  if (device) *device = index;
+  return GRXBLAS_STATUS_SUCCESS;
+}
 
 const char* grxblasGetStatusString(grxblasStatus_t s) {
   switch (s) {
@@ -579,15 +657,18 @@ grxblasStatus_t grxblasGemmEx(grxblasHandle_t handle,
   // This check happens BEFORE ensure_hgemm() to avoid loading the
   // expensive GPU tensor kernel module when the NPU path is taken.
   // ------------------------------------------------------------------
+  //
+  // ROUTED THROUGH THE SAME DECISION grxblasGetGemmEngine reports, so the
+  // answer a caller can ask for cannot drift away from what actually happens.
+  const grxblasEngine_t engine = decide_gemm_engine(Atype, Btype, Ctype, nullptr);
+  if (engine == GRXBLAS_ENGINE_NONE) return GRXBLAS_STATUS_NOT_SUPPORTED;
+  if (engine == GRXBLAS_ENGINE_NPU_C930) {
 #ifdef GRXCP_ENABLE_NPU
-  {
-    const bool npu_int8 = (Atype == GRX_R_8I && Btype == GRX_R_8I &&
-                           Ctype == GRX_R_32I);
-    if (npu_int8 && current_device_is_npu()) {
-      return npu_gemm_path(m, n, k, alpha, A, lda, B, ldb, beta, C, ldc);
-    }
-  }
+    return npu_gemm_path(m, n, k, alpha, A, lda, B, ldb, beta, C, ldc);
+#else
+    return GRXBLAS_STATUS_NOT_SUPPORTED;
 #endif
+  }
 
   auto* ctx = reinterpret_cast<Context*>(handle);
   const grxblasStatus_t s = ensure_hgemm(*ctx);

@@ -1220,11 +1220,51 @@ side is honest about what it can see, and that it can be exercised without one.
 4. **Real workloads and tuning** — items 2 and 3 of the original list. Both sit
    behind item 1 above: there is nothing to tune against until a GEMM can be
    observed running on hardware.
-5. **Heterogeneous dispatch policy**, scope item 4 above, is untouched.
-   `grxblasGemmEx` routes on `deviceType == GRX_DEVICE_TYPE_NPU` with no
-   control and no documented rule — which is close to the "automatic magic"
-   this phase's scope rules out. The explicit
-   `grxblasSetPreferredDevice`-style control is still owed.
+5. ~~**Heterogeneous dispatch policy**~~, scope item 4 above. **Done, and the
+   sketched control was deliberately not built.**
+
+   The rule is written down and is one sentence: **the current device decides,
+   and nothing else does.** No redirect, and no fallback to another engine when
+   the current device's cannot take the call — it refuses. The scope line asked
+   for "an explicit `grxblasSetPreferredDevice`-style control plus a documented
+   default"; the control is the part that was declined, because a redirect is
+   invisible at the call site. The same source line would run on different
+   silicon depending on state set elsewhere, which is the automatic magic this
+   phase's own scope rules out wearing an explicit name. A program that wants
+   GEMM on the NPU calls `grxSetDevice`, which is one line and says so where a
+   reader can see it.
+
+   What was built instead is a way to **ask**: `grxblasGetGemmEngine` reports
+   which engine a matching `grxblasGemmEx` would use and **which device index
+   the decision was made about**, without running anything. Routing and report
+   come from one function, so the answer cannot drift from the behaviour.
+
+   Asking is what found the bug. The NPU check read
+
+   ```
+   grxGetDeviceProperties(&prop, grxGetDevice(nullptr))
+   ```
+
+   and `grxGetDevice` writes through its argument and **returns an error code**
+   — `grxErrorInvalidValue`, the value 1 — so the properties query was
+   `(&prop, 1)`. The routing consulted device index 1 on every call and the
+   current device on none of them. On a machine whose index 1 is not an NPU,
+   `grxSetDevice(npu)` routed to the GPU. On a machine whose index 1 **is** the
+   NPU — every machine with one GPU and one NPU, since the NPU is appended after
+   the GPU — an INT8 `GemmEx` issued while the current device was the **GPU**
+   routed to the NPU. Work on silicon the caller did not select, with no error.
+   It survived because the decision was a private static that nothing could
+   observe without owning a c930.
+
+   Two more, in the NPU path itself. `A_BASE`/`B_BASE`/`C_BASE` are 32-bit MMIO
+   words and a device pointer is 64: the cast truncated in silence and the DMA
+   would have read whatever lives at the low half. It is refused by name now.
+   And the duplicated dispatch guard was reduced to the one decision.
+
+   `tests/unit/test_dispatch.cpp`, DISPATCH GATE in `ci/build_mock.sh`, run with
+   two devices because with one the index cannot be seen to *follow*
+   `grxSetDevice`. Restoring the `grxGetDevice(nullptr)` expression fails it
+   with "device 0: the decision was made about device 1".
 6. **`libgrxrt` natively on riscv64.** `ci/build_mock.sh --host
    riscv64-linux-gnu` already cross-builds and *runs* the whole mock stack
    under qemu-user, and `ci/run_real.sh`'s HOST MATRIX GATE compiles for that

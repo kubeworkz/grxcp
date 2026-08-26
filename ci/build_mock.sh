@@ -141,12 +141,23 @@ done
 $CXX $CXXFLAGS -c "$ROOT/tools/grxify/main.cpp" -o "$BUILD/grxify.o"
 $CXX "$BUILD/grxify.o" -o "$BUILD/grxify"
 
+# grxBLAS's HOST half, for the unit tests that ask it questions. Its kernels
+# are device-side and are a tier-2 concern; the dispatch rule is not, and the
+# routing bug this exists to catch was pure host code.
+$CXX $CXXFLAGS -I"$ROOT/src/libs/grxblas" \
+  -c "$ROOT/src/libs/grxblas/grxblas.cpp" -o "$BUILD/grxblas_host.o"
+
 echo "==> linking unit tests"
 TESTS=()
 for src in "$ROOT"/tests/unit/*.cpp; do
   name="$(basename "${src%.cpp}")"
   $CXX $CXXFLAGS -I"$ROOT/tests/unit" -c "$src" -o "$BUILD/$name.o"
-  $CXX "${RT_OBJS[@]}" "$BUILD/$name.o" -o "$BUILD/$name"
+  # Linked by what the test INCLUDES, not by its name -- the same rule
+  # tests/CMakeLists.txt uses, and for the same reason: a filename convention
+  # is one rename away from silently not building a test.
+  extra=()
+  grep -q '#include <grx/grxblas.h>' "$src" && extra+=("$BUILD/grxblas_host.o")
+  $CXX "${RT_OBJS[@]}" "${extra[@]+"${extra[@]}"}" "$BUILD/$name.o" -o "$BUILD/$name"
   TESTS+=("$name")
 done
 
@@ -193,6 +204,24 @@ echo "==> CROSS-DEVICE GATE: two devices, and the pointers that cross between"
 # that is refused on the wrong device must be accepted on the right one, or a
 # runtime that refused everything would pass.
 GRXMOCK_DEVICE_COUNT=2 "${RUN[@]}" "$BUILD/test_cross_device"
+
+echo
+echo "==> DISPATCH GATE: which engine a grxBLAS call lands on, and whose device"
+# Phase 7 scope item 4: "a documented, explicit rule for which engine a library
+# call lands on. Not automatic magic."
+#
+# The rule is that the CURRENT DEVICE decides and nothing else does. What was
+# missing was any way to observe it -- and the decision was wrong. The NPU check
+# read grxGetDeviceProperties(&prop, grxGetDevice(nullptr)), and grxGetDevice
+# RETURNS AN ERROR CODE, so it consulted device index 1 on every call and the
+# current device on none. On a one-GPU-one-NPU machine that means an INT8
+# GemmEx issued on the GPU routed to the NPU: work on silicon the caller did
+# not select, with no error.
+#
+# Run with two devices, because with one the index cannot be seen to FOLLOW
+# grxSetDevice, which is the whole assertion. The test says so itself rather
+# than passing quietly on the weaker configuration.
+GRXMOCK_DEVICE_COUNT=2 "${RUN[@]}" "$BUILD/test_dispatch"
 
 # And the single-device machine must still be a single-device machine.
 [[ "$("${RUN[@]}" "$BUILD/grx-smi" 2>/dev/null | grep -c 'device 1')" == "0" ]] || {

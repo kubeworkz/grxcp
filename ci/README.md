@@ -103,6 +103,44 @@ device-0-pointer-on-device-1 case has to run while device 1 owns **nothing**, or
 the lookup stops at device 1's own entry and the second ablation passes. Both
 were found by ablating, not by reading.
 
+The **DISPATCH GATE** (`tests/unit/test_dispatch.cpp`) is phase 7's scope item
+4 — "a documented, explicit rule for which engine a library call lands on. Not
+automatic magic." The rule is that **the current device decides and nothing else
+does**: no redirect, no fallback to another engine, a refusal instead. What was
+missing was any way to observe it, and the decision was wrong.
+
+The NPU check read `grxGetDeviceProperties(&prop, grxGetDevice(nullptr))`, and
+`grxGetDevice` writes through its argument and **returns an error code** — with
+`nullptr`, `grxErrorInvalidValue`, the value 1. So the routing consulted device
+index 1 on every call and the current device on none of them. On a one-GPU
+one-NPU machine, where the NPU is appended at index 1, that means an INT8
+`GemmEx` issued while the current device was the **GPU** routed to the NPU: work
+on silicon the caller did not select, with no error anywhere.
+
+`grxblasGetGemmEngine` now reports the engine **and the device index the
+decision was made about**, from the same function that makes it, so the answer
+cannot drift from the behaviour. That index is the assertion, and it needs no
+NPU: the gate runs with `GRXMOCK_DEVICE_COUNT=2` and checks that the reported
+index follows `grxSetDevice`. With one device that is unobservable and the test
+says so rather than passing quietly on the weaker configuration.
+
+Watched failing two ways: restoring the `grxGetDevice(nullptr)` expression
+("device 0: the decision was made about device 1"), and reporting a fixed 0
+instead of the index decided about. There is a positive control — a well-formed
+question must still be answered — so a build that refused every query would not
+pass the three refusal cases.
+
+A `grxblasSetPreferredDevice` was **declined**, and the reason is written in
+`grxblas.h` next to the rule: a redirect is invisible at the call site, so the
+same source line would run on different silicon depending on state set
+elsewhere. Asking where work lands is the need; moving it silently is not.
+
+Linking these tests taught the build system something too. `tests/CMakeLists.txt`
+matched library dependencies by what a source **includes**, but only for
+`tests/libs/`; a unit test that asks grxBLAS a host-side question linked nothing
+and failed at the CMAKE GATE. The same include rule now covers `tests/unit/`,
+and `ci/build_mock.sh` uses it as well.
+
 The **NPU BACKEND GATE** drives `src/backends/npu_c930/` through four register
 models — a bus with nothing on it, a bus that floats high, a live device, and a
 device that accepts a launch and never finishes. The backend has no Vortex

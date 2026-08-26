@@ -104,6 +104,62 @@ grxblasStatus_t grxblasGemmEx(grxblasHandle_t handle,
                               const float* beta,
                               void* C, grxDataType_t Ctype, int ldc);
 
+// ---------------------------------------------------------------------------
+// WHERE A GEMM LANDS
+//
+// THE RULE, in one sentence: the CURRENT DEVICE decides, and nothing else does.
+// grxblasGemmEx never moves work to a device you are not on, and never falls
+// back to another engine when the one the current device offers cannot do the
+// call -- it refuses instead. A device-selection mistake stays a device-
+// selection mistake rather than becoming a performance mystery
+// (grxcp_architecture.md section 10 rule 5).
+//
+// THE CONTROL THAT IS DELIBERATELY NOT HERE. The roadmap sketched a
+// grxblasSetPreferredDevice, a knob that would route a call to an engine other
+// than the current device's. It is not built, and the reason is the rule above:
+// a redirect is invisible at the call site, so the same source line would run
+// on different silicon depending on state set somewhere else. That is the
+// automatic magic phase 7's own scope rules out, wearing an explicit name.
+// If a program wants GEMM on the NPU it calls grxSetDevice, which is one line
+// and says so where anyone reading the code can see it.
+//
+// WHAT IS HERE INSTEAD is a way to ASK. grxblasGetGemmEngine reports where a
+// matching grxblasGemmEx would run and on which device, without running it.
+// The routing and the report come from the same decision function, so the
+// answer cannot drift away from the behaviour -- which is not hypothetical:
+// the NPU check used to read `grxGetDeviceProperties(&prop, grxGetDevice(NULL))`,
+// and grxGetDevice(NULL) returns an ERROR CODE, so the routing consulted
+// device 1 forever and never the current device at all.
+// No GPU_SCALAR value: grxblasGemmEx is the tensor entry point and never falls
+// back to the SIMT kernel, so a value for it would be one that never appears.
+// It goes in when something returns it.
+typedef enum {
+  GRXBLAS_ENGINE_NONE       = 0,  // the routing has nowhere to send this call
+  GRXBLAS_ENGINE_GPU_TENSOR = 1,  // the GRX-G100 tensor unit
+  GRXBLAS_ENGINE_NPU_C930   = 2,  // the GRX930 systolic array over MMIO
+} grxblasEngine_t;
+
+const char* grxblasGetEngineString(grxblasEngine_t engine);
+
+// Where a grxblasGemmEx with these arguments would run, and on which device.
+//
+// `device` is the index the decision was made ABOUT. It is the current device
+// or the call is wrong, and it is reported rather than assumed so a test can
+// say which.
+//
+// This answers "which engine", not "will it succeed": a pairing the tensor unit
+// does not accept still reports GPU_TENSOR and still fails at the call, because
+// type support is a property of the loaded module rather than of the routing.
+// GRXBLAS_ENGINE_NONE is returned only when the routing itself has nowhere to
+// send the call.
+grxblasStatus_t grxblasGetGemmEngine(grxblasHandle_t handle,
+                                     int m, int n, int k,
+                                     grxDataType_t Atype,
+                                     grxDataType_t Btype,
+                                     grxDataType_t Ctype,
+                                     grxblasEngine_t* engine,
+                                     int* device);
+
 // Which input types this device's tensor unit accepts.
 //
 // A bitmask, because the answer is a set and because it is a property of the

@@ -19,8 +19,20 @@ foreach(src ${UNIT_SRC})
     continue()
   endif()
 
+  # A unit test may also ask a LIBRARY a question that needs no device kernel --
+  # test_dispatch.cpp asks grxBLAS which engine a GEMM would land on, which is
+  # pure host routing. Linked by what it includes, the same rule the library
+  # gates below use, and for the same reason: a filename convention is one
+  # rename away from silently not building a test.
+  set(_unit_libs "")
+  foreach(lib grxblas grxdnn grxfft grxrand grxsparse)
+    if(TARGET ${lib} AND _src_text MATCHES "include[ \t]*<grx/${lib}\\.h>")
+      list(APPEND _unit_libs ${lib})
+    endif()
+  endforeach()
+
   add_executable(${name} ${src})
-  target_link_libraries(${name} PRIVATE grxrt)
+  target_link_libraries(${name} PRIVATE ${_unit_libs} grxrt)
   # A few unit tests include the driver's own VX_types.h to check GRXCP's view
   # of a descriptor field for field against the definition it has to match. That
   # header lives in the sysroot's KERNEL include directory, not the runtime one,
