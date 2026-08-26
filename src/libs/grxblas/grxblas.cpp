@@ -102,16 +102,39 @@ struct Context {
 // outputs -- silently, in whichever direction the two drifted.
 constexpr int kSgemmRowsPerThread = 4;
 
-// Two ways the register-blocked kernel earns its keep, and it needs EITHER.
-// See the measured table at the launch site for where these came from.
+// WHEN THE BLOCKED KERNEL PAYS -- and this rule is KEPT DESPITE BEING WRONG
+// about its own mechanism, which needs explaining rather than hiding.
 //
-//   k >= kSgemmMinK          the per-thread setup is amortised over the k loop
-//   ceil(m/RM) >= warpSize   the stores stay coalesced
+// The rule is: k >= kSgemmMinK, OR ceil(m/RM) >= warpSize. It was fitted to
+// five points from the block profile and the roadmap called it provisional.
+// tests/bench/sgemm_sweep.cpp swept it properly -- 66 shapes across m, n and k,
+// both kernels over the same operands, plus batch and transpose:
 //
-// The second is the one that is easy to miss. Thread `sub` owns column
-// `idx / row_blocks`, so when row_blocks is smaller than the warp the column
-// CHANGES WITHIN A WARP and consecutive lanes stop writing consecutive
-// addresses. At warp 4 and RM 4 that boundary is m = 16.
+//   * The STATED MECHANISM IS WRONG. The coalescing story says the boundary is
+//     m = 16 at warp 4; the sweep shows m = 8 winning at n = 16 by 1.27x. And k
+//     never changes which kernel wins ANYWHERE in the swept range -- it moves
+//     the magnitude (1.17x at k=4 to 1.53x at k=32, same m and n) and nothing
+//     else. The k clause is not doing what its comment says.
+//   * WHAT ACTUALLY PREDICTS THE ISOLATED GEMM is the output count:
+//     m*n*batch >= 2 * resident threads explains all 66 cells with no
+//     exceptions, where the old rule is wrong on 19 of them. Cells with equal
+//     m*n agree to two decimals however m and n split (m=4,n=16 / m=8,n=8 /
+//     m=16,n=4 all read 0.90), and batch scales it exactly (m=n=8 batch=2 reads
+//     1.43; unbatched m=8,n=16 -- the same 128 outputs -- reads 1.44).
+//   * AND YET IT LOSES ON THE REAL WORKLOAD. Shipping the output-count rule
+//     made the transformer block SLOWER: 230171 cycles against 226405 at S=8,
+//     because attention's scores GEMM -- m=n=8, k=8, batch=2, which the sweep
+//     says blocking wins by 1.39x IN ISOLATION -- runs 27.6% slower inside the
+//     block. Transpose was checked and does not explain it (0 of 4 shapes flip).
+//
+// So an isolated-GEMM sweep does not predict the block, and nobody here knows
+// why yet. Until that is understood, the rule that wins on the workload ships,
+// with its mechanism corrected to "fitted, and its stated reason disproven"
+// rather than left reading as though it were understood. The sweep is a gate
+// so the disagreement count cannot grow quietly.
+//
+// What a real answer needs: the same sweep run INSIDE a block, per stage, so
+// the thing being optimised is the thing being measured.
 constexpr int kSgemmMinK = 16;
 
 // One warp per block, so one slot per block. Kept as a function because the
@@ -1085,10 +1108,15 @@ static grxblasStatus_t sgemm_batched(grxblasHandle_t handle,
   // uses it to run both kernels over the same operands and compare them, which
   // is what makes the naive one an oracle rather than merely a fallback.
   const bool force_naive = std::getenv("GRXBLAS_SGEMM_NAIVE") != nullptr;
+  // The other direction, and it exists so the RULE below can be measured
+  // rather than believed. tests/bench/sgemm_sweep.cpp runs the blocked kernel
+  // at shapes the rule declines, which is the only way to find out whether
+  // declining them was right. Never consulted unless it is set.
+  const bool force_rb = std::getenv("GRXBLAS_SGEMM_RB") != nullptr;
   const int row_blocks = (m + kSgemmRowsPerThread - 1) / kSgemmRowsPerThread;
   const bool rb_pays = (k >= kSgemmMinK) || (row_blocks >= prop.warpSize);
   const bool use_rb = ctx->sgemm_rb_fn && !force_naive &&
-                      m >= kSgemmRowsPerThread && rb_pays;
+                      m >= kSgemmRowsPerThread && (rb_pays || force_rb);
 
   const unsigned block = (unsigned)prop.warpSize;
   const unsigned outputs = use_rb

@@ -457,6 +457,37 @@ for the baselines rather than reused, and it earns its minutes twice: it pins
 the register-blocking speedup to a measured pair, and it is the control that
 proves the kernel selection does anything at all.
 
+The **SGEMM CROSSOVER GATE** (`tests/bench/sgemm_sweep.cpp`) is the sweep the
+roadmap said was owed, and it is the rare gate that exists to record a
+contradiction rather than to assert a rule.
+
+The kernel-selection rule — `k >= 16 || ceil(m/RM) >= warpSize` — was fitted to
+five points from the block profile. Swept properly, 66 shapes across m, n and k
+with both kernels over the same operands: **k never changes which kernel wins**
+anywhere in the range (it moves the magnitude, 1.17× at k=4 against 1.53× at
+k=32), and the coalescing boundary is not at m = 16 — m = 8 wins at n = 16.
+What does predict the isolated GEMM is `m*n*batch >= 2 × resident threads`,
+which explains **all 66 cells** where the shipping rule is wrong on 19. Cells
+with equal m·n agree to two decimals however m and n split, and batch scales it
+exactly.
+
+**And shipping that better rule made the transformer block slower** — 230171
+cycles against 226405 at S=8, because attention's scores GEMM loses inside the
+block while winning by 1.39× in isolation. Transpose was checked and explains
+none of it. So an isolated sweep does not predict the workload, nobody here
+knows why yet, and the rule that wins on the block is the one that ships with
+its comment corrected to say its stated mechanism is disproven.
+
+What the gate therefore checks is that the **disagreement does not grow**: no
+more than the 3 recorded shapes where the rule picks the slower kernel, no more
+than the 6 where it declines a faster one, and that the output-count rule still
+explains every isolated cell — because that last one is what makes the block's
+disagreement worth chasing rather than a rounding artifact. 21 seconds.
+
+`GRXBLAS_SGEMM_RB` exists for this bench and only for it: the rule refuses the
+blocked kernel at shapes it dislikes, so measuring whether the refusal was right
+needs a way to run it anyway.
+
 The **PERF BASELINE GATE** (`ci/check_perf.py`, `ci/perf/baselines/`) compares
 152 measured cycle counts against stored golden files. AGENTS.md section 4 had
 said since the first commit that a moved number means real cycles moved, and

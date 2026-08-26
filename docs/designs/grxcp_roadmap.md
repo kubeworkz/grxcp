@@ -1082,13 +1082,43 @@ So blocking pays when **either** the k loop amortises the setup **or** the
 stores stay coalesced, and attention is the only stage with neither. With that
 rule in the host, no stage regresses and the block is 1.34× faster.
 
-The rule is **fitted to five points on one configuration and is provisional**:
-the k crossover is bracketed by 8 and 16 with nothing swept between, and the
-coalescing boundary has a mechanism behind it but one measurement either side. A
-shape near either edge gets the reference kernel — correct, merely not the
-fastest, which is the right way round. A proper sweep of both boundaries is
-owed, and so is the obvious next step: a 2D micro-tile (RM × RN) reuses **both**
-operands instead of one, and 4 loads per 4 outputs beats 5.
+**The sweep was owed and has now been done, and it disproved the mechanism
+above while leaving the rule standing.** `tests/bench/sgemm_sweep.cpp`, 66
+shapes across m, n and k with both kernels over the same operands, plus batch
+and transpose. SGEMM CROSSOVER GATE in `ci/run_real.sh`.
+
+What it found, in order:
+
+* **k never decides anything.** Across the whole swept range it moves the
+  magnitude — 1.17× at k=4 against 1.53× at k=32, same m and n — and never
+  changes which kernel wins. The `k >= 16` clause is not doing what its comment
+  said it was.
+* **The coalescing boundary is not at m = 16.** m = 8 wins at n = 16 by 1.27×.
+* **What actually predicts the isolated GEMM is the output count.**
+  `m*n*batch >= 2 × resident threads` explains **all 66 cells with no
+  exceptions**, where the shipping rule is wrong on 19. Cells with equal m·n
+  agree to two decimals however m and n split — m=4,n=16 and m=8,n=8 and
+  m=16,n=4 all read 0.90 — and batch scales it exactly: m=n=8 at batch 2 reads
+  1.43, and the unbatched m=8,n=16 cell, the same 128 outputs, reads 1.44. The
+  mechanism is that the blocked kernel produces the same outputs with a quarter
+  of the threads, so below saturation it just idles the core.
+* **And shipping that rule made the block SLOWER.** 230171 cycles against
+  226405 at S=8. Attention's scores GEMM — m=n=8, k=8, batch=2, which the sweep
+  says blocking wins by 1.39× *in isolation* — runs 27.6% slower inside the
+  block. Transpose was checked and explains none of it: 0 of 4 shapes flip.
+
+**So the rule stays, and its comment no longer claims to know why.** An
+isolated-GEMM sweep does not predict the workload, and replacing a rule that
+wins on the block with one that loses on it would be optimising the measurement
+instead of the program. The gate now pins the disagreement counts — 3 shapes
+where the rule picks the slower kernel, 6 where it declines a faster one — so
+they cannot grow quietly while the question is open.
+
+What a real answer needs is the same sweep run **inside a block, per stage**, so
+the thing being optimised is the thing being measured. That is the next piece of
+work here, ahead of the 2D micro-tile (RM × RN), which reuses **both** operands
+instead of one — 4 loads per 4 outputs beats 5 — and which would be tuned
+against the same misleading isolated numbers if it were done first.
 
 **Fusing the bias into the GEMM epilogue would save about 2%.** That was the
 obvious next optimisation before anyone measured, and the measurement says not

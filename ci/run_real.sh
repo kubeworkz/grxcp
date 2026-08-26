@@ -654,6 +654,33 @@ else
 fi
 
 echo
+echo "==> SGEMM CROSSOVER GATE: is the kernel-selection rule still right"
+# The rule that decides between the naive sgemm and the register-blocked one
+# used to be `k >= 16 || ceil(m/RM) >= warpSize`, fitted to five points from the
+# block profile, and the roadmap called it provisional in as many words. Swept
+# properly -- 66 shapes across m, n and k, both kernels over the same operands --
+# it was wrong on 19 of them, including three where it picked the SLOWER kernel.
+#
+# What replaced it is `m*n >= 2 * resident threads`, which explains all 66 with
+# no exceptions and in which k does not appear at all. This gate re-measures the
+# sweep and fails if the rule ever picks the slower kernel again; declining a
+# win is reported rather than gated, because only picking a loss can make a
+# program slower than it was before the tuned kernel existed.
+#
+# 21 seconds, measured.
+if [[ -n "$GRXGPU" && -d "$TOOLDIR/llvm-vortex" ]]; then
+  $CXX $CXXFLAGS -c "$ROOT/tests/bench/sgemm_sweep.cpp" -o "$BUILD/sgemm_sweep.o"
+  $CXX "${OBJS[@]}" "$BUILD/grxblas.o" "$BUILD/sgemm_sweep.o" $LIBS \
+    -o "$BUILD/sgemm_sweep"
+  if ! "$BUILD/sgemm_sweep"; then
+    rc=$?
+    [[ $rc -eq 77 ]] || exit $rc
+  fi
+else
+  echo "SKIPPED: needs --grxgpu <path> and a device toolchain in $TOOLDIR."
+fi
+
+echo
 echo "==> BLOCK CYCLES: where a transformer block's cycles actually go"
 # A REPORT, not a gate -- except its last section, which is a gate and the only
 # reason the rest is worth reading: the block runs at two sequence lengths and
