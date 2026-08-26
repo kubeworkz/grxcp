@@ -118,6 +118,21 @@ echo
 echo "==> PERF COMPARATOR: the baseline checker's own logic, without a device"
 python3 "$ROOT/ci/check_perf.py" --self-test
 
+# Also before the build, and it compiles for four targets of its own. The kernel
+# argument structs are WRITTEN by the host and READ by the device; a disagreement
+# about one offset is not an error anywhere, the kernel just reads the blob where
+# it was compiled to and returns a wrong answer. Nothing had ever compared them,
+# and phase 7 makes the host RV64 for the first time.
+#
+# Skipped on a cross build: the checker invokes the cross and device compilers
+# itself, so running it from inside the riscv64 leg would repeat the identical
+# comparison.
+if [[ -z "$HOST_TRIPLE" ]]; then
+  echo
+  echo "==> ABI GATE: one layout for the shared structs, on every target"
+  python3 "$ROOT/ci/check_abi.py" --tooldir "${GRXCP_TOOLDIR:-/home/claude/tools}"
+fi
+
 echo
 echo "==> compiling runtime"
 RT_OBJS=()
@@ -436,3 +451,29 @@ else
 fi
 
 echo "all mock checks passed"
+
+# THE HOST MATRIX, run rather than merely available.
+#
+# The GRX930's host half is a RISC-V64 SoC, not an x86 box, and this script has
+# been able to cross-build and RUN the whole mock stack under qemu-user since
+# phase 4 -- behind a flag nobody's CI passed. "Available" is not "checked": a
+# leg that is never invoked reports nothing, which is how the riscv64 host came
+# to be an untested configuration in a phase whose scope names it.
+#
+# It costs 15 seconds against the native leg's 33, measured, and it runs every
+# gate above except the two that say why they cannot (the cmake gate is native,
+# grx-prof needs a child process).
+if [[ -z "$HOST_TRIPLE" && "${GRXCP_NO_HOST_MATRIX:-0}" != "1" ]]; then
+  echo
+  echo "==> HOST MATRIX: the same stack, cross-built and RUN for riscv64"
+  # VORTEX_PATH is inherited and the child re-derives both include directories
+  # from pkg-config. Forwarding --vortex-include INSTEAD would hand it only the
+  # runtime one and skip the block that finds the kernel headers -- which is
+  # exactly what happened here first: profile.cpp could not find VX_types.h,
+  # sitting in the directory the parent had already located and not passed on.
+  if [[ -n "${VORTEX_PATH:-}" ]]; then
+    "$0" --host riscv64-linux-gnu
+  else
+    "$0" --vortex-include "$VORTEX_INCLUDE" --host riscv64-linux-gnu
+  fi
+fi

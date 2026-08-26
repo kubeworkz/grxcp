@@ -1265,10 +1265,51 @@ side is honest about what it can see, and that it can be exercised without one.
    two devices because with one the index cannot be seen to *follow*
    `grxSetDevice`. Restoring the `grxGetDevice(nullptr)` expression fails it
    with "device 0: the decision was made about device 1".
-6. **`libgrxrt` natively on riscv64.** `ci/build_mock.sh --host
-   riscv64-linux-gnu` already cross-builds and *runs* the whole mock stack
-   under qemu-user, and `ci/run_real.sh`'s HOST MATRIX GATE compiles for that
-   host. Neither is a GRX930 board, and neither runs by default in CI.
+6. ~~**`libgrxrt` natively on riscv64.**~~ **The part that does not need a board
+   is done.** `ci/build_mock.sh` now runs the riscv64 leg itself, after the
+   native one, instead of hiding it behind a flag nobody's CI passed. It costs
+   **15 seconds** against the native leg's 33, measured, and runs every gate
+   except the two that say why they cannot — the cmake gate is native, and
+   grx-prof needs a child process. "Available" was not "checked": a leg nobody
+   invokes reports nothing, which is how the RV64 host came to be an untested
+   configuration in a phase whose scope names it.
+
+   Running it raised a question nothing had asked: **do the host and the device
+   lay the shared structs out the same way?** The kernel argument structs are
+   written by the host and read by the device, and a disagreement about one
+   offset is not an error anywhere — the kernel reads the blob where it was
+   compiled to and returns a wrong answer. `grxblas_sgemm_args` carries an
+   `abi_version` first field because that failure was anticipated, but a version
+   catches a struct that *changed*, not two compilers that lay the same
+   definition out differently. Until phase 7 the host was x86-64 in every
+   configuration anyone built.
+
+   `ci/check_abi.py` compares `sizeof`, `_Alignof` and every field's `offsetof`
+   across **four targets** — x86-64 host, riscv64 host, device rv64, device
+   rv32 — by turning each fact into an array whose length is the number and
+   reading it back with `nm --print-size`, so the two targets that cannot
+   execute here are checked anyway. 137 facts over 11 cross-boundary structs;
+   they all agree today.
+
+   Two things it taught, both by ablation. The probe was a **hand-picked list**
+   of fields at first: planting a `size_t` at the front of `grxdnn_gelu_args`, a
+   struct the list covered by size only, moved nothing the gate looked at —
+   LP64 grew it by 8, ILP32 grew it by 4 and padded 4 back, so the sizes stayed
+   equal while every field behind it moved. The probe is **generated from the
+   headers** now, every field of every struct, and a declaration the parser
+   cannot read is a failure rather than a silent omission. And `grx_abi.h`'s
+   `grx_kernel_desc` holds native pointers, so it is 40 bytes on LP64 and 32 on
+   ILP32 — reported as nine failures until the right question was asked: **no
+   device source includes that header.** It is host-only, grxcc writes it and
+   the runtime reads it, both on the same host. Headers are annotated by
+   boundary now, and the annotation is itself checked — a device kernel that
+   starts including a host-only header fails the gate.
+
+   Still owed and still needing a board: `libgrxrt` running on an actual GRX930,
+   and the conformance suite compiled natively there. qemu-user proves there are
+   no x86-isms, that structs are passed and returned correctly on RV64, and that
+   nothing faults on alignment. It proves nothing about a weak memory model,
+   which it does not model, and nothing about the SoC.
 
 The seam the device table needs in order to hold both is written up in
 [`heterogeneous_devices.md`](heterogeneous_devices.md).

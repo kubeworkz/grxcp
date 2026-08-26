@@ -141,6 +141,58 @@ matched library dependencies by what a source **includes**, but only for
 and failed at the CMAKE GATE. The same include rule now covers `tests/unit/`,
 and `ci/build_mock.sh` uses it as well.
 
+The **ABI GATE** (`ci/check_abi.py`) compares `sizeof`, `_Alignof` and every
+field's `offsetof` for the shared structs across four targets: x86-64 host,
+riscv64 host, device rv64, device rv32. The kernel argument structs are
+**written by the host and read by the device**, and a disagreement about one
+offset is not an error anywhere — the kernel reads the blob where it was
+compiled to and returns a wrong answer. `grxblas_sgemm_args` carries an
+`abi_version` first field because that failure was anticipated; a version
+catches a struct that *changed*, not two compilers that lay the same definition
+out differently. Nothing had ever compared them, and until phase 7 the host was
+x86-64 in every configuration anyone built.
+
+Two of the four targets cannot run here — the device images are bare-metal
+RISC-V for a core this container does not have — so each fact becomes an array
+whose **length** is the number and `nm --print-size` reads it out of the object
+file, executed or not.
+
+The probe is **generated from the headers**, every field of every struct.
+It was a hand-picked list first, and ablation killed that: planting a `size_t`
+at the front of `grxdnn_gelu_args`, a struct the list covered by size only,
+moved nothing the gate looked at. LP64 grew the struct by 8; ILP32 grew it by 4
+then padded 4 to realign the `uint64_t` behind it, so both sizes moved by 8 and
+stayed equal while every following field sat somewhere else on the device. Sizes
+do not catch a layout change; offsets do, and a list of them written by hand is
+one new field away from missing the field that breaks. A declaration the parser
+cannot read is now a failure, not a silent omission.
+
+Headers are annotated by **boundary**, and the annotation is checked. The first
+run reported nine failures in `grx_abi.h`'s `grx_kernel_desc` — 40 bytes on LP64
+and 32 on ILP32, because it holds a `const char*` and a `const
+grx_kernel_param*`. Not a defect: **no device source includes that header.**
+grxcc writes it and the runtime reads it, both compiled for the same host, so a
+native pointer there is legitimate. Host-only headers are compared across the
+hosts alone, and a device kernel that starts including one fails the gate — the
+second ablation.
+
+Where the discriminating power actually is, measured rather than assumed: the
+two hosts are both LP64 and agree on every layout these headers can express. The
+live edge is host against **device-rv32**. The riscv64 host leg earns its keep by
+*executing* — alignment, argument passing, struct return — not by disagreeing
+about offsets.
+
+The **HOST MATRIX** now runs by default. `ci/build_mock.sh --host
+riscv64-linux-gnu` has been able to cross-build and *run* the whole mock stack
+under qemu-user since phase 4, behind a flag nobody's CI passed; "available" is
+not "checked", and a leg nobody invokes reports nothing. The native leg takes 33
+seconds and the riscv64 leg 15, measured, and the second runs every gate except
+the two that say why they cannot. `GRXCP_NO_HOST_MATRIX=1` turns it off.
+
+It proves there are no x86-isms and that structs survive a different ABI. It
+proves **nothing** about a weak memory model, which qemu-user does not model,
+and nothing about a GRX930 board.
+
 The **NPU BACKEND GATE** drives `src/backends/npu_c930/` through four register
 models — a bus with nothing on it, a bus that floats high, a live device, and a
 device that accepts a launch and never finishes. The backend has no Vortex
