@@ -112,6 +112,7 @@ struct DeviceFacts {
   bool        have_device = false;
   std::string name;
   bool        warp_shuffle_emulated = false;
+  bool        texture_emulated = false;
   bool        event_timing_host     = false;
   bool        simulated             = false;
   bool        constant_is_global    = false;
@@ -128,6 +129,7 @@ DeviceFacts probe_device() {
   f.have_device           = true;
   f.name                  = p.name;
   f.warp_shuffle_emulated = p.warpShuffleIsEmulated != 0;
+  f.texture_emulated      = p.textureIsEmulated != 0;
   f.event_timing_host     = p.eventTimingIsDeviceSide == 0;
   f.simulated             = (p.backend == GRX_BACKEND_SIMX ||
                              p.backend == GRX_BACKEND_RTLSIM ||
@@ -216,6 +218,16 @@ void print_human(const std::vector<Check>& checks, const DeviceFacts& facts) {
                                          : "constant cache");
     std::printf("  managed memory         %s\n",
                 facts.managed_memory ? "available" : "refused on this backend");
+    // Printed next to the other honesty flags rather than buried in the table,
+    // because a reader deciding whether to port texture code needs it before
+    // they read a coverage percentage that counts those entry points.
+    std::printf("  textures               %s\n",
+                facts.texture_emulated
+                    ? "SOFTWARE: the calling warp addresses and filters"
+                    : "TEX units");
+    if (facts.texture_emulated)
+      std::printf("                         a bilinear fetch is four global "
+                  "loads, not a cache hit\n");
     // A port that calls atomicAdd needs this before it runs, not after: a
     // build without the A extension does not fail the instruction, it aborts
     // the simulator (cuda_mapping.md 7.16).

@@ -76,6 +76,26 @@
 #define cudaGetSymbolAddress            grxGetSymbolAddress
 #define cudaGetSymbolSize               grxGetSymbolSize
 #define cudaErrorInvalidSymbol          grxErrorInvalidSymbol
+
+// --- textures ---------------------------------------------------------------
+// SOFTWARE sampling. The TEX units are driven by the graphics path and are not
+// reachable from compute (cuda_mapping.md 7.8), so the calling warp does the
+// addressing and filtering. grxDeviceProp_t.textureIsEmulated reads 1.
+// float and float4 only; a port needing an integer format with normalized
+// reads fails to compile here rather than reading garbage.
+#define cudaArray_t                     grxArray_t
+#define cudaTextureObject_t             grxTextureObject_t
+#define cudaTextureDesc                 grxTextureDesc_t
+#define cudaMallocArray                 grxMallocArray
+#define cudaFreeArray                   grxFreeArray
+#define cudaCreateTextureObject(o,r,t,x) grxCreateTextureObject((o),(r),(t))
+#define cudaDestroyTextureObject        grxDestroyTextureObject
+#define cudaAddressModeClamp            GRX_TEX_ADDRESS_CLAMP
+#define cudaAddressModeWrap             GRX_TEX_ADDRESS_WRAP
+#define cudaAddressModeMirror           GRX_TEX_ADDRESS_MIRROR
+#define cudaAddressModeBorder           GRX_TEX_ADDRESS_BORDER
+#define cudaFilterModePoint             GRX_TEX_FILTER_POINT
+#define cudaFilterModeLinear            GRX_TEX_FILTER_LINEAR
 #define cudaPointerAttributes           grxPointerAttributes
 #define cudaMemcpyKind                  grxMemcpyKind
 #define cudaMemcpyHostToHost            grxMemcpyHostToHost

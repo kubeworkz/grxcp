@@ -508,6 +508,51 @@ Regenerating is `ci/check_perf.py --results build-real --regenerate`, and the
 point of it is the diff: a moved number is meant to arrive in review beside the
 code that moved it, never as a quiet edit to make a red gate green.
 
+The **TEXTURE GATE** (`tests/kernels/texture/`) closes phase 6's coverage
+clause, and what it gates is arithmetic and honesty — never hardware. The TEX
+units are driven by the graphics path and unreachable from compute
+(`cuda_mapping.md` 7.8, still open), so `grx::tex<>` addresses and filters in
+SOFTWARE, in the calling warp. That is architecture section 10 rule 5's
+sanctioned exception and nothing wider: an emulation reported through a device
+property, as the warp-shuffle fallback is. **The flag is part of the gate** —
+`grxDeviceProp_t.textureIsEmulated` must read 1, so a green run that quietly
+stopped reporting the emulation fails. A phase gate closed by counting entry
+points that pretended to be hardware would be the worst outcome available.
+
+The reference is **PyTorch's `grid_sample`**, for the same reason the attention
+gate uses PyTorch. A sampler is almost entirely convention — where a texel
+centre sits, which way floor rounds a negative coordinate, what clamp means at
+the far edge — and a reference written from the same reasoning as the
+implementation agrees with it whether or not either is right. `align_corners
+=False` is exactly CUDA's convention, and three of its padding modes are three
+of our four address modes. WRAP has no equivalent and is checked against a
+from-specification reference instead, labelled as the weaker check it is. 81
+coordinates, inside and well outside on every side, against a field with
+curvature: a linear ramp is the classic bad texture fixture, since bilinear
+interpolation of a linear function is exact whatever weights you use.
+
+Two things building it turned up.
+
+`__builtin_floorf` **does not compile on a divergent value** for this device —
+`error: unimplemented divergent codegen found!`. Measured across the family,
+because which ones is the difference between a workaround and a superstition:
+`floorf`, `ceilf`, `truncf`, `roundf` and `rintf` all fail; `nearbyintf`,
+`fabsf` and `sqrtf` all compile. The five that fail lower to a float→int→float
+sequence with an explicit rounding mode. No device code in the tree had ever
+needed a rounding builtin, so this is the first thing that could have found it
+(`cuda_mapping.md` 7.24).
+
+And an **unexplained one, recorded as unexplained.** Written with a divergent
+early return, the texel fetch produced wrong values in the border address mode
+at 64 threads — three modes agreeing with PyTorch to 2e-7 and border out by
+8.9e-1. The branch-free spelling, semantically identical, agrees everywhere. A
+single-lane probe of the original is correct with every intermediate correct,
+and **three minimal reproducers** — a bare divergent early return, one with a
+bool out-parameter, one with the out-parameter set inside a switch — all run
+correctly. No compiler defect was isolated and none is claimed; the repro that
+did not reproduce was deleted rather than kept as a watch that always reports
+FIXED. The workaround ships with that written at it.
+
 The **ATTENTION GATE** (`tests/libs/test_grxdnn_attn.cpp`) is the last quarter
 of the phase 6 exit gate, and the only gate here whose reference is a third
 party's arithmetic. Attention is where grxDNN's row-major convention meets

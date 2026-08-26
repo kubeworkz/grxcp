@@ -887,6 +887,31 @@ deliberately out of scope for v1 (graphs, IPC, interop — `cuda_mapping.md`
 7.15). A phase whose scope is library breadth barely moves a CUDA **runtime**
 API count: grxFFT and grxSPARSE are not entry points in this table.)*
 
+**BOTH CLAUSES ARE NOW MET.** The block ran end to end against PyTorch when
+attention landed; `grx::tex<>` supplied the three remaining entry points and
+the published number is **57 of 83 (69%)**.
+
+The three are **PARTIAL, and the distinction is load-bearing.** The TEX units
+are driven by the graphics path and are not reachable from compute
+(`cuda_mapping.md` 7.8, still open), so `grx::tex<>` addresses and filters in
+SOFTWARE, in the calling warp. That is architecture section 10 rule 5's
+sanctioned exception and nothing wider: an emulation reported through a device
+property, exactly as the warp-shuffle fallback is.
+`grxDeviceProp_t.textureIsEmulated` reads 1, `grx-conform` prints it, and the
+TEXTURE GATE fails if it ever stops. A phase gate closed by counting entry
+points that quietly pretended to be hardware would be the worst outcome
+available here, so the flag is part of the gate rather than a footnote to it.
+
+Two more differences keep them at PARTIAL rather than MAPPED: filter weights
+are full-precision float where NVIDIA quantizes the fraction to 8 bits, and the
+channel formats are `float` and `float4` only — integer formats with normalized
+reads fail to compile rather than reading garbage.
+
+Building it found a toolchain defect nothing else could have:
+`__builtin_floorf` and four sibling rounding builtins do not compile on a
+**divergent** value for this device (`cuda_mapping.md` 7.24). No device code in
+the tree had ever needed one.
+
 **Progress.** grxDNN v0 has landed: `grxdnnSoftmaxForward`,
 `grxdnnLayerNormForward` and `grxdnnAttentionForward`, fp32, forward only,
 row-major. The norms are one warp per row, checked against a host reference on

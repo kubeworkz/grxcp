@@ -123,9 +123,9 @@ GRX_CUDA_API(cudaGraphLaunch,          ,                        ABSENT,      "gr
 GRX_CUDA_API(cudaGraphInstantiate,     ,                        ABSENT,      "graph",   "see cudaGraphCreate")
 GRX_CUDA_API(cudaIpcGetMemHandle,      ,                        ABSENT,      "ipc",     "no cross-process device memory sharing")
 GRX_CUDA_API(cudaIpcOpenMemHandle,     ,                        ABSENT,      "ipc",     "see cudaIpcGetMemHandle")
-GRX_CUDA_API(cudaCreateTextureObject,  ,                        ABSENT,      "texture", "the texture units exist in hardware but are driven by the graphics path and not exposed to compute yet")
-GRX_CUDA_API(cudaDestroyTextureObject, ,                        ABSENT,      "texture", "see cudaCreateTextureObject")
-GRX_CUDA_API(cudaMallocArray,          ,                        ABSENT,      "texture", "see cudaCreateTextureObject")
+GRX_CUDA_API(cudaCreateTextureObject,  grxCreateTextureObject,  PARTIAL,     "texture", "SOFTWARE sampling: the TEX units are driven by the graphics path and unreachable from compute, so the calling warp addresses and filters. Reported by grxDeviceProp_t.textureIsEmulated. float and float4 only; filter weights are full-precision where NVIDIA quantizes to 8 bits")
+GRX_CUDA_API(cudaDestroyTextureObject, grxDestroyTextureObject, PARTIAL,     "texture", "see cudaCreateTextureObject")
+GRX_CUDA_API(cudaMallocArray,          grxMallocArray,          PARTIAL,     "texture", "a pitched device allocation, not an opaque swizzled array -- there is no texture unit to swizzle for")
 GRX_CUDA_API(cudaGraphicsGLRegisterBuffer, ,                    ABSENT,      "interop", "no graphics interop surface")
 GRX_CUDA_API(cudaProfilerStart,        ,                        ABSENT,      "profiler", "use grx-prof; there is no in-process profiler control API")
 GRX_CUDA_API(cudaProfilerStop,         ,                        ABSENT,      "profiler", "see cudaProfilerStart")
@@ -175,8 +175,8 @@ GRX_CUDA_TYPE(cudaEventDisableTiming,    grxEventDisableTiming,    MAPPED, "")
 
 GRX_CUDA_TYPE(cudaGraph_t,               ,                         ABSENT, "CUDA graphs are deferred")
 GRX_CUDA_TYPE(cudaGraphExec_t,           ,                         ABSENT, "CUDA graphs are deferred")
-GRX_CUDA_TYPE(cudaTextureObject_t,       ,                         ABSENT, "textures are not exposed to compute yet")
-GRX_CUDA_TYPE(cudaArray_t,               ,                         ABSENT, "textures are not exposed to compute yet")
+GRX_CUDA_TYPE(cudaTextureObject_t,       grxTextureObject_t,       PARTIAL, "the device address of a descriptor the KERNEL reads, not an opaque hardware token")
+GRX_CUDA_TYPE(cudaArray_t,               grxArray_t,               PARTIAL, "a pitched device allocation")
 GRX_CUDA_TYPE(cudaIpcMemHandle_t,        ,                         ABSENT, "no cross-process sharing")
 
 #ifdef GRX_CUDA_TYPE_LOCAL_NOOP

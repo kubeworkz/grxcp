@@ -164,6 +164,7 @@ void populate_properties(Device& d) {
   // No exposed broadcast constant path; __constant__ lowers to read-only global
   // memory (cuda_mapping.md section 7.2).
   p.constantMemoryIsGlobal  = 1;
+  p.textureIsEmulated       = 1;   // software sampling; cuda_mapping.md 7.8
 
   std::snprintf(p.name, sizeof(p.name), "GRX-G100 (%s)", backend_name(backend));
 }
@@ -254,6 +255,7 @@ static void populate_npu_properties(Device& d) {
   p.warpShuffleIsEmulated   = 0;  // no shuffles at all
   p.eventTimingIsDeviceSide = 0;  // no device-side timestamp counter
   p.constantMemoryIsGlobal  = 1;  // no __constant__ path
+  p.textureIsEmulated       = 1;  // and no TEX unit either
 
   std::snprintf(p.name, sizeof(p.name), "GRX930 NPU (silicon)");
 }

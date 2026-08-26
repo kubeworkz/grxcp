@@ -213,6 +213,12 @@ typedef struct {
   int    warpShuffleIsEmulated;      // 0: the ISA has SHFL.* and VOTE.*
   int    eventTimingIsDeviceSide;    // 0 while CP profiling writeback is a stub
   int    constantMemoryIsGlobal;     // 1 while __constant__ lowers to RO global
+  // 1 while textures are addressed and filtered by the calling kernel out of
+  // ordinary global memory. The TEX units exist and are driven by the graphics
+  // path; nothing exposes them to compute (cuda_mapping.md 7.8). A bilinear
+  // fetch is four global loads and the arithmetic between them, issued by your
+  // own warp -- not a texture-cache hit and a hardware interpolation.
+  int    textureIsEmulated;
 } grxDeviceProp_t;
 
 // Attributes of a compiled kernel. Fields the toolchain cannot yet supply

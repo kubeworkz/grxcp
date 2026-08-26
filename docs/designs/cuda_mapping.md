@@ -321,11 +321,60 @@ count. `grxFuncGetAttributes.numRegs` returns -1 until `grxcc` emits
 per-kernel register metadata into the `.vxbin` footer. CUDA code that tunes
 against `numRegs` will need to handle the unknown value.
 
-### 7.8 Texture/surface from compute — **NEW**
+### 7.8 Texture/surface from compute — **NEW, and now emulated**
 
-TEX units and TCACHE exist and are driven by the graphics path. Nothing
-exposes them to compute kernels. `grx::tex<>` is a Phase 6 item; CUDA
-texture-object code does not port until then.
+TEX units and TCACHE exist and are driven by the graphics path. Nothing exposes
+them to compute kernels. **That has not changed.** What has changed is that
+`grx::tex<>` now samples in SOFTWARE, out of ordinary global memory, in the
+calling warp: `include/grx/device/grx_tex.h`, with the host side in
+`include/grx/grx_texture.h`.
+
+This is architecture section 10 rule 5's sanctioned exception and nothing
+wider — an emulation reported through a device property, the way the warp
+shuffle is. `grxDeviceProp_t.textureIsEmulated` reads **1**, `grx-conform`
+prints it, and the TEXTURE GATE checks that it still does, so a green run that
+quietly stopped reporting the emulation fails.
+
+What a port gets: correct values. What it does not get is the performance shape
+texture code is written for — a bilinear fetch is four global loads and the
+arithmetic between them, issued by the caller's own warp, with no texture cache
+and no free clamping. Two further differences keep the compat entries at
+PARTIAL rather than MAPPED: filter weights are full-precision float where NVIDIA
+quantizes the fraction to 8 bits, and the only channel formats are `float` and
+`float4` — integer formats with normalized reads are not here, and a port that
+needs them fails to compile rather than reading garbage.
+
+The hardware path stays open. This entry closes when TEX is reachable from
+compute, and `textureIsEmulated` is what will say so.
+
+### 7.24 Rounding builtins do not survive divergent codegen — **TOOLCHAIN**
+
+`__builtin_floorf` on a **divergent** value does not compile for this device:
+
+```
+error: unimplemented divergent codegen found!
+```
+
+Measured across the family, because which ones is the difference between a
+workaround and a superstition:
+
+| builtin | divergent codegen |
+|---|---|
+| `floorf`, `ceilf`, `truncf`, `roundf`, `rintf` | **fails** |
+| `nearbyintf`, `fabsf`, `sqrtf` | compiles |
+
+The five that fail are the ones lowering to a float→int→float sequence with an
+**explicit** rounding mode; `nearbyintf` uses the dynamic mode, lowers
+differently, and survives. Nothing in the tree had ever needed a rounding
+builtin in divergent device code, so the software texture sampler is the first
+thing that could have found it.
+
+The workaround is a conversion and a compare — `grx::tex_detail::floor_f` — and
+it is correct only over the range a texture coordinate occupies, which is why it
+is not offered as a general `floorf`. A kernel that needs one of these five on a
+divergent value has to write it out.
+
+Filed against the device toolchain, not GRXCP. Nothing here can fix it.
 
 ### 7.9 WMMA fragment shape — **HW, structural**
 

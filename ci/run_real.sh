@@ -454,6 +454,38 @@ else
 fi
 
 echo
+echo "==> TEXTURE GATE: grx::tex2D against PyTorch's grid_sample"
+# Phase 6's grx::tex<>, and it samples in SOFTWARE -- the TEX units are driven
+# by the graphics path and unreachable from compute (cuda_mapping.md 7.8). What
+# is gated here is the arithmetic and the honesty flag, never the hardware.
+#
+# PyTorch rather than a reference of our own: a sampler is almost entirely
+# convention -- where a texel centre sits, which way floor rounds a negative
+# coordinate -- and a reference written from the same reasoning as the
+# implementation agrees with it whether or not either is right. grid_sample
+# with align_corners=False is exactly CUDA's convention and three of its
+# padding modes are three of our four address modes. WRAP has no equivalent and
+# is checked against a from-specification reference instead, labelled as the
+# weaker check it is.
+if [[ -z "$GRXGPU" || ! -d "$TOOLDIR/llvm-vortex" ]]; then
+  echo "SKIPPED: needs --grxgpu <path> and a device toolchain in $TOOLDIR."
+elif [[ ! -f "$ROOT/tests/kernels/texture/texture_ref.bin" ]]; then
+  echo "SKIPPED: no reference. Run tests/kernels/texture/texture_ref.py"
+  echo "         (needs PyTorch) to regenerate it."
+else
+  "$ROOT/ci/build_kernel.sh" --grxgpu "$GRXGPU" --tooldir "$TOOLDIR" \
+    "$ROOT/tests/kernels/texture/kernel.cpp" -o "$BUILD/texture.vxbin" >/dev/null
+  $CXX $CXXFLAGS -I"$ROOT/tests/kernels/texture" \
+    -c "$ROOT/tests/kernels/texture/main.cpp" -o "$BUILD/texture_main.o"
+  $CXX "${OBJS[@]}" "$BUILD/texture_main.o" $LIBS -o "$BUILD/texture_gate"
+  if ! "$BUILD/texture_gate" "$BUILD/texture.vxbin" \
+        "$ROOT/tests/kernels/texture/texture_ref.bin"; then
+    rc=$?
+    [[ $rc -eq 77 ]] || exit $rc
+  fi
+fi
+
+echo
 echo "==> grxBLAS: library builds"
 $CXX $CXXFLAGS -c "$ROOT/src/libs/grxblas/grxblas.cpp" -o "$BUILD/grxblas.o"
 

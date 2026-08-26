@@ -22,7 +22,8 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 TABLE = ROOT / "tools/common/cuda_api_table.inc"
 COMPAT = ROOT / "include/grx/grx_cuda_compat.h"
-HEADERS = [ROOT / "include/grx/grx_runtime.h", ROOT / "include/grx/grx_types.h"]
+HEADERS = [ROOT / "include/grx/grx_runtime.h", ROOT / "include/grx/grx_types.h",
+           ROOT / "include/grx/grx_texture.h"]
 
 SUPPORTED = ("MAPPED", "PARTIAL", "UNSUPPORTED")
 

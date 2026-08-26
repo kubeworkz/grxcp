@@ -76,6 +76,9 @@ INCLUDES = ["-I" + str(ROOT / "include"), "-I" + str(ROOT / "src/libs")]
 # failures. It is not a defect. The device never sees the struct.
 ABI_HEADERS = [
     ("grx/grx_abi.h", ROOT / "include/grx/grx_abi.h", False),
+    # Read by include/grx/device/grx_tex.h, which every sampling kernel
+    # includes -- so the host writes this and the device reads it.
+    ("grx/grx_texture.h", ROOT / "include/grx/grx_texture.h", True),
     ("grxblas/sgemm_abi.h", ROOT / "src/libs/grxblas/sgemm_abi.h", True),
     ("grxblas/blas12_abi.h", ROOT / "src/libs/grxblas/blas12_abi.h", True),
     ("grxblas/hgemm_abi.h", ROOT / "src/libs/grxblas/hgemm_abi.h", True),
