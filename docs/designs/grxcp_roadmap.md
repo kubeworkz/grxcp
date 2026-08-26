@@ -1166,19 +1166,69 @@ side is honest about what it can see, and that it can be exercised without one.
    gated here. The phase 7 exit gate needs both devices present at once. This
    is the item to hand back: GRXCP needs *access* to hardware or to a simulation
    that answers on the register map, not more host code.
-2. **`GRX_CAP_KERNEL_LAUNCH` refusals across the rest of the API.** Launch is
-   done — a device without the bit returns `grxErrorNotSupported` rather than
-   falling back to the GPU (`tests/unit/test_no_kernel_launch.cpp`, run both
-   ways; with the check ablated the launch returns *out of resources*, which
-   describes a grid that does not fit rather than a device that cannot run
-   grids). `grxModuleLoad` on such a device should refuse for the same reason
-   and does not yet.
-3. **Cross-device pointers.** The GPU's addresses come from the driver; the
-   NPU's are physical DDR. A pointer from one used on the other must be caught,
-   not dereferenced. Nothing checks this today.
+2. ~~**`GRX_CAP_KERNEL_LAUNCH` refusals across the rest of the API.**~~ **Done.**
+   `grxModuleLoad` now refuses with `grxErrorNotSupported` on a device without
+   the bit, the same error the launch gives — "this device does not do kernels"
+   is one fact, and a caller that handles it from one has written the handler
+   for the other. It matters that the refusal moved *earlier*: load succeeded,
+   `grxModuleGetFunction` succeeded, and the program learned at the third call
+   what was wrong with the first. The mistake is `grxSetDevice`, and the report
+   now arrives next to it. `tests/unit/test_no_kernel_launch.cpp`, run both
+   ways; ablating the check fails exactly the zero-warp case.
+3. ~~**Cross-device pointers.**~~ **Done, and it was not what this said.**
+
+   This item read "nothing checks this today". The truth was worse: nothing
+   *could*. The mock's `vx_device_open` returned the same `MockDevice` for
+   every index, so `GRXMOCK_DEVICE_COUNT=2` gave the runtime two device slots
+   over **one** address space and one memory pool. Every cross-device operation
+   in CI passed because there was only ever one device.
+
+   Making the mock model N distinct devices — each with its own space, all
+   starting at the same base, which is what per-device DDR means — found two
+   real bugs before a line of checking was written:
+
+   * **`grxMalloc` on device 1 returned device 0's memory.** `take_best_fit`
+     searched the whole free list with no device filter, so device 1's
+     allocation was carved out of device 0's slab and recorded as device 1's.
+     Device 1's `grxMemGetInfo` read zero bytes in use while holding a live
+     allocation. Silent, on every multi-device machine, always.
+   * **The interval map could not hold two devices.** With that fixed, both
+     devices returned the *same address* — as they must, from equal bases —
+     and `g_live`, keyed by address alone, kept one of the two records. It is
+     keyed by `(device, address)` now, and the free list by `(slab, address)`,
+     which also makes extent coalescing slab-local by construction instead of
+     by a check inside `insert_free` that had to be remembered.
+
+   The refusals sit on top of that: a pointer live on another device and on no
+   local allocation is refused by `grxMemcpy`, `grxMemset` and `grxFree` with
+   `grxErrorInvalidDevicePointer`. **The limit is stated rather than papered
+   over** — when an address is live on *both* devices nothing in a bare `void*`
+   says which was meant, so it is used as the current device's, which is the
+   only defensible reading and is what CUDA does.
+
+   Not covered: **kernel arguments**. The launch path takes an opaque blob with
+   no type information, so a device-1 pointer packed into a struct reaches the
+   device unexamined. Scanning the blob for 8-byte words that resolve inside
+   another device's live allocation would catch most of it and is a heuristic;
+   it is written down here rather than slipped in, because architecture §10
+   rule 5 is about not shipping a guess that reads as a guarantee.
+
+   `tests/unit/test_cross_device.cpp`, CROSS-DEVICE GATE in `ci/build_mock.sh`.
+   Four ablations turn it red, and the test carries a positive control: the
+   pointer refused on the wrong device must be accepted on the right one, or a
+   runtime that refused everything would pass.
 4. **Real workloads and tuning** — items 2 and 3 of the original list. Both sit
    behind item 1 above: there is nothing to tune against until a GEMM can be
    observed running on hardware.
+5. **Heterogeneous dispatch policy**, scope item 4 above, is untouched.
+   `grxblasGemmEx` routes on `deviceType == GRX_DEVICE_TYPE_NPU` with no
+   control and no documented rule — which is close to the "automatic magic"
+   this phase's scope rules out. The explicit
+   `grxblasSetPreferredDevice`-style control is still owed.
+6. **`libgrxrt` natively on riscv64.** `ci/build_mock.sh --host
+   riscv64-linux-gnu` already cross-builds and *runs* the whole mock stack
+   under qemu-user, and `ci/run_real.sh`'s HOST MATRIX GATE compiles for that
+   host. Neither is a GRX930 board, and neither runs by default in CI.
 
 The seam the device table needs in order to hold both is written up in
 [`heterogeneous_devices.md`](heterogeneous_devices.md).

@@ -141,8 +141,8 @@ registered backend enumerates, with the GPU backend first so that existing
 programs keep the device indices they have today.
 
 Backend registration is static, not dynamic: a build either has the NPU backend
-compiled in (`-DGRXCP_ENABLE_NPU=ON`, which currently refuses because
-`src/backends/npu_c930/` does not exist) or it does not. There is no plugin
+compiled in (`-DGRXCP_ENABLE_NPU=ON`, which builds and is gated both ways in
+tier 1) or it does not. There is no plugin
 loading, because there is no third-party backend and inventing a plugin ABI for
 one in-tree implementation is the same empty room as before.
 
@@ -150,6 +150,31 @@ one in-tree implementation is the same empty room as before.
 the register block and reports zero devices if it is absent. A build flag is a
 statement about what code exists, not about what hardware is attached, and
 conflating the two is how a device appears in `grx-smi` that nobody can talk to.
+
+### 4.1 Every device has its own address space, and they overlap
+
+A device address is meaningful only together with the device it came from. Each
+device's addresses come from its own `vx_buffer_address` over its own DDR, so
+two devices routinely hand out the **same** address — both spaces start near the
+same base — and a bare `void*` therefore does not identify an allocation.
+
+The runtime did not know that. Its interval map was keyed by address alone with
+the owning device as a payload field, and its free-list search had no device
+filter at all, so `grxMalloc` on device 1 returned a slice of **device 0's**
+slab labelled as device 1's. Nothing reported a problem and device 1's
+`grxMemGetInfo` read zero bytes in use. The map is keyed by `(device, address)`
+now and the free list by `(slab, address)`.
+
+None of it was findable while the mock returned one `MockDevice` for every
+index, which it did from the first commit. A fixture that cannot represent the
+thing being promised will report the promise as kept.
+
+**The rule, for anything added at this seam:** resolve a pointer against the
+current device, refuse it when it is live only on another, and do not try to
+guess when it is live on both — that case is genuinely ambiguous and "this
+pointer, on this device" is the only reading with a defence. The NPU makes this
+sharper rather than softer: its addresses are physical DDR and the GPU's come
+from the driver, so the two spaces have no reason to be disjoint either.
 
 ---
 

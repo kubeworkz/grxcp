@@ -72,8 +72,22 @@ struct HostAllocation {
 
 std::mutex                      g_mem_mutex;
 std::vector<Slab>               g_slabs;
-std::map<uint64_t, FreeExtent>  g_free;         // base -> free extent
-std::map<uint64_t, Allocation>  g_live;         // base -> live allocation
+// KEYED BY (device, address) AND (slab, address), NOT BY ADDRESS.
+//
+// Each device's addresses come from its OWN vx_buffer_address over its own
+// DDR, so two devices' allocations routinely share an address -- both start
+// near the same base. Keyed by address alone, the second insert silently
+// overwrote the first and lookup returned the wrong device's buffer handle.
+//
+// Predicted, then watched: filtering the free list by device (take_best_fit
+// above) gave device 1 its own slab, and grxMalloc(4096) on each device then
+// returned the SAME pointer, 0x100000000000, with only one of the two records
+// surviving in the map.
+//
+// The pairing also makes free-extent coalescing slab-local by construction
+// rather than by a check inside insert_free that had to be remembered.
+std::map<std::pair<size_t, uint64_t>, FreeExtent>  g_free;   // (slab, base)
+std::map<std::pair<int, uint64_t>, Allocation>     g_live;   // (device, base)
 std::map<void*, HostAllocation> g_host;         // host ptr -> pinned allocation
 
 uint64_t align_up(uint64_t v, uint64_t a) { return (v + a - 1) & ~(a - 1); }
@@ -96,25 +110,25 @@ uint64_t slab_size() {
 // slab. Coalescing across slabs would produce an extent spanning two device
 // buffers, which is why the slab index is part of the record.
 void insert_free(uint64_t base, uint64_t size, size_t slab) {
-  auto next = g_free.lower_bound(base);
-  if (next != g_free.end() && next->second.slab == slab &&
-      base + size == next->first) {
+  auto next = g_free.lower_bound({slab, base});
+  if (next != g_free.end() && next->first.first == slab &&
+      base + size == next->first.second) {
     size += next->second.size;
     g_free.erase(next);
   }
   if (!g_free.empty()) {
-    auto prev = g_free.lower_bound(base);
+    auto prev = g_free.lower_bound({slab, base});
     if (prev != g_free.begin()) {
       --prev;
-      if (prev->second.slab == slab &&
-          prev->first + prev->second.size == base) {
-        base = prev->first;
+      if (prev->first.first == slab &&
+          prev->first.second + prev->second.size == base) {
+        base = prev->first.second;
         size += prev->second.size;
         g_free.erase(prev);
       }
     }
   }
-  g_free[base] = FreeExtent{size, slab};
+  g_free[{slab, base}] = FreeExtent{size, slab};
 }
 
 grxError_t add_slab(Device& d, uint64_t bytes, size_t* out_index) {
@@ -142,18 +156,29 @@ grxError_t add_slab(Device& d, uint64_t bytes, size_t* out_index) {
 
 // Best fit: the smallest free extent that can hold the request. Linear over the
 // free list, which stays short because extents coalesce on release.
-bool take_best_fit(uint64_t bytes, uint64_t align, uint64_t* out_base,
-                   size_t* out_slab) {
+// The free list spans every device, so the SEARCH has to say which one it is
+// allocating for. Without that filter grxMalloc on device 1 carves a slice out
+// of device 0's slab and records it as device 1's: the returned pointer is
+// device 0 memory wearing device 1's label, every later operation on it targets
+// the wrong device, and nothing anywhere reports a problem.
+//
+// It was not findable until the mock stopped handing every device the same
+// handle. Watched: with two devices, grxMalloc(4096) on device 1 returned
+// device 0's address one page above device 0's own allocation, and device 1's
+// grxMemGetInfo still read zero bytes in use.
+bool take_best_fit(int device, uint64_t bytes, uint64_t align,
+                   uint64_t* out_base, size_t* out_slab) {
   auto best = g_free.end();
   uint64_t best_size = UINT64_MAX;
   for (auto it = g_free.begin(); it != g_free.end(); ++it) {
-    if (it->first % align != 0) continue;   // slabs are aligned; extents stay so
+    if (g_slabs[it->second.slab].device != device) continue;
+    if (it->first.second % align != 0) continue;  // slabs are aligned; extents stay so
     if (it->second.size < bytes) continue;
     if (it->second.size < best_size) { best = it; best_size = it->second.size; }
   }
   if (best == g_free.end()) return false;
 
-  const uint64_t base = best->first;
+  const uint64_t base = best->first.second;
   const uint64_t size = best->second.size;
   const size_t   slab = best->second.slab;
   g_free.erase(best);
@@ -191,7 +216,7 @@ grxError_t allocate_device_physical(int device, uint64_t bytes,
   Allocation a;
   a.buffer = buf; a.base = base; a.size = need; a.offset = 0;
   a.device = device; a.direct = true; a.physical = true;
-  g_live[base] = a;
+  g_live[{device, base}] = a;
   sanitize_note_region(base, need);
   sanitize_note_alloc(base, bytes);
   *out_address = base;
@@ -228,7 +253,7 @@ grxError_t allocate_device(int device, uint64_t bytes, bool managed,
     Allocation a;
     a.buffer = buf; a.base = base; a.size = need; a.offset = 0;
     a.device = device; a.direct = true; a.managed = managed;
-    g_live[base] = a;
+    g_live[{device, base}] = a;
     sanitize_note_region(base, need);
     sanitize_note_alloc(base, bytes);
     *out_address = base;
@@ -237,10 +262,10 @@ grxError_t allocate_device(int device, uint64_t bytes, bool managed,
 
   uint64_t base = 0;
   size_t   slab_index = 0;
-  if (!take_best_fit(need, align, &base, &slab_index)) {
+  if (!take_best_fit(device, need, align, &base, &slab_index)) {
     e = add_slab(*d, (need > slab) ? align_up(need, align) : slab, &slab_index);
     if (e != grxSuccess) return e;
-    if (!take_best_fit(need, align, &base, &slab_index))
+    if (!take_best_fit(device, need, align, &base, &slab_index))
       return grxErrorMemoryAllocation;
   }
 
@@ -253,18 +278,19 @@ grxError_t allocate_device(int device, uint64_t bytes, bool managed,
   a.direct  = false;
   a.managed = managed;
   a.slab    = slab_index;
-  g_live[base] = a;
+  g_live[{device, base}] = a;
   sanitize_note_alloc(base, bytes);
   *out_address = base;
   return grxSuccess;
 }
 
 // Resolve an address to its allocation without taking the lock; callers hold it.
-const Allocation* find_locked(uint64_t address) {
+const Allocation* find_locked(int device, uint64_t address) {
   if (g_live.empty()) return nullptr;
-  auto it = g_live.upper_bound(address);
+  auto it = g_live.upper_bound({device, address});
   if (it == g_live.begin()) return nullptr;
   --it;
+  if (it->first.first != device) return nullptr;   // fell into another device
   const Allocation& a = it->second;
   if (address < a.base || address >= a.base + a.size) return nullptr;
   return &a;
@@ -272,10 +298,10 @@ const Allocation* find_locked(uint64_t address) {
 
 }  // namespace
 
-bool lookup_device_pointer(const void* ptr, Mapping* out) {
+bool lookup_device_pointer_on(int device, const void* ptr, Mapping* out) {
   const uint64_t address = (uint64_t)(uintptr_t)ptr;
   std::lock_guard<std::mutex> lock(g_mem_mutex);
-  const Allocation* a = find_locked(address);
+  const Allocation* a = find_locked(device, address);
   if (!a) return false;
   if (out) {
     const uint64_t delta = address - a->base;
@@ -288,6 +314,25 @@ bool lookup_device_pointer(const void* ptr, Mapping* out) {
     out->physical = a->physical;
   }
   return true;
+}
+
+// Resolve against the CURRENT device. An address alone no longer identifies an
+// allocation, so this is the only answer a bare pointer can have.
+bool lookup_device_pointer(const void* ptr, Mapping* out) {
+  return lookup_device_pointer_on(current_device_index(), ptr, out);
+}
+
+// Which device owns this address, if any -- for DIAGNOSIS only. With
+// overlapping spaces an address can be live on several devices at once, so
+// this returns the first that claims it and is never used to pick a target.
+int owner_device_of(const void* ptr) {
+  const uint64_t address = (uint64_t)(uintptr_t)ptr;
+  std::lock_guard<std::mutex> lock(g_mem_mutex);
+  for (auto it = g_live.begin(); it != g_live.end(); ++it) {
+    const Allocation& a = it->second;
+    if (address >= a.base && address < a.base + a.size) return it->first.first;
+  }
+  return -1;
 }
 
 bool lookup_host_pointer(const void* ptr, Mapping* out) {
@@ -313,7 +358,7 @@ bool lookup_host_pointer(const void* ptr, Mapping* out) {
 void release_all_allocations(int device) {
   std::lock_guard<std::mutex> lock(g_mem_mutex);
   for (auto it = g_live.begin(); it != g_live.end();) {
-    if (it->second.device != device) { ++it; continue; }
+    if (it->first.first != device) { ++it; continue; }
     if (it->second.direct) vx_buffer_release(it->second.buffer);
     it = g_live.erase(it);
   }
@@ -346,14 +391,31 @@ namespace {
 // contradicts the map is rejected instead of quietly doing the wrong transfer.
 struct Endpoint {
   bool    is_device = false;
+  int     foreign   = -1;   // owned by this OTHER device, and by no local one
   Mapping map{};
 };
 
+// CROSS-DEVICE POINTERS, and the honest limit of what can be detected.
+//
+// A pointer that resolves on the current device is used as the current
+// device's, full stop. With per-device address spaces the same address is
+// frequently live on both devices at once, and in that case nothing in a bare
+// void* says which was meant -- "this pointer, on this device" is the only
+// defensible reading, and it is also what CUDA does.
+//
+// What IS unambiguous is a pointer that resolves on NO local allocation but
+// does resolve on another device. There is no reading of that which is
+// correct, so it is refused, and the refusal names the owner: "device 1's
+// pointer" is fixable where "not a device pointer" sends someone hunting a
+// dangling free.
+//
+// There is no peer-access API here. When one arrives this is where it opens.
 Endpoint classify(const void* p) {
   Endpoint e;
   if (lookup_device_pointer(p, &e.map)) { e.is_device = true; return e; }
   Mapping host{};
-  if (lookup_host_pointer(p, &host)) { e.map = host; }
+  if (lookup_host_pointer(p, &host)) { e.map = host; return e; }
+  e.foreign = owner_device_of(p);
   return e;
 }
 
@@ -375,6 +437,8 @@ grxError_t enqueue_copy(void* dst, const void* src, size_t count,
 
   Endpoint d = classify(dst);
   Endpoint s = classify(src);
+
+  if (d.foreign >= 0 || s.foreign >= 0) return grxErrorInvalidDevicePointer;
 
   grxError_t e = check_kind(kind, d.is_device, s.is_device);
   if (e != grxSuccess) return e;
@@ -480,10 +544,14 @@ grxError_t grxFree(void* ptr) {
   if (!ptr) return grxSuccess;   // CUDA: freeing null is legal
   const uint64_t address = (uint64_t)(uintptr_t)ptr;
 
+  const int device = grxcp::current_device_index();
   std::lock_guard<std::mutex> lock(grxcp::g_mem_mutex);
-  auto it = grxcp::g_live.find(address);
+  auto it = grxcp::g_live.find({device, address});
   // Only the base address of an allocation may be freed; an interior pointer
-  // is a bug worth reporting rather than silently rounding down.
+  // is a bug worth reporting rather than silently rounding down. And only from
+  // the device that owns it -- the same address is a live allocation on
+  // another device as often as not, so freeing "by pointer" from the wrong
+  // current device would release the wrong memory.
   if (it == grxcp::g_live.end())
     return grxcp::set_error(grxErrorInvalidDevicePointer);
 

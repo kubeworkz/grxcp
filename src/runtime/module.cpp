@@ -299,6 +299,23 @@ grxError_t load_module_tracked(grxModule_t* module, const void* image,
   grxError_t e = acquire_device(current_device_index(), &d);
   if (e != grxSuccess) return set_error(e);
 
+  // A DEVICE THAT CANNOT RUN A GRID CANNOT HOLD A MODULE.
+  //
+  // grxLaunchFunction has refused this since the capability bit existed; load
+  // did not, so on a GEMM-only device -- the GRX930 NPU advertises GRX_CAP_GEMM
+  // without GRX_CAP_KERNEL_LAUNCH -- grxModuleLoad succeeded, grxModuleGetFunction
+  // succeeded, and the program only found out at the launch. That is a late
+  // failure pointing at the wrong call: the mistake was grxSetDevice, and the
+  // report should arrive at the first operation that assumes a programmable
+  // pipeline rather than the third.
+  //
+  // Same error as the launch refusal, deliberately. A caller handling
+  // grxErrorNotSupported from one has already written the handler for the
+  // other, and "this device does not do kernels" is one fact, not two.
+  // (Roadmap phase 7, "what is still blocked", item 2.)
+  if (!(d->prop.capabilities & GRX_CAP_KERNEL_LAUNCH))
+    return set_error(grxErrorNotSupported);
+
   std::string elf_path;
   bool sanitized = false;
 

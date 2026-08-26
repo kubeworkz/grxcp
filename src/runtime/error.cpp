@@ -79,7 +79,7 @@ const char* grxGetErrorString(grxError_t e) {
     case grxErrorMemoryAllocation:       return "out of memory";
     case grxErrorInitializationError:    return "runtime initialization failed";
     case grxErrorInvalidDevice:          return "invalid device ordinal";
-    case grxErrorInvalidDevicePointer:   return "pointer is not a device allocation";
+    case grxErrorInvalidDevicePointer:   return "pointer is not a live allocation on the current device";
     case grxErrorInvalidMemcpyDirection: return "copy direction contradicts the allocation map";
     case grxErrorInvalidResourceHandle:  return "invalid stream, event, module or kernel handle";
     case grxErrorNotReady:               return "asynchronous operation has not completed";

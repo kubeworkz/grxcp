@@ -154,15 +154,50 @@ echo
 echo "==> unit tests (default config)"
 for t in "${TESTS[@]}"; do
   printf -- "--- %s\n" "$t"
-  "${RUN[@]}" "$BUILD/$t"
+  # `if`, not a bare call: `set -e` would take the script down on the skip
+  # before the exit code could be looked at.
+  if "${RUN[@]}" "$BUILD/$t"; then rc=0; else rc=$?; fi
+  # 77 means the test said which configuration it needs and this run is not it.
+  # A skip is not a pass and is printed as itself; test_cross_device needs two
+  # devices and gets them in the CROSS-DEVICE GATE below.
+  [[ $rc -eq 0 || $rc -eq 77 ]] || { echo "FAILED: $t"; exit 1; }
 done
 
 echo
 echo "==> unit tests (FPGA backend: managed memory must be gated off)"
 for t in "${TESTS[@]}"; do
-  VORTEX_DRIVER=xrt "${RUN[@]}" "$BUILD/$t" > /dev/null || { echo "FAILED on xrt: $t"; exit 1; }
+  if VORTEX_DRIVER=xrt "${RUN[@]}" "$BUILD/$t" > /dev/null; then rc=0; else rc=$?; fi
+  # 77 is the skip convention: a test that needs a configuration this run does
+  # not have says so and is not a failure. test_cross_device needs two devices.
+  [[ $rc -eq 0 || $rc -eq 77 ]] || { echo "FAILED on xrt: $t"; exit 1; }
 done
 echo "all tests pass on the FPGA backend selection too"
+
+echo
+echo "==> CROSS-DEVICE GATE: two devices, and the pointers that cross between"
+# Phase 7's device model, checked on a machine with one GPU.
+#
+# It needed the mock to model N DISTINCT devices first. vx_device_open handed
+# out the same MockDevice for every index, so GRXMOCK_DEVICE_COUNT=2 gave the
+# runtime two device slots over one address space and one memory pool: every
+# cross-device operation passed because there was only ever one device.
+#
+# Making them distinct found, before a line of checking was written, that
+# grxMalloc on device 1 returned DEVICE 0's MEMORY -- take_best_fit searched
+# the whole free list with no device filter. Fixing that produced the next bug
+# on the next run, as predicted: both devices then returned the SAME address
+# and g_live, keyed by address alone, kept one of the two records.
+#
+# Run with the count set, because the default is one device and this proves
+# nothing there. The test carries its own positive control: the same pointer
+# that is refused on the wrong device must be accepted on the right one, or a
+# runtime that refused everything would pass.
+GRXMOCK_DEVICE_COUNT=2 "${RUN[@]}" "$BUILD/test_cross_device"
+
+# And the single-device machine must still be a single-device machine.
+[[ "$("${RUN[@]}" "$BUILD/grx-smi" 2>/dev/null | grep -c 'device 1')" == "0" ]] || {
+  echo "  FAIL  a second device is enumerated without GRXMOCK_DEVICE_COUNT"; exit 1; }
+echo "  ok    and one device is still one device without the override"
 
 echo
 echo "==> API table / compat header drift check"

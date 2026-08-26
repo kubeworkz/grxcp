@@ -54,6 +54,55 @@ path as missing, letting a named reference ignore its leading path (which made
 successfully, since ours does have a section 4), accepting any section number,
 and reading fenced blocks.
 
+The **CROSS-DEVICE GATE** (`tests/unit/test_cross_device.cpp`) runs the runtime
+against two devices on a machine that has one GPU. It is phase 7's device model,
+and it needed the fixture rebuilt before it could exist at all.
+
+`vx_device_open` returned the same `MockDevice` for every index, so
+`GRXMOCK_DEVICE_COUNT=2` gave the runtime two device **slots** over one address
+space and one memory pool. Every cross-device operation in CI passed for the
+uninteresting reason that there was only ever one device — which is not the same
+as those operations being correct. The mock now models N distinct devices, each
+allocating from its own space, all starting at the same base, because that is
+what per-device DDR means and because it is the case that makes an address
+ambiguous.
+
+That alone found two bugs, before any checking was written. `grxMalloc` on
+device 1 returned **device 0's memory**: `take_best_fit` searched the whole free
+list with no device filter, so device 1's allocation came out of device 0's slab
+and was recorded as device 1's, while device 1's `grxMemGetInfo` still read zero
+bytes in use. Fixing that produced the next bug on the next run, as predicted —
+with device 1 allocating from its own slab both devices returned the **same
+address**, and `g_live`, keyed by address alone, kept one of the two records.
+The map is keyed by `(device, address)` now and the free list by
+`(slab, address)`.
+
+On top of that: a pointer live on another device and on no local allocation is
+refused by `grxMemcpy`, `grxMemset` and `grxFree`. **The limit is stated rather
+than hidden** — when an address is live on *both* devices nothing in a bare
+`void*` says which was meant, so it is used as the current device's. Kernel
+arguments are not covered: the launch path takes an opaque blob with no type
+information, and a blob scan would be a heuristic, so it is written down in the
+roadmap instead of shipped quietly.
+
+Watched failing, four ways: the free-list device filter removed (device 1 stops
+consuming device 1's memory), the `(device, address)` guard in the lookup
+removed (all three refusals stop firing), the foreign-pointer refusal in memcpy
+removed (two of them stop), and the module capability check removed. A fifth
+ablation — resolving `grxFree`'s target by owner rather than by current device —
+deadlocked, because `owner_device_of` takes the allocator lock; that hazard is
+now written at its declaration.
+
+The test carries its own positive control. Without it a runtime that refused
+every pointer on every device would pass all four refusal assertions.
+
+The order of the test's own steps is load-bearing and was wrong at first: device
+0 has to allocate **before** device 1, or the free list is empty when device 1
+asks and there is nothing to steal, and the first ablation passes. The
+device-0-pointer-on-device-1 case has to run while device 1 owns **nothing**, or
+the lookup stops at device 1's own entry and the second ablation passes. Both
+were found by ablating, not by reading.
+
 The **NPU BACKEND GATE** drives `src/backends/npu_c930/` through four register
 models — a bus with nothing on it, a bus that floats high, a live device, and a
 device that accepts a launch and never finishes. The backend has no Vortex

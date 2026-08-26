@@ -55,8 +55,34 @@ uint64_t env_u64(const char* name, uint64_t fallback) {
   return std::strtoull(v, nullptr, 0);
 }
 
-struct MockDevice { uint32_t index; };
-MockDevice g_devices[1] = {{0}};
+// DEVICES ARE DISTINCT, AND EACH HAS ITS OWN ADDRESS SPACE.
+//
+// This used to be `MockDevice g_devices[1]` with vx_device_open handing out
+// `&g_devices[0]` for every index. GRXMOCK_DEVICE_COUNT=2 therefore gave the
+// runtime two device SLOTS sharing one mock device, one bump allocator and one
+// memory pool -- so every cross-device operation in CI succeeded for the
+// uninteresting reason that there was only ever one device. Nothing about the
+// multi-device promise in the architecture's device model could be tested at
+// all, which is not the same as it being untested.
+//
+// Each device now allocates from its own space, and every space starts at the
+// SAME base, so an address from device 1 is a plausible address on device 0.
+// That is the faithful model: device addresses come from each device's own
+// `vx_buffer_address` over its own DDR, and overlap is the normal case, not an
+// adversarial one. It is also the case that finds bugs -- a runtime that keys
+// anything on a bare device address cannot tell the two apart.
+//
+// MODELLED, NOT OBSERVED. This container has one simx device, so the overlap
+// above is a consequence of how the platform is documented to work rather than
+// something measured on two of them. It is the mock's job to make that
+// reachable; it is not evidence about hardware.
+struct MockBuffer;
+struct MockDevice {
+  uint32_t index = 0;
+  uint64_t next_address = 0;   // set to kDeviceBase on creation
+  uint64_t bytes_in_use = 0;
+  std::map<uint64_t, MockBuffer*> buffers;   // address -> buffer, per device
+};
 
 // ---------------------------------------------------------------------------
 // Device address space
@@ -77,6 +103,9 @@ struct MockBuffer {
   std::vector<uint8_t> storage;
   std::atomic<int>     refcount{1};
   bool                 reserved = false;   // vx_buffer_reserve: no storage owned
+  // Which device's space this address is in. Release does not take a device
+  // handle, and with overlapping spaces the address alone no longer says.
+  MockDevice*          owner   = nullptr;
 };
 
 struct MockQueue {
@@ -90,9 +119,16 @@ struct MockEvent {
 };
 
 std::mutex g_mutex;
-uint64_t   g_next_address = kDeviceBase;
-uint64_t   g_bytes_in_use = 0;
-std::map<uint64_t, MockBuffer*> g_buffers;   // address -> buffer
+std::map<uint32_t, MockDevice> g_devices;    // index -> device, opened lazily
+
+MockDevice* device_for(uint32_t index) {
+  auto it = g_devices.find(index);
+  if (it != g_devices.end()) return &it->second;
+  MockDevice& d = g_devices[index];
+  d.index        = index;
+  d.next_address = kDeviceBase;
+  return &d;
+}
 
 }  // namespace
 
@@ -112,7 +148,8 @@ vx_result_t vx_device_open(uint32_t index, vx_device_h* out) {
   if (!out) return VX_ERR_INVALID_VALUE;
   if (index >= (uint32_t)env_u64("GRXMOCK_DEVICE_COUNT", 1))
     return VX_ERR_INVALID_VALUE;
-  *out = &g_devices[0];
+  std::lock_guard<std::mutex> lock(g_mutex);
+  *out = device_for(index);
   return VX_SUCCESS;
 }
 
@@ -177,9 +214,10 @@ vx_result_t vx_device_memory_info(vx_device_h dev, uint64_t* freeBytes,
                                   uint64_t* usedBytes) {
   if (!dev) return VX_ERR_INVALID_HANDLE;
   std::lock_guard<std::mutex> lock(g_mutex);
+  auto* d = static_cast<MockDevice*>(dev);
   const uint64_t total = env_u64("GRXMOCK_GLOBAL_MEM", 1ull << 32);
-  if (freeBytes) *freeBytes = total - g_bytes_in_use;
-  if (usedBytes) *usedBytes = g_bytes_in_use;
+  if (freeBytes) *freeBytes = total - d->bytes_in_use;
+  if (usedBytes) *usedBytes = d->bytes_in_use;
   return VX_SUCCESS;
 }
 
@@ -211,18 +249,20 @@ vx_result_t vx_buffer_create(vx_device_h dev, uint64_t size, uint32_t flags,
   if (!dev || !out || size == 0) return VX_ERR_INVALID_VALUE;
   std::lock_guard<std::mutex> lock(g_mutex);
 
+  auto* d = static_cast<MockDevice*>(dev);
   const uint64_t total = env_u64("GRXMOCK_GLOBAL_MEM", 1ull << 32);
-  if (g_bytes_in_use + size > total) return VX_ERR_OUT_OF_DEVICE_MEMORY;
+  if (d->bytes_in_use + size > total) return VX_ERR_OUT_OF_DEVICE_MEMORY;
 
   auto* b = new MockBuffer();
-  b->address = g_next_address;
+  b->address = d->next_address;
   b->size    = size;
   b->flags   = flags;
+  b->owner   = d;
   b->storage.assign((size_t)size, 0);
 
-  g_next_address += (size + kDeviceAlign - 1) & ~(kDeviceAlign - 1);
-  g_bytes_in_use += size;
-  g_buffers[b->address] = b;
+  d->next_address += (size + kDeviceAlign - 1) & ~(kDeviceAlign - 1);
+  d->bytes_in_use += size;
+  d->buffers[b->address] = b;
 
   *out = b;
   return VX_SUCCESS;
@@ -237,6 +277,7 @@ vx_result_t vx_buffer_reserve(vx_device_h dev, uint64_t address, uint64_t size,
   b->size     = size;
   b->flags    = flags;
   b->reserved = true;
+  b->owner    = static_cast<MockDevice*>(dev);
   *out = b;
   return VX_SUCCESS;
 }
@@ -252,9 +293,9 @@ vx_result_t vx_buffer_release(vx_buffer_h buf) {
   auto* b = static_cast<MockBuffer*>(buf);
   if (b->refcount.fetch_sub(1) != 1) return VX_SUCCESS;
   std::lock_guard<std::mutex> lock(g_mutex);
-  if (!b->reserved) {
-    g_buffers.erase(b->address);
-    g_bytes_in_use -= b->size;
+  if (!b->reserved && b->owner) {
+    b->owner->buffers.erase(b->address);
+    b->owner->bytes_in_use -= b->size;
   }
   delete b;
   return VX_SUCCESS;

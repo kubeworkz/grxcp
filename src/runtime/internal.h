@@ -88,9 +88,27 @@ struct Mapping {
   bool        physical = false;  // allocated where the DMA engine can reach it
 };
 
-// Resolve any address inside a live device allocation. Returns false for a
-// host pointer, a stale pointer, or an address in no allocation at all.
+// Resolve any address inside a live device allocation ON THE CURRENT DEVICE.
+// Returns false for a host pointer, a stale pointer, an address in no
+// allocation at all -- and for an allocation that belongs to a DIFFERENT
+// device, because each device's addresses come from its own address space and
+// the same address is routinely live on both.
 bool lookup_device_pointer(const void* ptr, Mapping* out);
+
+// The same, against a named device.
+bool lookup_device_pointer_on(int device, const void* ptr, Mapping* out);
+
+// Which device owns this address, or -1. FOR DIAGNOSIS ONLY: with overlapping
+// address spaces an address may be live on several devices at once, so this
+// reports the first that claims it and must never be used to choose a target.
+// It exists so a refusal can say "that pointer is device 1's" instead of "that
+// is not a device pointer", which is the difference between a fixable message
+// and a mystery.
+//
+// TAKES THE ALLOCATOR LOCK. Never call it from code that already holds it --
+// an ablation that tried to resolve grxFree's target through this deadlocked
+// on the spot, which is how the note came to be here.
+int owner_device_of(const void* ptr);
 
 // Resolve a pinned host allocation made by grxMallocHost.
 bool lookup_host_pointer(const void* ptr, Mapping* out);

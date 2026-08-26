@@ -70,9 +70,40 @@ int main() {
   const size_t n = grxmock_build_module(image.data(), image.size(), names, 1);
   image.resize(n);
 
+  // THE REFUSAL MOVED EARLIER, and this is where that is recorded.
+  //
+  // This block used to assert that "a module loads on a device with no
+  // pipeline" and then check the launch. It did load, and that was the bug:
+  // grxModuleLoad succeeded, grxModuleGetFunction succeeded, and the program
+  // learned that the device cannot run grids at the third call rather than the
+  // first. The mistake was grxSetDevice; the report should arrive next to it.
+  //
+  // Same error from both, on purpose. "This device does not do kernels" is one
+  // fact, and a caller that handles grxErrorNotSupported from the launch has
+  // already written the handler for the load.
   grxModule_t mod = nullptr;
-  GRX_REQUIRE(grxModuleLoadData(&mod, image.data(), image.size()),
-              "a module loads on a device with no pipeline");
+  const grxError_t load_rc =
+      grxModuleLoadData(&mod, image.data(), image.size());
+
+  if (!can_launch) {
+    section("a device with no programmable pipeline");
+    check(load_rc == grxErrorNotSupported,
+          "grxModuleLoad refuses with grxErrorNotSupported");
+    check(load_rc != grxErrorInvalidKernelImage,
+          "and not 'invalid image', which would blame the binary");
+    check(grxPeekAtLastError() == grxErrorNotSupported,
+          "the refusal is recorded as the last error");
+    // The launch-level check in launch.cpp stays. It is unreachable through
+    // this path now -- there is no module to launch -- and it is still the
+    // invariant that matters if any future path hands out a function without
+    // going through a load.
+    std::printf("  note  the launch-level refusal is now unreachable from here:\n"
+                "        the load is what fails, which is the point.\n");
+    return grxtest::report();
+  }
+
+  check(load_rc == grxSuccess, "a module loads on a device that can launch");
+  if (load_rc != grxSuccess) return grxtest::report();
   grxFunction_t fn = nullptr;
   GRX_REQUIRE(grxModuleGetFunction(&fn, mod, "k"),
               "its entry point resolves");
@@ -89,25 +120,6 @@ int main() {
           "the launch is not refused as unsupported");
     std::printf("        (%s)\n", grxGetErrorString(e));
     std::printf("  note  run with GRXMOCK_NUM_WARPS=0 for the refusal itself\n");
-  } else {
-    section("a device with no programmable pipeline");
-    check(e == grxErrorNotSupported,
-          "grxLaunchFunction refuses with grxErrorNotSupported");
-    if (e != grxErrorNotSupported)
-      std::printf("        got %s instead\n", grxGetErrorString(e));
-
-    // The refusal must be the reason, not a coincidence. Before the capability
-    // check existed this path returned grxErrorLaunchOutOfResources, because
-    // maxThreadsPerBlock came out as zero -- an answer that describes a grid
-    // that does not fit rather than a device that cannot run grids at all, and
-    // one that would send someone off to shrink their block size.
-    check(e != grxErrorLaunchOutOfResources,
-          "and not 'out of resources', which would describe the wrong problem");
-
-    // Sticky error state is part of the contract: the refusal must be
-    // retrievable afterwards like any other error.
-    check(grxGetLastError() == grxErrorNotSupported,
-          "the refusal is recorded as the last error");
   }
 
   grxModuleUnload(mod);
