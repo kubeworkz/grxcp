@@ -52,6 +52,11 @@ struct Point {
   double   per_mac;
   double   warp_per_element; // secondary: summed warp windows / output element
   double   tensor_per_element;   // the same, for the tensor kernel
+  // And the same for sgemm forced to the REFERENCE kernel. Measured because
+  // the phase 3 gate is a RATIO, and a ratio moves when either side does: this
+  // is the fixed point against which "the tensor path did not regress, its
+  // denominator improved" is a statement of fact rather than a claim.
+  double   ref_per_element;
   uint64_t tensor_span;
   // Kept so the baseline can hold the raw pair warp_per_element derives from
   // rather than the quotient.
@@ -236,6 +241,22 @@ int main(int argc, char** argv) {
     p.nslots      = nslots;
     p.busy_median = scalar.busyMedian;
 
+    // sgemm again, forced to the reference kernel. Same operands, same probe,
+    // same code path -- only the kernel selection differs, through the hook
+    // the sweeps use. Not gated; it is the fixed denominator the gate's report
+    // reads against.
+    {
+      setenv("GRXBLAS_SGEMM_NAIVE", "1", 1);
+      bool rok = false;
+      const grxCycleSummary ref = measure(h, dSlots, nslots, &rok, "sgemm(ref)",
+          [&] { return grxblasSgemm(h, GRXBLAS_OP_N, GRXBLAS_OP_N, s.m, s.n,
+                                    s.k, &one, dA32, s.m, dB32, s.k, &zero,
+                                    dC, s.m); });
+      unsetenv("GRXBLAS_SGEMM_NAIVE");
+      if (rok && ref.spanIsValid)
+        p.ref_per_element = (double)ref.span / elems;
+    }
+
     if (have_tensor) {
       bool tok = false;
       const grxCycleSummary tensor = measure(h, dSlots, nslots, &tok, "GemmEx",
@@ -351,9 +372,57 @@ int main(int argc, char** argv) {
                   "core: %.2fx", (int)points.size() - starved, worst_ratio);
       if (starved) std::printf("   (%d starved, listed above)", starved);
       std::printf("\n");
-      // Enforced, because it is met. A gate that a passing kernel does not have
-      // to keep passing is a comment.
+
+      // The same ratio against the REFERENCE sgemm, which is the fixed point.
+      // Printed always, because it is what tells a reader whether a change in
+      // the gated number came from the tensor path or from its denominator.
+      double worst_ref = 0.0;
+      for (const Point& p : points) {
+        if (p.tensor_per_element <= 0.0 || p.ref_per_element <= 0.0) continue;
+        const int tiles = (p.m / tm) * (p.n / tn);
+        if (tiles > 0 && warp_slots > 0 && tiles < warp_slots) continue;
+        const double r = p.ref_per_element / p.tensor_per_element;
+        if (worst_ref == 0.0 || r < worst_ref) worst_ref = r;
+      }
+      if (worst_ref > 0.0)
+        std::printf("        against the REFERENCE sgemm, the same shapes: "
+                    "%.2fx\n", worst_ref);
+
+      // NOT MET, AND LEFT THAT WAY ON PURPOSE.
+      //
+      // This threshold was set when sgemm meant the one-thread-per-output
+      // reference. It has since been beaten twice -- register blocking, then
+      // the 2D micro-tile -- and the tuned SIMT kernel is now 2.32x faster than
+      // the reference at these shapes. The tensor path did not move: 29.4 and
+      // 44.2 cycles per element in both configurations, which is why the line
+      // above is printed. The ratio fell from 5.62x to 4.30x with nothing
+      // having got slower.
+      //
+      // Three things could have been done about that and only one of them is
+      // honest without a decision on the record. Moving the threshold to 4x
+      // would read as a relaxation forever. Restating the gate against the
+      // reference kernel would freeze its denominator and make it unfalsifiable
+      // by SIMT work. Leaving it is what AGENTS.md section 4 requires: an
+      // assertion is not relaxed as a side effect of unrelated progress.
+      //
+      // So it FAILS, deliberately, and ci/run_real.sh defers the failure to the
+      // end of the run rather than stopping there -- the same treatment the
+      // PERF BASELINE GATE gets, and for the same reason: a red gate that
+      // hides the twenty after it is worse than a red gate.
+      //
+      // What would make it pass again: the tensor unit's multi-CTA deadlock
+      // (cuda_mapping.md 7.12). Two of five shapes are already excluded here
+      // for tile starvation, which is a consequence of the single-CTA
+      // workaround; lifting it gives the tensor path the parallelism the ratio
+      // was originally measured with.
       expect(met, "GemmEx costs at most a fifth of sgemm per output element");
+      if (!met)
+        std::printf("        NOT MET at %.2fx, and recorded rather than "
+                    "adjusted: the tensor path is unchanged and the SIMT "
+                    "kernel it is\n        measured against got %.2fx faster. "
+                    "See the note in this file.\n",
+                    worst_ratio,
+                    worst_ref > 0.0 ? worst_ref / worst_ratio : 0.0);
     }
   }
 

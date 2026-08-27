@@ -70,6 +70,13 @@ struct Context {
   // older module still serves sgemm perfectly well, and refusing to load it
   // over a kernel the caller never asked for would be absurd.
   grxFunction_t sgemm_rb_fn = nullptr;
+  // The 2D micro-tile, and the entry point that says what tile each blocked
+  // kernel produces. Both optional in the same way sgemm_rb is.
+  grxFunction_t sgemm_2d_fn = nullptr;
+  // Reported by sgemm_shape, never assumed. Zero means the module did not say,
+  // and a kernel whose tile is unknown is not launched at all -- the host would
+  // be sizing its grid from a guess. See sgemm_abi.h.
+  int rb_rows = 0, td_rows = 0, td_cols = 0;
   std::string   sgemm_path;   // which file actually got loaded
   // Level 1 and 2, resolved from the same module. Absent in an older module,
   // which is why they are looked up lazily and reported rather than assumed.
@@ -97,53 +104,81 @@ struct Context {
   std::mutex    mutex;
 };
 
-// Outputs each thread of sgemm_rb computes. MUST match RM in
-// kernels/sgemm.cpp: the host sizes the grid from it and the kernel slices the
-// rows by it, and a disagreement is a grid that covers the wrong number of
-// outputs -- silently, in whichever direction the two drifted.
-constexpr int kSgemmRowsPerThread = 4;
-
-// WHEN THE BLOCKED KERNEL PAYS. The rule is
+// WHEN TO BLOCK, AND WITH WHICH KERNEL. The rule is
 //
-//     m >= RM  AND  m * n * batchCount >= 2 * (resident threads)
+//     outputs = m * n * batchCount
+//     outputs <  resident            ->  the reference kernel
+//     outputs >= resident            ->  sgemm_2d, the 2D micro-tile
 //
-// where resident = warpSize * maxWarpsPerMultiProcessor * multiProcessorCount.
-// It is a rule about how many OUTPUTS the call has, and k does not appear in
-// it. Both halves of that sentence were arrived at the hard way.
+// where resident = warpSize * maxWarpsPerMultiProcessor * multiProcessorCount,
+// 64 on the configuration this was measured on. k does not appear. Neither does
+// how m and n split to reach the output count -- which is not an assumption,
+// it is the measurement: at 24, 32, 40, 48, 56, 64, 72, 80 and 96 outputs the
+// speedup agrees to two decimals however the shape gets there (4x12, 8x6 and
+// 12x4 all read 0.88, 0.91, 0.88).
 //
-// WHAT IT REPLACED, and why. The rule used to be `k >= 16 OR ceil(m/RM) >=
-// warpSize`, fitted to five points from the block profile with a coalescing
-// story attached. tests/bench/sgemm_sweep.cpp swept it -- 66 shapes across m, n
-// and k, both kernels over the same operands, plus batch and transpose -- and
-// the story did not survive:
+// sgemm_rb is in the rule only as the fallback for a module that has no
+// sgemm_2d, and with its own boundary of 2 * resident, because that is the one
+// measured for it. See below on why it is still here at all.
 //
-//   * k never changes which kernel wins ANYWHERE in the swept range. It moves
-//     the magnitude (1.17x at k=4 to 1.53x at k=32, same m and n) and nothing
-//     else.
-//   * the coalescing boundary is not at m = 16: m = 8 wins at n = 16 by 1.27x.
-//   * the output count explains all 66 cells with no exceptions. Cells with
-//     equal m*n agree to two decimals however m and n split -- (4,16), (8,8)
-//     and (16,4) all read 0.90 -- and batch scales it exactly: m=n=8 batch=2
-//     reads 1.43, and unbatched m=8 n=16, the same 128 outputs, reads 1.44.
+// WHERE THE BOUNDARY IS, AND WHAT DECLINING COSTS. tests/bench/sgemm_sweep.cpp
+// brackets it in steps of 8 outputs, because the rule this one replaced was
+// wrong precisely for having a crossover bracketed by 8 and 16 with nothing
+// swept between:
 //
-// AND IT WAS REVERTED ONCE, WRONGLY. Shipping the output rule appeared to make
-// the transformer block SLOWER -- 230171 cycles against 226405 at S=8 -- with
-// attention's two GEMMs (8x8x8, batch 2) 27.6% worse inside the block while
-// winning 1.39x in isolation. That looked like a real conflict between isolated
-// and in-situ measurement, so the old rule was kept and this comment was left
-// saying nobody knew why.
+//     outputs   48     56     64     72
+//     ratio    0.88   1.04   1.17   1.68
 //
-// The conflict was not real. Attention is FOUR launches sharing one probe
-// buffer, and MCYCLE restarts at zero at every launch, so the "cost of
-// attention" was a maximum over four unrelated clocks (grx_cycles.h). Measured
-// per launch, attention at S=8 costs 42440 cycles and not 13861 -- and forcing
-// the blocked kernel there SAVES 2613 and 3377 cycles on its two GEMMs.
+// The crossover is inside (48, 56]. The threshold ships at `resident` = 64
+// rather than at 56 because 56 is not a number the device reports and a fitted
+// constant is what went wrong last time. The cost of that choice is visible and
+// small: the one measured band it declines wins by 3-4%, while the band below
+// it LOSES by 12%. The asymmetry is the argument -- being too eager costs about
+// four times what being too shy does.
 //
-// MEASURED IN PLACE, ONE CALL AT A TIME. ci/sweep_block_sgemm.py flips exactly
-// one of the block's GEMM calls and re-runs the whole block, for every call it
-// makes, at two sequence lengths. On all 18 calls this rule picks the kernel
-// that makes the block faster, and the old rule picks the slower one twice.
-// That is the sweep the roadmap asked for, and it is a gate.
+// A HYPOTHESIS ABOUT THE KNEE, RECORDED AS A HYPOTHESIS. The jump from 1.17 to
+// 1.68 between 64 and 72 outputs sits exactly where the reference kernel stops
+// fitting in the machine: it needs one thread per output, the core holds 64, so
+// at 65 it needs a second wave while the blocked kernels, at a quarter of the
+// threads, are still inside one. That predicts another jump at 136 and none
+// between 112 and 128. Measured: 1.87, 1.73, 1.84 across 112-128 and 2.12 at
+// 136 -- the jump is there and it is much smaller, and 144 falls back to 2.00.
+// So the wave account fits the first knee well and the second one only partly.
+// It is written down as what it is. The rule does not depend on it.
+//
+// WHY THERE ARE THREE KERNELS AND THE RULE NAMES TWO. sgemm_rb gives one thread
+// RM = 4 outputs down a column and reuses B: RM + 1 loads per RM multiply-adds,
+// 5 for 4. sgemm_2d gives one thread a 2 x 2 patch and reuses BOTH operands:
+// RM + RN loads per RM * RN, 4 for 4. The tiles were chosen to produce the SAME
+// number of outputs per thread, so at any shape the two launch the same number
+// of threads and the only difference between them is the load count.
+//
+// That was the point. The in-situ sweep had established that what decides
+// between blocked and reference on this device is how many threads are left
+// running, so a wider tile that also cut the thread count would have changed
+// two things at once. Holding occupancy fixed, the 2D tile is faster on 42 of
+// 42 swept cells, by 1.18x to 1.39x, and on 16 of the 18 GEMM calls a
+// transformer block makes -- the two it loses are the same 16x8x8 shape, by 147
+// and 473 cycles out of 256000, which is less than the spread between the two
+// instances of that shape. So: at equal occupancy, the load count is what
+// costs, and the rule does not try to carve out a shape whose effect is smaller
+// than its own position noise.
+//
+// sgemm_rb is therefore a kernel the rule now selects only as a fallback. It
+// stays because it is the CONTROL: without a kernel that differs from sgemm_2d
+// in exactly one variable, "the 2D tile is faster because it loads less" is an
+// argument rather than a measurement, and both sweeps compare against it every
+// run.
+//
+// WHAT CAME BEFORE, kept because it is the reason these gates exist. The rule
+// was once `k >= 16 || ceil(m/RM) >= warpSize`, fitted to five points with a
+// coalescing story attached. The sweep disproved the story -- k never changes
+// which kernel wins anywhere in range, and the boundary is not at m = 16 -- and
+// the output-count rule that replaced it was then REVERTED for a commit,
+// because the block appeared to get slower. It had not. Attention is four
+// launches sharing one probe buffer and MCYCLE restarts at zero at every
+// launch, so its "cost" was a maximum over four unrelated clocks
+// (include/grx/grx_cycles.h). Every number above is a sum of per-launch spans.
 
 // ---------------------------------------------------------------------------
 // THE MEASUREMENT HOOKS. Not API: nothing in grxblas.h mentions them, no
@@ -191,12 +226,21 @@ bool env_forces(const char* name, uint64_t call) {
   return false;
 }
 
-enum class SgemmKernel { kNaive, kRegisterBlocked };
+enum class SgemmKernel { kNaive, kRegisterBlocked, kTwoD };
+
+const char* sgemm_kernel_name(SgemmKernel k) {
+  switch (k) {
+    case SgemmKernel::kNaive:           return "naive";
+    case SgemmKernel::kRegisterBlocked: return "rb";
+    case SgemmKernel::kTwoD:            return "2d";
+  }
+  return "?";
+}
 
 struct SgemmChoice {
-  SgemmKernel kernel   = SgemmKernel::kNaive;
-  bool        rule_rb  = false;   // what the RULE alone would have picked
-  const char* why      = "rule";  // what actually picked it
+  SgemmKernel kernel = SgemmKernel::kNaive;
+  SgemmKernel rule   = SgemmKernel::kNaive;  // what the RULE alone would pick
+  const char* why    = "rule";               // what actually picked it
 };
 
 // The one place the kernel is chosen. The launch path below and the trace both
@@ -209,21 +253,42 @@ SgemmChoice decide_sgemm_kernel(const Context& ctx, const grxDeviceProp_t& prop,
   const long long resident = (long long)prop.warpSize *
                              prop.maxWarpsPerMultiProcessor *
                              prop.multiProcessorCount;
-  c.rule_rb = (m >= kSgemmRowsPerThread) &&
-              ((long long)m * n * batch >= 2 * resident);
+  const long long outputs = (long long)m * n * batch;
+  const bool have_2d = ctx.sgemm_2d_fn && ctx.td_rows > 0 && ctx.td_cols > 0;
+  const bool have_rb = ctx.sgemm_rb_fn && ctx.rb_rows > 0 && m >= ctx.rb_rows;
 
-  // Order matters and matches what shipped: a missing kernel beats everything,
-  // then force-naive, then the m < RM floor -- which force-rb does NOT lift,
-  // because below RM the blocked kernel is not slower, it is wrong.
-  if (!ctx.sgemm_rb_fn)               { c.why = "module has no sgemm_rb"; return c; }
+  // THE RULE. Below `resident` outputs nothing blocks; at or above it the 2D
+  // micro-tile, and the register-blocked kernel only where the 2D one is absent
+  // -- with its OWN boundary, because that is the one measured for it.
+  if (outputs >= resident && have_2d)          c.rule = SgemmKernel::kTwoD;
+  else if (outputs >= 2 * resident && have_rb) c.rule = SgemmKernel::kRegisterBlocked;
+
+  // force-naive first, because the reference is the ORACLE: a test comparing a
+  // tuned kernel against it must be able to reach it from any state.
   if (env_forces("GRXBLAS_SGEMM_NAIVE", call)) { c.why = "forced naive"; return c; }
-  if (m < kSgemmRowsPerThread)        { c.why = "m < RM"; return c; }
+  if (have_2d && env_forces("GRXBLAS_SGEMM_2D", call)) {
+    c.kernel = SgemmKernel::kTwoD;
+    c.why = "forced 2d";
+    return c;
+  }
   if (env_forces("GRXBLAS_SGEMM_RB", call)) {
+    if (!ctx.sgemm_rb_fn) { c.why = "module has no sgemm_rb"; return c; }
+    if (ctx.rb_rows <= 0) { c.why = "module did not report its tile"; return c; }
+    if (m < ctx.rb_rows)  { c.why = "m < RM"; return c; }
     c.kernel = SgemmKernel::kRegisterBlocked;
     c.why = "forced rb";
     return c;
   }
-  if (c.rule_rb) c.kernel = SgemmKernel::kRegisterBlocked;
+
+  c.kernel = c.rule;
+  if (c.kernel == SgemmKernel::kNaive) {
+    // Say WHICH reason, because "the rule said so" and "the module could not
+    // tell me its tile" look identical in a trace and mean different things.
+    if (outputs < resident)                   c.why = "rule";
+    else if (!ctx.sgemm_2d_fn)                c.why = "module has no sgemm_2d";
+    else if (ctx.td_rows <= 0)                c.why = "module did not report its tile";
+    else                                      c.why = "rule";
+  }
   return c;
 }
 
@@ -240,7 +305,13 @@ SgemmChoice decide_sgemm_kernel(const Context& ctx, const grxDeviceProp_t& prop,
 struct SgemmTraceLine {
   uint64_t call;
   int      m, n, k, batch, transa, transb;
-  bool     rb, rule_rb;
+  const char* kernel;   // which one ran: naive, rb, 2d
+  const char* rule;     // what the rule alone would have picked
+  // Whether a cycle probe was attached to THIS call. A consumer of the trace
+  // needs it: a call made with no probe is inside no measured stage, so it has
+  // no cost in a stage-sum, and anything that moves when it changes moved
+  // through machine state rather than through the stage it is not in.
+  bool     probed;
   unsigned grid, block;
   const char* why;
 };
@@ -252,12 +323,14 @@ class SgemmTrace {
     if (!path || lines_.empty()) return;
     std::FILE* f = std::fopen(path, "w");
     if (!f) return;
-    std::fprintf(f, "call,m,n,k,batch,transa,transb,kernel,rule,grid,block,why\n");
+    std::fprintf(f,
+                 "call,m,n,k,batch,transa,transb,kernel,rule,probed,grid,block,"
+                 "why\n");
     for (const SgemmTraceLine& l : lines_)
-      std::fprintf(f, "%llu,%d,%d,%d,%d,%d,%d,%s,%s,%u,%u,%s\n",
+      std::fprintf(f, "%llu,%d,%d,%d,%d,%d,%d,%s,%s,%d,%u,%u,%s\n",
                    (unsigned long long)l.call, l.m, l.n, l.k, l.batch,
-                   l.transa, l.transb, l.rb ? "rb" : "naive",
-                   l.rule_rb ? "rb" : "naive", l.grid, l.block, l.why);
+                   l.transa, l.transb, l.kernel, l.rule, l.probed ? 1 : 0,
+                   l.grid, l.block, l.why);
     std::fclose(f);
   }
   void add(const SgemmTraceLine& l) {
@@ -279,6 +352,66 @@ int slots_for(int m, int n, int warp_size) {
   if (m <= 0 || n <= 0 || warp_size <= 0) return 0;
   const long long total = (long long)m * n;
   return (int)((total + warp_size - 1) / warp_size);
+}
+
+// Ask the module what tile each blocked kernel produces.
+//
+// The host sizes every blocked launch from these numbers, so getting them from
+// the module rather than from a constant beside the launch is the difference
+// between a mismatch that cannot happen and one that nothing checks. There WAS
+// such a constant here -- `kSgemmRowsPerThread = 4`, with a comment asking the
+// reader to keep it equal to RM in kernels/sgemm.cpp -- and a stale .vxbin is
+// exactly the case it could not survive.
+//
+// Anything that goes wrong leaves the geometry at zero, and zero means the
+// blocked kernels are not launched at all. Not a failure: sgemm still runs and
+// still computes the right answer, which is the right way round. An older
+// module that predates sgemm_shape lands here and is served by the reference.
+void read_sgemm_shape(Context& ctx) {
+  ctx.rb_rows = ctx.td_rows = ctx.td_cols = 0;
+  if (!ctx.module) return;
+
+  grxFunction_t shape_fn = nullptr;
+  if (grxModuleGetFunction(&shape_fn, ctx.module, "sgemm_shape") != grxSuccess)
+    return;
+
+  grxDeviceProp_t prop{};
+  if (grxGetDeviceProperties(&prop, 0) != grxSuccess || prop.warpSize <= 0)
+    return;
+
+  void* dshape = nullptr;
+  const size_t bytes = GRXBLAS_SGEMM_SHAPE_COUNT * sizeof(uint32_t);
+  if (grxMalloc(&dshape, bytes) != grxSuccess) return;
+  grxMemset(dshape, 0, bytes);
+
+  grxblas_sgemm_shape_args sargs{};
+  sargs.abi_version = GRXBLAS_SGEMM_ABI_VERSION;
+  sargs.out = (uint64_t)(uintptr_t)dshape;
+  grxError_t e = grxLaunchFunction(shape_fn, dim3_t{1, 1, 1},
+                                   dim3_t{(unsigned)prop.warpSize, 1, 1},
+                                   &sargs, sizeof(sargs), 0, nullptr);
+  if (e == grxSuccess) e = grxDeviceSynchronize();
+
+  uint32_t shape[GRXBLAS_SGEMM_SHAPE_COUNT] = {0};
+  if (e == grxSuccess)
+    e = grxMemcpy(shape, dshape, bytes, grxMemcpyDefault);
+  grxFree(dshape);
+  if (e != grxSuccess) return;
+
+  // A zero from a kernel that ran is the ABI check having refused: it returns
+  // without writing, leaving the buffer as memset left it. Treated the same as
+  // no entry point, because it means the same thing -- this module will not say
+  // what it does.
+  if (shape[GRXBLAS_SGEMM_SHAPE_RB_RM] == 0) return;
+  ctx.rb_rows = (int)shape[GRXBLAS_SGEMM_SHAPE_RB_RM];
+  // The 2D tile is allowed to be absent while sgemm_rb is present: a module can
+  // carry one blocked kernel and not the other, and each is gated on its own
+  // geometry rather than on the pair.
+  if (shape[GRXBLAS_SGEMM_SHAPE_2D_RM] != 0 &&
+      shape[GRXBLAS_SGEMM_SHAPE_2D_RN] != 0) {
+    ctx.td_rows = (int)shape[GRXBLAS_SGEMM_SHAPE_2D_RM];
+    ctx.td_cols = (int)shape[GRXBLAS_SGEMM_SHAPE_2D_RN];
+  }
 }
 
 // Load the library's module, preferring the one that carries every kernel.
@@ -326,7 +459,13 @@ grxblasStatus_t ensure_module_locked(Context& ctx) {
       ctx.sgemm_fn   = fn;
       if (grxModuleGetFunction(&ctx.sgemm_rb_fn, mod, "sgemm_rb") != grxSuccess)
         ctx.sgemm_rb_fn = nullptr;
+      if (grxModuleGetFunction(&ctx.sgemm_2d_fn, mod, "sgemm_2d") != grxSuccess)
+        ctx.sgemm_2d_fn = nullptr;
       ctx.sgemm_path = path;
+      // What tile each blocked kernel produces, asked of the module. A module
+      // that cannot say leaves all three at zero, and read_sgemm_shape drops
+      // the blocked kernels rather than sizing a grid from a guess.
+      read_sgemm_shape(ctx);
       // Best effort: a module built before these existed still serves sgemm,
       // and the level-1/2 calls report NOT_SUPPORTED instead of the whole
       // library refusing to initialise.
@@ -1212,13 +1351,24 @@ static grxblasStatus_t sgemm_batched(grxblasHandle_t handle,
   const uint64_t call = g_sgemm_calls.fetch_add(1, std::memory_order_relaxed);
   const SgemmChoice choice =
       decide_sgemm_kernel(*ctx, prop, m, n, k, batch, call);
-  const bool use_rb = choice.kernel == SgemmKernel::kRegisterBlocked;
-
+  // How many THREADS the chosen kernel needs -- one per tile it produces, not
+  // one per output. Every one of these divisors comes from what the module
+  // reported, so the grid cannot cover a different number of outputs than the
+  // kernel slices.
   const unsigned block = (unsigned)prop.warpSize;
-  const unsigned outputs = use_rb
-      ? (unsigned)((size_t)((m + kSgemmRowsPerThread - 1) / kSgemmRowsPerThread)
-                   * (size_t)n)
-      : (unsigned)((size_t)m * (size_t)n);
+  size_t tiles = (size_t)m * (size_t)n;
+  switch (choice.kernel) {
+    case SgemmKernel::kRegisterBlocked:
+      tiles = (size_t)((m + ctx->rb_rows - 1) / ctx->rb_rows) * (size_t)n;
+      break;
+    case SgemmKernel::kTwoD:
+      tiles = (size_t)((m + ctx->td_rows - 1) / ctx->td_rows) *
+              (size_t)((n + ctx->td_cols - 1) / ctx->td_cols);
+      break;
+    case SgemmKernel::kNaive:
+      break;
+  }
+  const unsigned outputs = (unsigned)tiles;
   const unsigned grid = (outputs + block - 1) / block;
 
   if (ctx->probe) {
@@ -1232,10 +1382,16 @@ static grxblasStatus_t sgemm_batched(grxblasHandle_t handle,
   }
 
   g_sgemm_trace.add(SgemmTraceLine{call, m, n, k, batch, (int)transa,
-                                   (int)transb, use_rb, choice.rule_rb, grid,
-                                   block, choice.why});
+                                   (int)transb, sgemm_kernel_name(choice.kernel),
+                                   sgemm_kernel_name(choice.rule),
+                                   ctx->probe != nullptr, grid, block,
+                                   choice.why});
 
-  e = grxLaunchFunction(use_rb ? ctx->sgemm_rb_fn : ctx->sgemm_fn,
+  grxFunction_t fn_to_run = ctx->sgemm_fn;
+  if (choice.kernel == SgemmKernel::kRegisterBlocked) fn_to_run = ctx->sgemm_rb_fn;
+  else if (choice.kernel == SgemmKernel::kTwoD)       fn_to_run = ctx->sgemm_2d_fn;
+
+  e = grxLaunchFunction(fn_to_run,
                         dim3_t{grid, (unsigned)batch, 1},
                         dim3_t{block, 1, 1}, &args, sizeof(args),
                         /*sharedMem=*/0, ctx->stream);

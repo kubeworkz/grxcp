@@ -41,4 +41,35 @@ struct grxblas_sgemm_args {
   int64_t  stride_a, stride_b, stride_c;
 };
 
+// ---------------------------------------------------------------------------
+// What one thread of each blocked kernel produces, ASKED OF THE MODULE.
+// ---------------------------------------------------------------------------
+//
+// The host sizes the grid from these, so a host that guesses wrong launches a
+// grid covering the wrong number of outputs -- silently, in whichever direction
+// the two drifted. That was a live hazard: `kSgemmRowsPerThread` in grxblas.cpp
+// carried a comment saying it MUST match RM in kernels/sgemm.cpp, and nothing
+// checked it. A stale .vxbin is exactly the case where it would not.
+//
+// So the module reports its own geometry, the way the tensor path already does
+// (hgemm_abi.h). A module with no sgemm_shape entry point gets the REFERENCE
+// kernel and nothing else: not knowing the tile means not being able to size a
+// launch for it, and a guess there is a wrong answer rather than a slow one.
+//
+// No warp-width field, unlike the tensor shape. These kernels take their width
+// from blockDim and bake nothing in, so a field for it would be one the host
+// could not act on.
+enum {
+  GRXBLAS_SGEMM_SHAPE_RB_RM = 0,  // sgemm_rb: outputs per thread, down a column
+  GRXBLAS_SGEMM_SHAPE_2D_RM,      // sgemm_2d: rows of C per thread
+  GRXBLAS_SGEMM_SHAPE_2D_RN,      // sgemm_2d: columns of C per thread
+  GRXBLAS_SGEMM_SHAPE_COUNT
+};
+
+struct grxblas_sgemm_shape_args {
+  uint32_t abi_version;   // GRXBLAS_SGEMM_ABI_VERSION
+  uint32_t pad;
+  uint64_t out;           // uint32_t[GRXBLAS_SGEMM_SHAPE_COUNT]
+};
+
 #endif  // GRXBLAS_SGEMM_ABI_H

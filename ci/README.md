@@ -458,26 +458,52 @@ the register-blocking speedup to a measured pair, and it is the control that
 proves the kernel selection does anything at all.
 
 The **SGEMM CROSSOVER GATE** (`tests/bench/sgemm_sweep.cpp`) is the sweep the
-roadmap said was owed. 66 shapes across m, n and k with both kernels over the
-same operands, plus batch and transpose.
+roadmap said was owed. Every shape is run through all three kernels — the
+reference, the register-blocked one, and the 2D micro-tile — over the same
+operands, plus batch, transpose, and a crossover bracket in steps of 8 outputs.
 
 The rule it replaced — `k >= 16 || ceil(m/RM) >= warpSize` — was fitted to five
 points from the block profile. Swept properly: **k never changes which kernel
 wins** anywhere in the range (it moves the magnitude, 1.17× at k=4 against 1.53×
 at k=32), and the coalescing boundary is not at m = 16 — m = 8 wins at n = 16.
 What predicts the isolated GEMM is `m*n*batch >= 2 × resident threads`, which
-explains **all 66 cells** where the old rule is wrong on 9 of the m·k grid. Cells
-with equal m·n agree to two decimals however m and n split, and batch scales it
-exactly. The gate asserts the shipping rule never picks the slower kernel and
-never declines a faster one — 0 and 0 — and pins the replaced rule's 9 so that a
-change which stops measuring the difference is visible. 21 seconds.
+explains every cell where the old rule is wrong on 8 of the m·k grid. Cells with
+equal m·n agree to two decimals however m and n split, and batch scales it
+exactly.
+
+The threshold is `resident`, not `2 × resident`, because the **2D micro-tile**
+moved it: at equal thread count that kernel beats register blocking on **42 of
+42** cells by 1.18× to 1.39×, so it stays ahead further down. The crossover is
+bracketed in steps of 8 outputs — 0.88 at 48, 1.04 at 56, 1.17 at 64 — which is
+the diligence the rule before last lacked, its own crossover having been
+bracketed by 8 and 16 with nothing swept between.
+
+The gate asserts that no shape the rule blocks runs more than 1% slower than the
+reference (one cell reads 0.996× and is named rather than tolerated: it is the
+threshold shape itself at the smallest swept k), that the rule never picks a
+safe kernel where a faster one existed, and that the 2D tile still beats the
+register-blocked one everywhere — because if it stops, the second blocked kernel
+is not earning its place. 33 seconds.
 
 The **BLOCK SGEMM IN SITU** gate (`ci/sweep_block_sgemm.py`) asks the same
 question where the GEMMs actually live. It flips **exactly one** of the block's
-sgemm calls to the other kernel, runs the whole block again, and prices the
-difference — once per call, at both sequence lengths, with nothing else moving.
-On all 18 flippable calls the rule picks the kernel that makes the block faster.
-112 seconds; 19 runs of the block bench.
+sgemm calls to a different kernel, runs the whole block again, and prices the
+difference — once per call per alternative, at both sequence lengths, with
+nothing else moving. On all 36 flips the rule picks the kernel that makes the
+block faster. 187 seconds; 37 runs of the block bench.
+
+Two details that are not incidental. Every flip is **confirmed against the
+trace**: asking for a kernel is not the same as getting one, and a floor in the
+decision, a module without that entry point and a misspelled variable all look
+identical from outside — all three would show up as "this flip changed nothing",
+which reads like evidence about the kernel and is evidence about the harness.
+And only calls that **carried a probe** are priced. The block bench makes one
+sgemm before any probe is attached — an availability check — and flipping *that*
+moved the block total by 659 cycles, through nothing but the machine state it
+left for the first stage. Warming both kernel paths first was tried and did not
+work: the warm-up calls simply became the last thing before stage one. The
+artifact is structural, so the sweep prices only what is measured, and the
+library reports which calls those were.
 
 That gate exists because this pair of questions was once answered differently
 and the difference was believed. The isolated sweep said blocking wins at
@@ -498,6 +524,28 @@ rest stay where they are; shape cannot express that, because at S = 8
 attention's two GEMMs are both 8×8×8. `GRXBLAS_SGEMM_TRACE=<path>` writes what
 the library actually did, one line per call, which is what the block bench could
 not previously tell.
+
+The **PHASE 3 EXIT GATE** (`tests/bench/gemm_cycles.cpp`) is **red on purpose**,
+and its failure is deferred to the end of the run so that the thirty sections
+after it still execute.
+
+It asserts that `grxblasGemmEx` costs at most a fifth of `sgemm` per output
+element. That threshold was set when `sgemm` meant the one-thread-per-output
+reference. The SIMT kernel has since been beaten twice — register blocking, then
+the 2D micro-tile — and is now 2.32× faster at these shapes, so the ratio fell
+from 5.62× to **4.38×** with the tensor path completely unchanged: 28.9 and 44.2
+cycles per element in both configurations. The bench measures `sgemm` a second
+time with the reference forced and prints that ratio (10.16×) beside the gated
+one, so a reader can see which side of the fraction moved.
+
+The threshold was **not** adjusted to match. Moving it to 4× would read as a
+relaxation forever; restating the gate against the reference kernel would freeze
+its denominator and make it unfalsifiable by SIMT work. AGENTS.md section 4 does
+not allow an assertion to be relaxed as a side effect of unrelated progress, and
+this is exactly that side effect. What would make it pass is the tensor unit's
+multi-CTA deadlock (`cuda_mapping.md` 7.12): three of five shapes are already
+excluded here for tile starvation, which is a consequence of the single-CTA
+workaround.
 
 The **PERF BASELINE GATE** (`ci/check_perf.py`, `ci/perf/baselines/`) compares
 196 measured cycle counts against stored golden files. AGENTS.md section 4 had

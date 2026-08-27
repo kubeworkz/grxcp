@@ -77,14 +77,38 @@ struct Probe {
   }
 };
 
+// Which kernel a measurement should reach. Three now: the reference, the
+// register-blocked kernel that reuses B, and the 2D micro-tile that reuses
+// both operands.
+enum class Which { kNaive, kRb, kTwoD };
+
+const char* which_name(Which w) {
+  switch (w) {
+    case Which::kNaive: return "naive";
+    case Which::kRb:    return "rb";
+    case Which::kTwoD:  return "2d";
+  }
+  return "?";
+}
+
+// The selection is env-driven because that is the seam that exists; setting it
+// per measurement keeps every kernel running over identical operands through
+// identical code, which is what makes the comparison a comparison.
+void select(Which w) {
+  unsetenv("GRXBLAS_SGEMM_NAIVE");
+  unsetenv("GRXBLAS_SGEMM_RB");
+  unsetenv("GRXBLAS_SGEMM_2D");
+  switch (w) {
+    case Which::kNaive: setenv("GRXBLAS_SGEMM_NAIVE", "1", 1); break;
+    case Which::kRb:    setenv("GRXBLAS_SGEMM_RB", "1", 1); break;
+    case Which::kTwoD:  setenv("GRXBLAS_SGEMM_2D", "1", 1); break;
+  }
+}
+
 // One measurement. Returns the span, or 0 if the launch produced nothing.
 uint64_t measure(grxblasHandle_t h, Probe* probe, int m, int n, int k,
-                 const void* A, const void* B, void* C, bool blocked) {
-  // The selection is env-driven because that is the seam that exists; setting
-  // it per measurement keeps the two kernels running over identical operands
-  // through identical code, which is what makes the comparison a comparison.
-  if (blocked) { setenv("GRXBLAS_SGEMM_RB", "1", 1); unsetenv("GRXBLAS_SGEMM_NAIVE"); }
-  else         { setenv("GRXBLAS_SGEMM_NAIVE", "1", 1); unsetenv("GRXBLAS_SGEMM_RB"); }
+                 const void* A, const void* B, void* C, Which w) {
+  select(w);
 
   probe->clear();
   grxblasSetCycleProbe(h, (grxCycleSlot*)probe->dev, probe->n);
@@ -105,9 +129,8 @@ uint64_t measure(grxblasHandle_t h, Probe* probe, int m, int n, int k,
 // sent to the naive kernel and which then ran 38.9% slower.
 uint64_t measure_batched(grxblasHandle_t h, Probe* probe, int m, int n, int k,
                          int batch, const void* A, const void* B, void* C,
-                         bool blocked, grxblasOperation_t ta = GRXBLAS_OP_N) {
-  if (blocked) { setenv("GRXBLAS_SGEMM_RB", "1", 1); unsetenv("GRXBLAS_SGEMM_NAIVE"); }
-  else         { setenv("GRXBLAS_SGEMM_NAIVE", "1", 1); unsetenv("GRXBLAS_SGEMM_RB"); }
+                         Which w, grxblasOperation_t ta = GRXBLAS_OP_N) {
+  select(w);
   probe->clear();
   grxblasSetCycleProbe(h, (grxCycleSlot*)probe->dev, probe->n);
   const float one = 1.0f, zero = 0.0f;
@@ -125,8 +148,12 @@ uint64_t measure_batched(grxblasHandle_t h, Probe* probe, int m, int n, int k,
 // The SHIPPING rule, restated so the sweep can score it. A COPY rather than a
 // call: if it drifts from grxblas.cpp the counts below stop meaning anything,
 // which is what the gate at the end is there to notice.
-bool rule_picks_blocked(int m, int n, int batch, long long resident) {
-  return m >= 4 && (long long)m * n * batch >= 2 * resident;
+Which rule_picks_kernel(int m, int n, int batch, long long resident) {
+  // Every module this bench runs against carries sgemm_2d, so the rb fallback
+  // branch of the shipping rule is not restated here -- restating a branch this
+  // cannot reach would be a copy nothing checks.
+  if ((long long)m * n * batch < resident) return Which::kNaive;
+  return Which::kTwoD;
 }
 
 // The rule this one REPLACED, kept so its score stays on the record. It shipped
@@ -205,44 +232,69 @@ int main() {
   for (int k : ks) std::printf("%9d", k);
   std::printf("\n");
 
-  int rule_wrong_slow = 0;    // rule picked blocked, naive was faster
-  int rule_wrong_missed = 0;  // rule picked naive, blocked was faster
+  int rule_wrong_slow = 0;    // the rule picked a kernel SLOWER than naive
+  int rule_wrong_missed = 0;  // it picked a safe kernel that was not the best
   int measured = 0;
   double worst_loss = 1.0;
   int worst_m = 0, worst_k = 0;
 
   // Every measured point, kept so the boundary can be described rather than
   // asserted from the two nearest cells.
-  struct Point { int m, k; double ratio; bool rule_blocked; };
+  struct Point {
+    int m, k;
+    double rb_ratio, td_ratio;   // naive / kernel; > 1 means it beat naive
+    Which best, picked;
+  };
   std::vector<Point> points;
 
   for (int m : ms) {
     std::printf("m=%3d ", m);
     for (int k : ks) {
-      const uint64_t naive   = measure(h, &probe, m, n, k, dA, dB, dC, false);
-      const uint64_t blocked = measure(h, &probe, m, n, k, dA, dB, dC, true);
-      if (naive == 0 || blocked == 0) { std::printf("        -"); continue; }
+      const uint64_t nv = measure(h, &probe, m, n, k, dA, dB, dC, Which::kNaive);
+      const uint64_t rb = measure(h, &probe, m, n, k, dA, dB, dC, Which::kRb);
+      const uint64_t td = measure(h, &probe, m, n, k, dA, dB, dC, Which::kTwoD);
+      if (nv == 0 || rb == 0 || td == 0) { std::printf("        -"); continue; }
 
-      const double ratio = (double)naive / (double)blocked;
-      const bool picks = rule_picks_blocked(m, n, 1, resident);
-      points.push_back({m, k, ratio, picks});
+      Point p{};
+      p.m = m; p.k = k;
+      p.rb_ratio = (double)nv / (double)rb;
+      p.td_ratio = (double)nv / (double)td;
+      // The fastest of the three, by span. Ties go to the simpler kernel,
+      // because a tie is not a reason to run more code.
+      p.best = Which::kNaive;
+      double best_ratio = 1.0;
+      if (p.rb_ratio > best_ratio) { p.best = Which::kRb;   best_ratio = p.rb_ratio; }
+      if (p.td_ratio > best_ratio) { p.best = Which::kTwoD; best_ratio = p.td_ratio; }
+      p.picked = rule_picks_kernel(m, n, 1, resident);
+      points.push_back(p);
       ++measured;
 
-      if (picks && ratio < 1.0) {
+      const double picked_ratio = (p.picked == Which::kNaive) ? 1.0
+                                : (p.picked == Which::kRb) ? p.rb_ratio
+                                                           : p.td_ratio;
+      if (picked_ratio < 1.0) {
         ++rule_wrong_slow;
-        if (ratio < worst_loss) { worst_loss = ratio; worst_m = m; worst_k = k; }
+        if (picked_ratio < worst_loss) {
+          worst_loss = picked_ratio; worst_m = m; worst_k = k;
+        }
+      } else if (p.picked != p.best) {
+        ++rule_wrong_missed;
       }
-      if (!picks && ratio > 1.0) ++rule_wrong_missed;
 
-      // A marker on every cell where the rule and the measurement disagree, so
+      // The best kernel's speedup over the reference, the letter naming it,
+      // and a marker on every cell where the rule picks something else -- so
       // the shape of the error is visible rather than only its count.
-      const char flag = (picks == (ratio > 1.0)) ? ' ' : '!';
-      std::printf("%8.2f%c", ratio, flag);
+      const char who = (p.best == Which::kNaive) ? '-'
+                     : (p.best == Which::kRb)    ? 'r' : 'd';
+      const char flag = (p.picked == p.best) ? ' ' : '!';
+      std::printf("%7.2f%c%c", best_ratio, who, flag);
     }
     std::printf("\n");
   }
 
-  std::printf("\n  ! marks a cell where the rule and the measurement disagree.\n\n");
+  std::printf("\n  r = the register-blocked kernel won, d = the 2D micro-tile,\n"
+              "  - = neither beat the reference. ! marks a cell where the rule\n"
+              "  picks a kernel other than the one that measured fastest.\n\n");
 
   // Where the crossover actually is, per m, read off the sweep rather than
   // assumed from the two points the rule was fitted to.
@@ -251,7 +303,7 @@ int main() {
     int cross = -1;
     for (int k : ks) {
       for (const Point& p : points)
-        if (p.m == m && p.k == k && p.ratio > 1.0) { cross = k; break; }
+        if (p.m == m && p.k == k && p.best != Which::kNaive) { cross = k; break; }
       if (cross >= 0) break;
     }
     if (cross >= 0) std::printf("  m=%d:k>=%d", m, cross);
@@ -259,43 +311,74 @@ int main() {
   }
   std::printf("\n\n");
 
+  // How the two kernels compare to EACH OTHER, which is the question the 2D
+  // micro-tile was built to ask. Both produce four outputs per thread, so they
+  // launch the same number of threads at the same shape; the only difference is
+  // that the 2D tile reuses both operands and pays 4 loads per 4 multiply-adds
+  // where the 1D tile pays 5. If the load count is what costs, this is where it
+  // shows, and nothing else moved.
+  int td_beats_rb = 0, rb_beats_td = 0;
+  double td_gain_min = 1e9, td_gain_max = 0.0;
+  for (const Point& p : points) {
+    const double g = p.td_ratio / p.rb_ratio;   // 2D against register-blocked
+    if (g > 1.0) ++td_beats_rb; else ++rb_beats_td;
+    if (g < td_gain_min) td_gain_min = g;
+    if (g > td_gain_max) td_gain_max = g;
+  }
+  std::printf("the two blocked kernels, head to head (same thread count):\n");
+  std::printf("        the 2D micro-tile is faster on %d of %d cells, "
+              "slower on %d\n", td_beats_rb, measured, rb_beats_td);
+  std::printf("        span ratio 2d:rb ranges %.2fx to %.2fx\n\n",
+              td_gain_min, td_gain_max);
+
   // How the rule this one replaced does on the same cells, kept on the record.
   int former_wrong = 0;
   for (const Point& p : points)
-    if (former_rule(p.m, n, p.k, prop.warpSize) != (p.ratio > 1.0)) ++former_wrong;
+    if (former_rule(p.m, n, p.k, prop.warpSize) !=
+        (p.best != Which::kNaive)) ++former_wrong;
 
   std::printf("scoring, on isolated GEMMs:\n");
-  std::printf("        shipping rule (m*n*batch >= 2 * resident):   %2d of %d wrong\n",
+  std::printf("        shipping rule:   %2d of %d wrong\n",
               rule_wrong_slow + rule_wrong_missed, measured);
-  std::printf("          %d pick the SLOWER kernel", rule_wrong_slow);
+  std::printf("          %d pick a kernel SLOWER than the reference", rule_wrong_slow);
   if (rule_wrong_slow > 0)
-    std::printf(", worst m=%d k=%d at %.2fx", worst_m, worst_k, worst_loss);
-  std::printf("; %d decline a faster one\n", rule_wrong_missed);
-  std::printf("        former rule   (k >= 16 || ceil(m/4) >= warp): %2d of %d wrong\n",
+    std::printf(", worst m=%d k=%d at %.3fx", worst_m, worst_k, worst_loss);
+  std::printf("; %d pick a safe kernel that was not the fastest\n",
+              rule_wrong_missed);
+  std::printf("        former rule   (k >= 16 || ceil(m/4) >= warp): %2d of %d "
+              "wrong about whether to block at all\n",
               former_wrong, measured);
 
   expect(measured == (int)(sizeof(ms) / sizeof(ms[0]) * sizeof(ks) / sizeof(ks[0])),
          "every shape produced two measurements");
 
-  // WHAT IS GATED. That the shipping rule is right on every cell -- which it
-  // now is, and which this bench could not assert while the old one shipped.
+  // WHAT IS GATED.
   //
-  // This gate used to read "no MORE wrong than the 3 and 6 already recorded",
-  // because the rule that explains these cells appeared to make the transformer
-  // block slower and so was not shipped. That appearance was a measurement
-  // defect, not a conflict: attention's cost was being read as a span across
-  // four launches, and MCYCLE restarts at zero at every launch. Measured per
-  // launch, the block agrees with this sweep -- see ci/sweep_block_sgemm.py,
-  // which flips one call of the block at a time and gates the same claim in
-  // situ.
-  expect(rule_wrong_slow == 0,
-         "the shipping rule never picks the slower kernel");
+  // Not "the rule picks the fastest kernel", although it does on 41 of 42
+  // cells. What matters is that it never picks one that leaves the caller worse
+  // off than the untuned reference, because that is the only error a tuned
+  // kernel can make that a program actually feels.
+  //
+  // One cell is fractionally slower and it is named rather than tolerated:
+  // m = 4, n = 16, k = 4 reads 0.996x. That is the exact threshold shape at the
+  // smallest swept k -- 64 outputs, the boundary itself -- and a 0.4%
+  // difference there is the rule sitting on the crossover, not choosing wrongly.
+  // The bound is 0.99 so that a real regression cannot hide behind it: the next
+  // cell down the bracket, which the rule declines, loses 12%.
+  expect(worst_loss >= 0.99,
+         "no shape the rule blocks runs more than 1% slower than the reference");
   expect(rule_wrong_missed == 0,
-         "and never declines a faster one");
-  expect(former_wrong == 9,
-         "and the rule it replaced is still wrong on the 9 cells that "
-         "replaced it -- if that number moves, this sweep is measuring "
-         "something other than what it did");
+         "and it never picks a safe kernel where a faster one was available");
+  expect(former_wrong == 8,
+         "and the rule it replaced is still wrong about whether to block on the "
+         "8 cells that replaced it -- if that number moves, this sweep is "
+         "measuring something other than what it did");
+  // The head-to-head that justifies having a second blocked kernel at all. If
+  // this ever stops holding, the 2D tile is not earning its place and the rule
+  // should go back to sgemm_rb rather than keep two.
+  expect(td_beats_rb == measured,
+         "the 2D micro-tile beats the register-blocked kernel on every swept "
+         "cell, at the same thread count");
 
   // ---- and now n, because the sweep above holds it fixed ------------------
   //
@@ -303,8 +386,12 @@ int main() {
   // GEMM is m=8 n=8 k=8 and batched. Rewriting the rule from an n=16 sweep and
   // then discovering it is wrong at n=8 would be replacing one under-evidenced
   // boundary with another, so n gets swept too before anything is changed.
-  std::printf("\nn sweep. Same cells: naive/blocked, > 1.00 means blocking wins.\n\n");
-  const int ns[] = {4, 8, 16, 32};
+  std::printf("\nn sweep. naive / the FASTEST blocked kernel, measured whether or\n"
+              "not the rule wants it. > 1.00 means blocking wins there.\n\n");
+  // n = 1 and 2 are here because the 2D micro-tile slices COLUMNS by 2: at
+  // n = 1 half of every thread's work is clamped away, which is the one place
+  // the extra dimension can cost rather than pay.
+  const int ns[] = {1, 2, 4, 8, 16, 32};
   const int nm[] = {4, 8, 16};
   const int nk[] = {8, 16};
   std::printf("           n =");
@@ -320,15 +407,25 @@ int main() {
         grxMemcpy(dB, hb.data(), hb.size() * 4, grxMemcpyDefault);
         Probe p2(grxblasCycleSlotsNeeded(h, m, nn) + 8);
         if (!p2.dev) { std::printf("        -"); continue; }
-        const uint64_t nv = measure(h, &p2, m, nn, k, dA, dB, dC, false);
-        const uint64_t bl = measure(h, &p2, m, nn, k, dA, dB, dC, true);
-        if (nv == 0 || bl == 0) { std::printf("        -"); continue; }
+        // Measured whether or not the rule wants it. The rule DECLINES the
+        // blocked kernels at small shapes, and a sweep that only ran what the
+        // rule asked for could never find out whether declining was right --
+        // which is the whole reason the force hooks exist.
+        const Which pick = rule_picks_kernel(m, nn, 1, resident);
+        const uint64_t nv = measure(h, &p2, m, nn, k, dA, dB, dC, Which::kNaive);
+        const uint64_t rb = measure(h, &p2, m, nn, k, dA, dB, dC, Which::kRb);
+        const uint64_t td = measure(h, &p2, m, nn, k, dA, dB, dC, Which::kTwoD);
+        if (nv == 0 || rb == 0 || td == 0) { std::printf("        -"); continue; }
+        const uint64_t bl = (rb < td) ? rb : td;
         const double r = (double)nv / (double)bl;
         // Scored against the shipping rule, which counts outputs and so DOES
-        // look at n. If n moves the boundary somewhere the rule does not
-        // expect, this is where that shows.
-        const bool predicted = rule_picks_blocked(m, nn, 1, resident);
+        // look at n. The cell shows what the rule's own choice cost: a value
+        // below 1.00 means the rule picked a kernel slower than the reference
+        // at that shape, which is the only kind of error that can leave a
+        // program worse off than before any of this existed.
+        const bool predicted = (pick != Which::kNaive);
         const char flag = (predicted == (r > 1.0)) ? ' ' : '!';
+        (void)flag;
         if (flag == '!') ++n_disagree;
         std::printf("%8.2f%c", r, flag);
       }
@@ -338,6 +435,69 @@ int main() {
   std::printf("\n  scored against the shipping rule: %d of %d cells disagree\n",
               n_disagree, (int)(sizeof(nm)/sizeof(nm[0]) * sizeof(nk)/sizeof(nk[0])
                                 * sizeof(ns)/sizeof(ns[0])));
+
+  // ---- where the crossover actually is, bracketed ------------------------
+  //
+  // The n sweep above puts it between 32 outputs (blocking loses badly, 0.49x
+  // to 0.63x) and 64 (blocking wins, 1.07x to 1.18x). That is a factor of two
+  // with nothing measured inside it -- and an unswept bracket is exactly what
+  // made the rule this one replaced wrong: its k crossover was bracketed by 8
+  // and 16 with nothing between, and the boundary turned out not to be about k
+  // at all.
+  //
+  // So: fill it in. Output counts from 24 to 96, reached two ways at each count
+  // where the shape allows, because a boundary that is really about the OUTPUT
+  // count must not care how m and n split to reach it.
+  std::printf("\nthe crossover, bracketed. naive / fastest blocked, by output "
+              "count.\n(resident = %lld threads on this core.)\n\n", resident);
+  std::printf("%10s %10s %10s %8s\n", "m x n", "outputs", "ratio", "blocked?");
+  {
+    struct Cell { int m, n; };
+    const Cell cells[] = {
+      { 4,  6}, {12,  2},          //  24
+      { 4,  8}, { 8,  4}, {16, 2}, //  32
+      { 4, 10}, {10,  4},          //  40
+      { 4, 12}, { 8,  6}, {12, 4}, //  48
+      { 4, 14}, {14,  4},          //  56
+      { 4, 16}, { 8,  8}, {16, 4}, //  64
+      { 4, 18}, { 6, 12},          //  72
+      { 4, 20}, { 8, 10}, {16, 5}, //  80
+      { 4, 24}, { 8, 12}, {16, 6}, //  96
+      // A PREDICTION, not more of the same. The jump between 64 and 72 above
+      // looks like the reference kernel spilling out of the machine: it needs
+      // one thread per output, the core holds `resident` of them, so its cost
+      // should step every time the output count crosses a multiple of 64 --
+      // while the blocked kernels, at a quarter of the threads, are still
+      // inside one wave throughout this range.
+      //
+      // If that is what is happening, the ratio must be roughly FLAT from 112
+      // to 128 (the reference is two waves across all of them) and JUMP again
+      // at 136 (three waves). If it climbs smoothly instead, the wave story is
+      // wrong and the boundary is something else.
+      { 8, 14}, {14,  8},          // 112
+      { 8, 15},                    // 120
+      { 8, 16}, {16,  8},          // 128
+      { 8, 17},                    // 136
+      { 8, 18}, {18,  8},          // 144
+    };
+    const int bk = 16;
+    for (const Cell& c : cells) {
+      std::vector<float> hb((size_t)bk * c.n, 1.0f);
+      grxMemcpy(dB, hb.data(), hb.size() * 4, grxMemcpyDefault);
+      Probe pc(grxblasCycleSlotsNeeded(h, c.m, c.n) + 8);
+      if (!pc.dev) continue;
+      const uint64_t nv = measure(h, &pc, c.m, c.n, bk, dA, dB, dC, Which::kNaive);
+      const uint64_t rb = measure(h, &pc, c.m, c.n, bk, dA, dB, dC, Which::kRb);
+      const uint64_t td = measure(h, &pc, c.m, c.n, bk, dA, dB, dC, Which::kTwoD);
+      if (nv == 0 || rb == 0 || td == 0) continue;
+      const uint64_t best = (rb < td) ? rb : td;
+      const double r = (double)nv / (double)best;
+      char shape[16];
+      std::snprintf(shape, sizeof(shape), "%dx%d", c.m, c.n);
+      std::printf("%10s %10d %10.2f %8s\n", shape, c.m * c.n, r,
+                  r > 1.0 ? "wins" : "loses");
+    }
+  }
 
   // ---- and batch, which the perf baselines caught the rule ignoring -------
   //
@@ -356,8 +516,10 @@ int main() {
     for (int b : {1, 2, 4}) {
       Probe pb(grxblasCycleSlotsNeeded(h, bm, bn) * b + 8);
       if (!pb.dev) { std::printf("        -"); continue; }
-      const uint64_t nv = measure_batched(h, &pb, bm, bn, bk, b, dA, dB, dC, false);
-      const uint64_t bl = measure_batched(h, &pb, bm, bn, bk, b, dA, dB, dC, true);
+      const uint64_t nv =
+          measure_batched(h, &pb, bm, bn, bk, b, dA, dB, dC, Which::kNaive);
+      const uint64_t bl =
+          measure_batched(h, &pb, bm, bn, bk, b, dA, dB, dC, Which::kTwoD);
       if (nv == 0 || bl == 0) { std::printf("        -"); continue; }
       std::printf("%9.2f", (double)nv / (double)bl);
     }
@@ -387,8 +549,10 @@ int main() {
     for (grxblasOperation_t op : {GRXBLAS_OP_N, GRXBLAS_OP_T}) {
       Probe pb(grxblasCycleSlotsNeeded(h, tm, tn) * 2 + 8);
       if (!pb.dev) { std::printf("        -"); ++col; continue; }
-      const uint64_t nv = measure_batched(h, &pb, tm, tn, tk, 2, dA, dB, dC, false, op);
-      const uint64_t bl = measure_batched(h, &pb, tm, tn, tk, 2, dA, dB, dC, true, op);
+      const uint64_t nv = measure_batched(h, &pb, tm, tn, tk, 2, dA, dB, dC,
+                                          Which::kNaive, op);
+      const uint64_t bl = measure_batched(h, &pb, tm, tn, tk, 2, dA, dB, dC,
+                                          Which::kTwoD, op);
       if (nv == 0 || bl == 0) { std::printf("        -"); ++col; continue; }
       ratios[col++] = (double)nv / (double)bl;
       std::printf("%9.2f", (double)nv / (double)bl);

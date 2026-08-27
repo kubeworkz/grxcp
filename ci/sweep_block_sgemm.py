@@ -13,10 +13,30 @@ was a maximum over four unrelated clocks -- see include/grx/grx_cycles.h. The
 conflict was never real.
 
 WHAT THIS DOES INSTEAD, and why it is not just the sweep again. It runs the
-whole transformer block, flips EXACTLY ONE of its sgemm calls to the other
-kernel, and runs it again -- once per call, at every shape the bench measures.
-Nothing else moves. That is the only way to price one stage's kernel choice
-where the stage actually lives, next to the launches it shares a machine with.
+whole transformer block, flips EXACTLY ONE of its sgemm calls to a different
+kernel, and runs it again -- once per call per alternative, at every shape the
+bench measures. Nothing else moves. That is the only way to price one stage's
+kernel choice where the stage actually lives, next to the launches it shares a
+machine with.
+
+Every flip is CONFIRMED against the trace rather than assumed. Asking for a
+kernel is not the same as getting one: a floor in the decision, a module without
+that entry point, and a misspelled variable all look identical from out here,
+and all three would show up as "this flip changed nothing" -- which reads like
+evidence about the kernel and is evidence about the harness.
+
+ONLY CALLS INSIDE A MEASURED STAGE ARE PRICED, and finding out why took a wrong
+turn worth recording. The block bench makes one sgemm before any probe is
+attached -- an availability check, 1x1x1 -- and flipping THAT call moved the
+block total by 659 cycles. It is in no stage; its only route into a stage-sum is
+the machine state it leaves for the first stage that runs. The first attempt at
+a fix was to warm both kernel paths before measuring, on the theory that a
+profiler should not measure its own warm-up. It did not work: the warm-up calls
+simply became the last thing to run before stage one, and flipping THEM moved
+the total instead. The artifact is structural -- whatever runs last before the
+first measured stage perturbs it -- so the honest response is to price only what
+is measured. The library reports which calls carried a probe; those are the
+ones.
 
 Calls are selected by INDEX, not by shape, because shape does not tell the
 block's stages apart: at S=8 attention's two GEMMs are both 8x8x8, and at S=16
@@ -74,9 +94,20 @@ def score(baseline, flips):
     return helped, hurt
 
 
+KERNELS = ("naive", "rb", "2d")
+
+# The measurement hook that forces each kernel. Not API -- see the note in
+# src/libs/grxblas/grxblas.cpp. Each takes a list of call indices.
+ENV_FOR = {
+    "naive": "GRXBLAS_SGEMM_NAIVE",
+    "rb": "GRXBLAS_SGEMM_RB",
+    "2d": "GRXBLAS_SGEMM_2D",
+}
+
+
 def run_block(binary, env_extra, out_json, trace=None):
     env = dict(os.environ)
-    for k in ("GRXBLAS_SGEMM_RB", "GRXBLAS_SGEMM_NAIVE", "GRXBLAS_SGEMM_TRACE"):
+    for k in list(ENV_FOR.values()) + ["GRXBLAS_SGEMM_TRACE"]:
         env.pop(k, None)
     env.update(env_extra)
     if trace:
@@ -92,6 +123,18 @@ def run_block(binary, env_extra, out_json, trace=None):
         return json.load(f), 0
 
 
+def read_trace(path):
+    """call index -> the row the library wrote for it."""
+    with open(path) as f:
+        return {int(r["call"]): r for r in csv.DictReader(f)}
+
+
+def shape_of(row):
+    return (f'{row["m"]}x{row["n"]}x{row["k"]}'
+            + (f'b{row["batch"]}' if row["batch"] != "1" else "")
+            + ("T" if row["transa"] == "1" else ""))
+
+
 def sweep(binary, out_path=None):
     tmp = tempfile.mkdtemp(prefix="blocksweep.")
     trace = os.path.join(tmp, "census.csv")
@@ -103,53 +146,62 @@ def sweep(binary, out_path=None):
         print("  the block bench failed before any flip was tried")
         return rc or 1
     baseline = totals_of(base)
-    with open(trace) as f:
-        census = list(csv.DictReader(f))
+    census = read_trace(trace)
+    seqs = [sh["seq"] for sh in base["shapes"]]
 
     print(f"  the block issues {len(census)} sgemm calls; "
           f"baseline totals {baseline}")
-    print(f"  {'call':>4}  {'shape':<16} {'from':>5} -> {'to':<5} "
-          f"{'d(block)':>9}  which shape")
+    print(f"  {'call':>4}  {'shape':<14} {'ran':>5}  {'instead':>7} "
+          f"{'d(block)':>9}  where")
 
-    flips = []
-    for row in census:
-        call = int(row["call"])
-        if row["why"] == "m < RM":
-            # Not a choice: below RM the blocked kernel is wrong, not slow.
-            print(f"  {call:>4}  {row['m']}x{row['n']}x{row['k']:<10} "
-                  f"     not a choice (m < RM)")
+    flips, unreachable, outside = [], 0, 0
+    for call in sorted(census):
+        row = census[call]
+        ran = row["kernel"]
+        if row.get("probed") != "1":
+            # Outside every measured stage. Named rather than dropped: a sweep
+            # that silently skips calls reads as coverage it does not have.
+            print(f"  {call:>4}  {shape_of(row):<14} {ran:>5}  {'--':>7} "
+                  f"{'--':>9}  no probe: in no measured stage")
+            outside += 1
             continue
-        to_rb = row["kernel"] == "naive"
-        var = "GRXBLAS_SGEMM_RB" if to_rb else "GRXBLAS_SGEMM_NAIVE"
-        doc, rc = run_block(binary, {var: f"#{call}"},
-                            os.path.join(tmp, f"f{call}.json"))
-        if doc is None:
-            print(f"  {call:>4}  flip failed (rc={rc})")
-            return rc or 1
-        t = totals_of(doc)
-        shape = (f'{row["m"]}x{row["n"]}x{row["k"]}'
-                 + (f'b{row["batch"]}' if row["batch"] != "1" else "")
-                 + ("T" if row["transa"] == "1" else ""))
-        flips.append(dict(call=call, shape=shape, frm=row["kernel"],
-                          to="rb" if to_rb else "naive", totals=t))
-        d = [t[i] - baseline[i] for i in range(len(baseline))]
-        worst = max(range(len(d)), key=lambda i: abs(d[i]))
-        which = (f'S={base["shapes"][worst]["seq"]}'
-                 if d[worst] else "no shape moved")
-        print(f"  {call:>4}  {shape:<16} {row['kernel']:>5} -> "
-              f"{('rb' if to_rb else 'naive'):<5} {d[worst]:>+9d}  {which}")
+        for alt in KERNELS:
+            if alt == ran:
+                continue
+            ftrace = os.path.join(tmp, f"t{call}_{alt}.csv")
+            doc, rc = run_block(binary, {ENV_FOR[alt]: f"#{call}"},
+                                os.path.join(tmp, f"f{call}_{alt}.json"), ftrace)
+            if doc is None:
+                print(f"  {call:>4}  flip to {alt} failed (rc={rc})")
+                return rc or 1
+            got = read_trace(ftrace).get(call, {})
+            if got.get("kernel") != alt:
+                # Not a result about the kernel. Printed anyway, because a
+                # silently skipped alternative is how a sweep comes to claim
+                # coverage it does not have.
+                unreachable += 1
+                print(f"  {call:>4}  {shape_of(row):<14} {ran:>5}  {alt:>7} "
+                      f"{'--':>9}  not reachable: {got.get('why', '?')}")
+                continue
+            t = totals_of(doc)
+            d = [t[i] - baseline[i] for i in range(len(baseline))]
+            worst = max(range(len(d)), key=lambda i: abs(d[i]))
+            flips.append(dict(call=call, shape=shape_of(row), frm=ran, to=alt,
+                              totals=t))
+            where = f"S={seqs[worst]}" if d[worst] else "no shape moved"
+            print(f"  {call:>4}  {shape_of(row):<14} {ran:>5}  {alt:>7} "
+                  f"{d[worst]:>+9d}  {where}")
 
     helped, hurt = score(baseline, flips)
     print()
-    print(f"  {len(flips)} calls flipped, one at a time.")
-    print(f"  {len(hurt)} flips made the block slower "
-          f"(the rule was right on those).")
-    print(f"  {len(helped)} made it FASTER (the rule picked the slower "
-          f"kernel there).")
-    if helped:
-        for h in helped:
-            print(f"      call {h['call']} {h['shape']}: {h['frm']} -> "
-                  f"{h['to']} saves {-h['delta']} cycles")
+    print(f"  {len(flips)} flips measured, one call at a time; "
+          f"{unreachable} alternatives were not reachable; "
+          f"{outside} calls sat outside every measured stage.")
+    print(f"  {len(hurt)} made the block slower (the rule was right there).")
+    print(f"  {len(helped)} made it FASTER (the rule picked a slower kernel).")
+    for h in helped:
+        print(f"      call {h['call']} {h['shape']}: {h['frm']} -> "
+              f"{h['to']} saves {-h['delta']} cycles")
 
     if out_path:
         with open(out_path, "w") as f:
@@ -158,8 +210,8 @@ def sweep(binary, out_path=None):
 
     ok = not helped
     print()
-    print(f"  {'ok  ' if ok else 'FAIL'}  no single call's kernel choice can be "
-          f"improved by flipping it in place")
+    print(f"  {'ok  ' if ok else 'FAIL'}  no call's kernel choice can be "
+          f"improved by changing it in place")
     return 0 if ok else 1
 
 

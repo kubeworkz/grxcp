@@ -816,13 +816,29 @@ fi
 
 echo
 echo "==> PHASE 3 EXIT GATE: scalar against tensor, in device cycles"
+# THIS GATE IS CURRENTLY RED, ON PURPOSE, and its failure is DEFERRED to the end
+# of the run rather than stopping here.
+#
+# "GemmEx costs at most a fifth of sgemm per output element" was set when sgemm
+# meant the one-thread-per-output reference. The SIMT kernel has since been
+# beaten twice -- register blocking, then the 2D micro-tile -- and is now 2.32x
+# faster at these shapes, so the ratio fell from 5.62x to 4.38x with the tensor
+# path completely unchanged (29.4 and 44.2 cycles per element either way). The
+# threshold was NOT moved to match: AGENTS.md section 4 does not allow an
+# assertion to be relaxed as a side effect of unrelated progress, and this is
+# exactly that side effect. The bench prints the ratio against the reference
+# kernel beside it so the cause is legible.
+#
+# Deferred rather than fatal for the reason the PERF BASELINE GATE is: a red
+# gate that hides the twenty sections after it is worse than a red gate.
+PHASE3_FAILED=0
 if [[ -n "$GRXGPU" && -d "$TOOLDIR/llvm-vortex" ]]; then
   $CXX $CXXFLAGS -c "$ROOT/tests/bench/gemm_cycles.cpp" -o "$BUILD/gemm_cycles.o"
   $CXX "${OBJS[@]}" "$BUILD/grxblas.o" "$BUILD/gemm_cycles.o" $LIBS \
     -o "$BUILD/sgemm_bench"
   if ! "$BUILD/sgemm_bench" --out "$BUILD/perf_gemm.json"; then
     rc=$?
-    [[ $rc -eq 77 ]] || exit $rc
+    [[ $rc -eq 77 ]] || PHASE3_FAILED=1
   fi
 else
   echo "SKIPPED: needs --grxgpu <path> and a device toolchain in $TOOLDIR."
@@ -1064,12 +1080,28 @@ echo "==> conformance report against the real device"
 "$BUILD/grx-conform" | tail -14
 
 echo
+if [[ "${PHASE3_FAILED:-0}" -ne 0 ]]; then
+  echo "tier 2 FAILED on $DRIVER: the PHASE 3 EXIT GATE above is red."
+  echo
+  echo "It is red because the SIMT kernel it is measured against got faster,"
+  echo "not because the tensor path regressed -- the bench prints both ratios."
+  echo "The threshold stays at 5x until the tensor unit can fill the core;"
+  echo "cuda_mapping.md 7.12 is what is in the way. Do not move it to match"
+  echo "the measurement."
+  echo
+fi
+
 if [[ "${PERF_FAILED:-0}" -ne 0 ]]; then
   echo "tier 2 FAILED on $DRIVER: the PERF BASELINE GATE above is red."
   echo "Everything after it was still run, deliberately, so that a cycle count"
   echo "moving cannot hide a wrong answer. Root-cause the delta, or regenerate"
   echo "with ci/check_perf.py --results $BUILD --regenerate and put the baseline"
   echo "diff in the same change as the code that moved it."
+  echo
+fi
+
+if [[ "${PHASE3_FAILED:-0}" -ne 0 || "${PERF_FAILED:-0}" -ne 0 ]]; then
+  echo "tier 2 FAILED on $DRIVER."
   exit 1
 fi
 echo "tier 2 passed on $DRIVER"

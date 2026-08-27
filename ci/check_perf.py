@@ -227,7 +227,7 @@ def derived_report(docs):
                 ntotal, nattn = nrows[seq]
                 line += (
                     f"   |  naive {ntotal:8d} ({100 * nattn:4.1f}%)"
-                    f"   register blocking {ntotal / total:.2f}x"
+                    f"   blocking {ntotal / total:.2f}x"
                 )
             out.append(line)
     return out
@@ -240,16 +240,22 @@ def controls(docs):
     if rb and naive:
         # THE CONTROL THAT MAKES THE LABELS MEAN ANYTHING. The bench writes
         # "register-blocked" because GRXBLAS_SGEMM_NAIVE was unset, not because
-        # it watched the kernel get chosen -- sgemm_rb is an optional symbol
-        # lookup and falls back silently. If the two configurations produce the
-        # same cycles, the selection did nothing and BOTH baselines are records
-        # of the same kernel under two names.
+        # it watched the kernel get chosen -- the blocked kernels are optional
+        # symbol lookups and fall back silently. If the two configurations
+        # produce the same cycles, the selection did nothing and BOTH baselines
+        # are records of the same kernel under two names.
+        #
+        # The file name still says "register-blocked" while the rule now picks
+        # the 2D micro-tile. Kept: the baseline pair is "the rule's choice
+        # against the reference", and renaming it would break every stored
+        # metric key for a label. What it holds is checked by the metrics, not
+        # by the name.
         rmap = {s: t for s, t, _ in block_totals(rb)}
         nmap = {s: t for s, t, _ in block_totals(naive)}
         same = [s for s in rmap if s in nmap and rmap[s] == nmap[s]]
         if same:
             lines.append(
-                "  FAIL  naive and register-blocked measured IDENTICAL cycles at "
+                "  FAIL  naive and the rule's choice measured IDENTICAL cycles at "
                 f"S={same}."
             )
             lines.append(

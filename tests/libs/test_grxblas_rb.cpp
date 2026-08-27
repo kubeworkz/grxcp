@@ -1,4 +1,4 @@
-// The register-blocked sgemm against the naive one, on the same device.
+// The blocked sgemm kernels against the naive one, on the same device.
 //
 // THE REFERENCE KERNEL IS THE ORACLE HERE, and that is a stronger check than
 // this library has had for a GEMM before. test_grxblas.cpp compares sgemm to a
@@ -7,22 +7,25 @@
 // associative. That tolerance is real headroom, and a tuned kernel that quietly
 // changed the arithmetic could hide inside it.
 //
-// sgemm_rb does not change the arithmetic. It changes which thread computes
-// which output and how often B is loaded; every accumulation is still
-// `acc += a * b` over l in the same order. So the two kernels must agree
-// BIT FOR BIT, and this compares them with ==. No tolerance, nothing to hide
-// in.
+// Neither blocked kernel changes the arithmetic. sgemm_rb changes which thread
+// computes which output and how often B is loaded; sgemm_2d does the same for
+// both operands at once. Every accumulation is still `acc += a * b` over l in
+// the same order. So all three kernels must agree BIT FOR BIT, and this
+// compares them with ==. No tolerance, nothing to hide in.
 //
-// Both run on the device over the same operands, selected by the environment
-// variable the host reads (GRXBLAS_SGEMM_NAIVE), so this is one binary running
-// two kernels rather than a kernel compared against a description of itself.
+// All three run on the device over the same operands, selected through the
+// environment hooks the host reads, so this is one binary running three kernels
+// rather than a kernel compared against a description of itself.
 //
-// WHAT THE SHAPES ARE FOR. RM is 4, so the interesting cases are the ones where
-// m is not a multiple of it -- the tail, where the blocked kernel clamps rows
-// it must then discard. m = 1, 2, 3 are below RM entirely, where the host is
-// supposed to fall back to the reference; m = 5, 7, 13 straddle. All four
-// transpose combinations, because the index algebra is duplicated between the
-// two kernels and duplicated algebra is what drifts.
+// WHAT THE SHAPES ARE FOR. The tails. sgemm_rb slices rows by RM = 4 and
+// sgemm_2d slices rows by 2 and COLUMNS by 2, so the interesting cases are the
+// ones where m is not a multiple of the row tile and n is not a multiple of the
+// column tile -- there the blocked kernels clamp indices they must then
+// discard. m = 1, 2, 3 are below RM entirely, where the host falls back to the
+// reference for sgemm_rb; m = 5, 7, 13 straddle; n = 1 and n = 3, 5, 7 give
+// sgemm_2d a column remainder. All four transpose combinations, because the
+// index algebra is written out in all three kernels and duplicated algebra is
+// what drifts.
 
 #include <grx/grx.h>
 #include <grx/grxblas.h>
@@ -41,10 +44,15 @@ namespace {
 
 struct Buf {
   void* p = nullptr;
-  explicit Buf(size_t bytes) { if (grxMalloc(&p, bytes) != grxSuccess) p = nullptr; }
+  Buf() = default;
+  explicit Buf(size_t bytes) { alloc(bytes); }
   ~Buf() { if (p) grxFree(p); }
   Buf(const Buf&) = delete;
   Buf& operator=(const Buf&) = delete;
+  void alloc(size_t bytes) {
+    if (p) { grxFree(p); p = nullptr; }
+    if (bytes && grxMalloc(&p, bytes) != grxSuccess) p = nullptr;
+  }
   float* f() const { return (float*)p; }
 };
 
@@ -58,14 +66,26 @@ void fill(std::vector<float>& v, unsigned seed) {
   }
 }
 
-// Run one sgemm and return C. `naive` picks the kernel through the same
-// environment variable the library reads, so both paths go through the real
-// selection logic rather than a test-only hook.
-bool run(bool naive, bool ta, bool tb, int m, int n, int k,
+// Which kernel a run should reach.
+//
+// kRule is not a kernel: it is what a caller gets, and the rb comparison uses
+// it deliberately so that what is checked is the SHIPPING path rather than a
+// kernel the rule may never select. Below the row tile that means the
+// reference, and the cases say so.
+enum class Pick { kNaive, kRule, kRb, kTwoD };
+
+// Run one sgemm and return C. The kernel is chosen through the same
+// environment hooks the library reads, so every path goes through the real
+// selection logic rather than a test-only door.
+bool run(Pick pick, bool ta, bool tb, int m, int n, int k,
          const std::vector<float>& A, const std::vector<float>& B,
-         std::vector<float>* C) {
-  if (naive) setenv("GRXBLAS_SGEMM_NAIVE", "1", 1);
-  else       unsetenv("GRXBLAS_SGEMM_NAIVE");
+         std::vector<float>* C, int* warps = nullptr) {
+  unsetenv("GRXBLAS_SGEMM_NAIVE");
+  unsetenv("GRXBLAS_SGEMM_RB");
+  unsetenv("GRXBLAS_SGEMM_2D");
+  if (pick == Pick::kNaive) setenv("GRXBLAS_SGEMM_NAIVE", "1", 1);
+  if (pick == Pick::kRb)    setenv("GRXBLAS_SGEMM_RB", "1", 1);
+  if (pick == Pick::kTwoD)  setenv("GRXBLAS_SGEMM_2D", "1", 1);
 
   // A fresh handle each time: the kernel choice is made per call from the
   // environment, but creating the handle here also means neither run can be
@@ -87,6 +107,25 @@ bool run(bool naive, bool ta, bool tb, int m, int n, int k,
   std::vector<float> poison((size_t)ldc * n, -7777.0f);
   grxMemcpy(dC.p, poison.data(), poison.size() * sizeof(float), grxMemcpyDefault);
 
+  // Optionally count the warps the launch made. That is the only thing visible
+  // from out here that says WHICH kernel ran -- the results are supposed to be
+  // identical, so the results cannot say. One slot per block, and the three
+  // kernels tile the same output differently, so at the right shape the three
+  // counts differ.
+  Buf probe;
+  int probe_slots = 0;
+  if (warps) {
+    *warps = -1;
+    probe_slots = grxblasCycleSlotsNeeded(h, m, n) + 8;
+    if (probe_slots > 0) {
+      probe.alloc((size_t)probe_slots * sizeof(grxCycleSlot));
+      if (probe.p) {
+        grxMemset(probe.p, 0, (size_t)probe_slots * sizeof(grxCycleSlot));
+        grxblasSetCycleProbe(h, (grxCycleSlot*)probe.p, probe_slots);
+      }
+    }
+  }
+
   const float alpha = 1.0f, beta = 0.0f;
   const grxblasStatus_t st = grxblasSgemm(
       h, ta ? GRXBLAS_OP_T : GRXBLAS_OP_N, tb ? GRXBLAS_OP_T : GRXBLAS_OP_N,
@@ -95,6 +134,14 @@ bool run(bool naive, bool ta, bool tb, int m, int n, int k,
 
   C->resize(poison.size());
   grxMemcpy(C->data(), dC.p, C->size() * sizeof(float), grxMemcpyDefault);
+  if (warps && probe.p) {
+    std::vector<grxCycleSlot> host((size_t)probe_slots);
+    grxMemcpy(host.data(), probe.p,
+              host.size() * sizeof(grxCycleSlot), grxMemcpyDefault);
+    grxCycleSummary sum{};
+    grxCycleSummarize(host.data(), probe_slots, &sum);
+    *warps = sum.warps;
+  }
   grxblasDestroy(h);
   return true;
 }
@@ -129,65 +176,118 @@ int main() {
 
   struct Case { int m, n, k; const char* what; };
   const Case cases[] = {
-    { 1, 3, 4, "m=1, below the tile -- the host must fall back"},
-    { 2, 3, 4, "m=2, below the tile"},
-    { 3, 3, 4, "m=3, below the tile"},
-    { 4, 3, 5, "m=4, exactly one tile"},
-    { 5, 4, 6, "m=5, one tile and a remainder of 1"},
-    { 7, 5, 3, "m=7, one tile and a remainder of 3"},
-    { 8, 6, 8, "m=8, two whole tiles"},
-    {13, 7, 9, "m=13, three tiles and a remainder of 1"},
-    {16, 4, 12, "m=16, four whole tiles"},
+    { 1, 3, 4, "m=1, below the row tile -- the host must fall back"},
+    { 2, 3, 4, "m=2, below the row tile"},
+    { 3, 3, 4, "m=3, below the row tile"},
+    { 4, 3, 5, "m=4, exactly one rb tile"},
+    { 5, 4, 6, "m=5, one rb tile and a remainder of 1"},
+    { 5, 1, 4, "n=1, one column against a 2-wide column tile"},
+    { 7, 2, 6, "n=2, exactly one column tile"},
+    { 7, 5, 3, "m=7, one rb tile and a remainder of 3"},
+    { 8, 6, 8, "m=8, two whole rb tiles"},
+    {13, 7, 9, "m=13, three rb tiles and a remainder of 1"},
+    {16, 4, 12, "m=16, four whole rb tiles"},
   };
 
-  section("sgemm_rb agrees with the reference kernel, bit for bit");
-  for (const Case& c : cases) {
-    for (int t = 0; t < 4; ++t) {
-      const bool ta = (t & 1) != 0, tb = (t & 2) != 0;
-      const int lda = ta ? c.k : c.m;
-      const int ldb = tb ? c.n : c.k;
-      std::vector<float> A((size_t)lda * (ta ? c.m : c.k));
-      std::vector<float> B((size_t)ldb * (tb ? c.k : c.n));
-      fill(A, 5u + (unsigned)t); fill(B, 91u + (unsigned)t);
+  // The two blocked kernels, each against the reference, over identical
+  // operands. Run in one pass rather than two loops so a shape that breaks one
+  // of them is reported next to the shape that did not break the other.
+  struct Path { Pick pick; const char* name; };
+  const Path paths[2] = {{Pick::kRule, "sgemm_rb (through the rule)"},
+                         {Pick::kTwoD, "sgemm_2d (forced)"}};
 
-      std::vector<float> ref, fast;
-      char label[160];
-      std::snprintf(label, sizeof(label), "%s  [%c%c]", c.what,
-                    ta ? 'T' : 'N', tb ? 'T' : 'N');
+  for (const Path& path : paths) {
+    char head[128];
+    std::snprintf(head, sizeof(head),
+                  "%s agrees with the reference kernel, bit for bit", path.name);
+    section(head);
+    for (const Case& c : cases) {
+      for (int t = 0; t < 4; ++t) {
+        const bool ta = (t & 1) != 0, tb = (t & 2) != 0;
+        const int lda = ta ? c.k : c.m;
+        const int ldb = tb ? c.n : c.k;
+        std::vector<float> A((size_t)lda * (ta ? c.m : c.k));
+        std::vector<float> B((size_t)ldb * (tb ? c.k : c.n));
+        fill(A, 5u + (unsigned)t); fill(B, 91u + (unsigned)t);
 
-      if (!run(true, ta, tb, c.m, c.n, c.k, A, B, &ref) ||
-          !run(false, ta, tb, c.m, c.n, c.k, A, B, &fast)) {
-        std::printf("  FAIL  %s: a run failed\n", label);
-        ++grxtest::failures();
-        continue;
-      }
+        std::vector<float> ref, fast;
+        char label[160];
+        std::snprintf(label, sizeof(label), "%s  [%c%c]", c.what,
+                      ta ? 'T' : 'N', tb ? 'T' : 'N');
 
-      size_t at = ref.size();
-      for (size_t i = 0; i < ref.size(); ++i) {
-        if (std::memcmp(&ref[i], &fast[i], sizeof(float)) != 0) { at = i; break; }
-      }
-      if (at == ref.size()) {
-        std::printf("  ok    %s\n", label);
-      } else {
-        std::printf("  FAIL  %s: differ at [%zu]: reference %.9g, blocked %.9g\n",
-                    label, at, (double)ref[at], (double)fast[at]);
-        ++grxtest::failures();
+        if (!run(Pick::kNaive, ta, tb, c.m, c.n, c.k, A, B, &ref) ||
+            !run(path.pick, ta, tb, c.m, c.n, c.k, A, B, &fast)) {
+          std::printf("  FAIL  %s: a run failed\n", label);
+          ++grxtest::failures();
+          continue;
+        }
+
+        size_t at = ref.size();
+        for (size_t i = 0; i < ref.size(); ++i) {
+          if (std::memcmp(&ref[i], &fast[i], sizeof(float)) != 0) { at = i; break; }
+        }
+        if (at == ref.size()) {
+          std::printf("  ok    %s\n", label);
+        } else {
+          std::printf("  FAIL  %s: differ at [%zu]: reference %.9g, blocked %.9g\n",
+                      label, at, (double)ref[at], (double)fast[at]);
+          ++grxtest::failures();
+        }
       }
     }
   }
 
+  section("three kernels actually ran, not one kernel three times");
+  {
+    // Everything above would pass just as happily if all three runs were the
+    // SAME kernel -- if a hook were misspelled, the host ignored it, or the
+    // module carried neither blocked entry point. Identical results are the
+    // POINT here, so the results cannot be the evidence.
+    //
+    // The warp count can. One probe slot per BLOCK -- not per output -- and the
+    // three kernels tile the same output differently. At warp 4, m=6, n=8:
+    //
+    //   naive  6*8              = 48 threads -> 12 blocks
+    //   rb     ceil(6/4)*8      = 16         ->  4
+    //   2d     ceil(6/2)*ceil(8/2) = 12      ->  3
+    //
+    // Three different numbers, and getting there took two goes. The first
+    // version used m=6 n=4, where rb needs 8 threads and 2d needs 6 -- both two
+    // blocks after the divide by the warp width, so the counts collapsed. It
+    // also asked for rb through the RULE, which declines it at 24 outputs, so
+    // that run was the reference wearing rb's label. Both mistakes showed up
+    // here as equal counts, which is what this check is for.
+    //
+    // All three are FORCED, because what is being established is that three
+    // kernels exist and are reachable. Whether the rule would pick them is a
+    // different question, asked by the pass above and by the sweeps.
+    std::vector<float> A(64), B(64), out;
+    fill(A, 3u); fill(B, 17u);
+    int w_naive = -1, w_rb = -1, w_2d = -1;
+    const bool ok =
+        run(Pick::kNaive, false, false, 6, 8, 5, A, B, &out, &w_naive) &&
+        run(Pick::kRb,    false, false, 6, 8, 5, A, B, &out, &w_rb) &&
+        run(Pick::kTwoD,  false, false, 6, 8, 5, A, B, &out, &w_2d);
+    check(ok, "all three probed runs completed");
+    std::printf("        warps: naive %d, rb %d, 2d %d\n", w_naive, w_rb, w_2d);
+    check(w_naive > 0 && w_rb > 0 && w_2d > 0,
+          "each run wrote probe slots");
+    check(w_naive != w_rb, "the reference and sgemm_rb are different launches");
+    check(w_rb != w_2d, "sgemm_rb and sgemm_2d are different launches");
+    check(w_naive != w_2d, "the reference and sgemm_2d are different launches");
+  }
+
   section("the comparison can actually fail");
   {
-    // Without this, everything above would pass just as happily if both runs
-    // were the SAME kernel -- if the environment variable were misspelled, or
-    // the host ignored it, or the module had no sgemm_rb at all. Perturbing one
-    // operand must produce a difference; if it does not, the two runs are not
-    // two kernels.
+    // And the pipeline is live: perturbing one operand must move the output.
+    // Weaker than the warp check above and kept because it fails differently --
+    // this catches a device that returned the poison value, which equal warp
+    // counts would not.
     std::vector<float> A(64), B(64), out1, out2;
     fill(A, 3u); fill(B, 17u);
-    const bool ok1 = run(false, false, false, 8, 8, 8, A, B, &out1);
+    const bool ok1 = run(Pick::kRule, false, false, 8, 8, 8, A, B, &out1);
     A[0] += 1.0f;
-    const bool ok2 = run(false, false, false, 8, 8, 8, A, B, &out2);
+    const bool ok2 = run(Pick::kRule, false, false, 8, 8, 8, A, B, &out2);
     check(ok1 && ok2, "both perturbation runs completed");
     bool differs = false;
     for (size_t i = 0; i < out1.size() && !differs; ++i)

@@ -424,19 +424,38 @@ What is left before the phase 3 exit gate: WGMMA warp groups (needs
 `pipeline<Stages>` structure, and the blocked grxBLAS kernel that composes
 tensor cores with async staging.
 
-**Phase 3 exit gate: MET.** `grxblasGemmEx` (fp16 in, fp32 accumulate) composes
-the tensor unit with DXA staging, is exact against a CPU reference on every
-shape including ragged ones, and costs far less than a fifth of sgemm per
-output element:
+**Phase 3 exit gate: NO LONGER MET — 4.38× against a 5× threshold, and the
+threshold has not been moved.** `grxblasGemmEx` (fp16 in, fp32 accumulate)
+composes the tensor unit with DXA staging and is exact against a CPU reference
+on every shape including ragged ones. What it no longer does is cost less than a
+fifth of sgemm per output element — because **sgemm got 2.32× faster**, twice,
+and the gate is a ratio between two things that both move.
 
-| shape | sgemm cyc/elem | GemmEx cyc/elem | speedup |
-|---|---|---|---|
-| 16 x 16 x 16 | 297.8 | 40.0 | **7.45x** |
-| 16 x 16 x 32 | 523.4 | 47.1 | 11.11x |
-| 16 x 16 x 64 | 974.2 | 64.1 | 15.19x |
-| 32 x 32 x 32 | 523.8 | 43.4 | 12.06x |
+| shape | sgemm cyc/elem | GemmEx cyc/elem | vs tuned sgemm | vs reference sgemm |
+|---|---|---|---|---|
+| 16 x 16 x 16 | 75.5 | 33.2 | 2.28× (starved) | 4.84× |
+| 16 x 16 x 32 | 132.1 | 40.8 | 3.24× (starved) | 7.16× |
+| 16 x 16 x 64 | 237.4 | 55.9 | 4.25× (starved) | 9.74× |
+| 32 x 32 x 32 | 126.5 | 28.9 | **4.38×** | 10.16× |
+| 32 x 32 x 64 | 232.9 | 44.2 | 5.27× | 12.41× |
 
-The gate is enforced in `tests/bench/gemm_cycles.cpp` now that it passes.
+The tensor path did not regress: 28.9 and 44.2 cycles per element are what it
+read before the SIMT work as well. The two columns on the right are printed by
+`tests/bench/gemm_cycles.cpp` on every run precisely so this is legible.
+
+Three things could have been done and only one is honest without a decision on
+the record. Moving the threshold to 4× would read as a relaxation forever;
+restating the gate against the *reference* kernel would freeze its denominator
+and make it unfalsifiable by SIMT work. Leaving it is what AGENTS.md section 4
+requires — an assertion is not relaxed as a side effect of unrelated progress.
+So the gate is red, `ci/run_real.sh` **defers** its failure to the end of the
+run so the thirty sections after it still execute, and tier 2 reports FAILED
+with the reason named.
+
+What would make it pass again is the tensor unit's multi-CTA deadlock
+(cuda_mapping.md 7.12). Three of five shapes are already excluded here for tile
+starvation, which is a consequence of the single-CTA workaround; lifting it
+gives the tensor path the parallelism the ratio was first measured with.
 
 **And then the tuning was tried, and lost.** The obvious levers were
 implemented and measured rather than assumed. Cycles per output element at
@@ -1137,10 +1156,74 @@ reverted — **saves 5990 cycles**, 2613 and 3377, on a 259043-cycle block. The
 two flips compose exactly. BLOCK SGEMM IN SITU gate in `ci/run_real.sh`, 112
 seconds, and it fails on the old rule naming those two calls.
 
-Next here is the **2D micro-tile (RM × RN)**, which reuses *both* operands
-instead of one — 4 loads per 4 outputs beats 5. It waited for this, and it was
-right to: tuned against the pre-fix block numbers it would have been fitted to a
-maximum over four clocks.
+**The 2D micro-tile is built, and it is the largest single win here: 1.60× on
+the whole block at S = 8, 1.74× at S = 16.** `sgemm_2d` gives one thread a
+2 × 2 patch of C and reuses *both* operands, so a k step costs RM + RN loads for
+RM × RN multiply-adds — 4 loads per 4 against `sgemm_rb`'s 5.
+
+| stage | naive → rule | |
+|---|---|---|
+| mlp GEMM 1 | 84465 → 39634 | 2.13× |
+| mlp GEMM 2 | 69681 → 33370 | 2.09× |
+| qkv projection | 63468 → 33673 | 1.88× |
+| output projection | 25985 → 16052 | 1.62× |
+| attention (4 launches) | 42223 → 33420 | 1.26× |
+| **whole block** | **346150 → 216800** | **1.60×** |
+
+**The tile is 2 × 2 and not 4 × 4 on purpose, and that is the whole experiment.**
+2 × 2 produces the same four outputs per thread that `sgemm_rb` does, so at any
+shape the two launch the *same number of threads* and the only difference
+between them is the load count. That mattered because the in-situ sweep had
+already established that what decides between blocked and reference on this
+device is how many threads are left running — a wider tile would have changed
+the load ratio and the occupancy together, and a measurement of the two at once
+cannot say which moved. Holding occupancy fixed, the 2D tile is faster on **42
+of 42** swept cells (1.18× to 1.39×) and on **36 of 36** in-situ flips. So: at
+equal occupancy, the load count is what costs.
+
+`sgemm_rb` stays. It is the control — without a kernel that differs in exactly
+one variable, "the 2D tile wins because it loads less" is an argument rather
+than a measurement — and both sweeps compare against it every run.
+
+**The rule moved with it.** The crossover is now bracketed in steps of 8
+outputs, which is what the rule before last lacked:
+
+| outputs | 32 | 40 | 48 | 56 | 64 | 72 |
+|---|---|---|---|---|---|---|
+| naive / best blocked | 0.63 | 0.75 | 0.88 | **1.04** | 1.17 | 1.68 |
+
+The crossover sits inside (48, 56]. The threshold ships at `resident` = 64
+rather than at 56, because 56 is not a number the device reports and a fitted
+constant is what went wrong last time; the cost is visible and small, since the
+one band it declines wins by 3–4% while the band below *loses* by 12%. And the
+ratio depends only on the output count, not on how m and n split to reach it —
+4×12, 8×6 and 12×4 all read 0.88, 0.91, 0.88.
+
+**A hypothesis about the knee, recorded as one.** The jump from 1.17 to 1.68
+between 64 and 72 outputs sits exactly where the reference kernel stops fitting
+in the machine: it needs one thread per output, the core holds 64, so at 65 it
+needs a second wave while the blocked kernels, at a quarter of the threads, are
+still inside one. That predicts another jump at 136 and none between 112 and
+128. Measured: 1.87, 1.73, 1.84 across 112–128 and 2.12 at 136 — the jump is
+there, it is much smaller, and 144 falls back to 2.00. The wave account fits the
+first knee well and the second only partly. It is written down as what it is,
+and the rule does not depend on it.
+
+**And it broke the phase 3 exit gate**, which is a ratio against sgemm. See
+phase 3 above: the threshold was not moved.
+
+**The host no longer guesses either kernel's tile.** `kSgemmRowsPerThread = 4`
+carried a comment asking whoever edited `kernels/sgemm.cpp` to keep it in step,
+and nothing checked. A `sgemm_shape` entry point now reports what each blocked
+kernel produces, the way the tensor path already did; a module that will not say
+gets the reference kernel and nothing else, because a host that guesses a tile
+launches a grid covering the wrong number of outputs — silently, in whichever
+direction the two drifted.
+
+Next here is a **wider tile**, now that there is a framework that can attribute
+the result: 4 × 4 is 8 loads per 16 multiply-adds against 2 × 2's 4 per 4, but it
+also divides the thread count by four again, so it needs measuring at both ends
+of the occupancy range rather than at one.
 
 **Fusing the bias into the GEMM epilogue would save about 2%.** That was the
 obvious next optimisation before anyone measured, and the measurement says not
