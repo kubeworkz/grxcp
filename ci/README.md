@@ -518,13 +518,19 @@ question where the GEMMs actually live. It flips **exactly one** of the block's
 sgemm calls to a different kernel, runs the whole block again, and prices the
 difference — once per call per alternative, at both sequence lengths, with
 nothing else moving. On all 72 flips the rule picks the kernel that makes the
-block faster. 405 seconds; 73 runs of the block bench, which is the most
-expensive gate in the suite and the one that decides what ships.
+block faster. **136 seconds**; 74 runs of the block bench, and it is the gate
+that decides what ships.
 
-Those two gates are why tier 2 now takes about **20 minutes** rather than the
-five it took before the kernel family grew. That is a real cost and it is stated
-rather than hidden: five kernels measured against each other in isolation and in
-place is what a tuning claim needs, and the alternative — measuring a subset and
+It was 405 seconds until the bench learned `--only-shape`. A flipped call
+belongs to exactly one sequence length, so running the other one computed a
+column of zeros — 73 runs of two shapes where 38 runs of one say the same thing.
+It is also better isolation: each flip is now priced against a baseline of its
+own configuration, so the untouched shape cannot contribute anything at all.
+
+Those gates are why tier 2 takes about **eight minutes** rather than the five it
+took before the kernel family grew. That is a real cost and it is stated rather
+than hidden: five kernels measured against each other in isolation and in place
+is what a tuning claim needs, and the alternative — measuring a subset and
 inferring the rest — is exactly the shortcut that produced the rule this one
 replaced.
 
@@ -569,10 +575,10 @@ It asserts that `grxblasGemmEx` costs at most a fifth of `sgemm` per output
 element. That threshold was set when `sgemm` meant the one-thread-per-output
 reference. The SIMT kernel has since been beaten three times — register blocking,
 the 2×2 micro-tile, and hoisting the transpose decision out of the k loop — and
-is now 3.66× faster at these shapes, so the ratio fell from 5.62× to **2.74×**
-with the tensor path completely unchanged: 29.3 and 44.4 cycles per element in
+is now 3.65× faster at these shapes, so the ratio fell from 5.62× to **2.69×**
+with the tensor path completely unchanged: 29.9 and 44.4 cycles per element in
 both configurations. The bench measures `sgemm` a second time with the reference
-forced and prints that ratio (10.03×) beside the gated one, so a reader can see
+forced and prints that ratio (9.81×) beside the gated one, so a reader can see
 which side of the fraction moved.
 
 The threshold was **not** adjusted to match. Moving it to 4× would read as a

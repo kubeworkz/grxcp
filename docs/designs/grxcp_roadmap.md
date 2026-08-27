@@ -424,11 +424,11 @@ What is left before the phase 3 exit gate: WGMMA warp groups (needs
 `pipeline<Stages>` structure, and the blocked grxBLAS kernel that composes
 tensor cores with async staging.
 
-**Phase 3 exit gate: NO LONGER MET — 2.74× against a 5× threshold, and the
+**Phase 3 exit gate: NO LONGER MET — 2.69× against a 5× threshold, and the
 threshold has not been moved.** `grxblasGemmEx` (fp16 in, fp32 accumulate)
 composes the tensor unit with DXA staging and is exact against a CPU reference
 on every shape including ragged ones. What it no longer does is cost less than a
-fifth of sgemm per output element — because **sgemm got 3.66× faster**, three
+fifth of sgemm per output element — because **sgemm got 3.65× faster**, three
 times over, and the gate is a ratio between two things that both move.
 
 | shape | sgemm cyc/elem | GemmEx cyc/elem | vs tuned sgemm | vs reference sgemm |
@@ -436,10 +436,10 @@ times over, and the gate is a ratio between two things that both move.
 | 16 x 16 x 16 | 50.2 | 34.1 | 1.47× (starved) | 4.84× |
 | 16 x 16 x 32 | 80.7 | 41.7 | 1.94× (starved) | 7.16× |
 | 16 x 16 x 64 | 142.5 | 56.8 | 2.51× (starved) | 9.74× |
-| 32 x 32 x 32 | 80.3 | 29.3 | **2.74×** | 10.03× |
+| 32 x 32 x 32 | 80.5 | 29.9 | **2.69×** | 9.81× |
 | 32 x 32 x 64 | 141.2 | 44.4 | 3.18× | 12.41× |
 
-The tensor path did not regress: 29.3 and 44.4 cycles per element are what it
+The tensor path did not regress: 29.9 and 44.4 cycles per element are what it
 read before the SIMT work as well. On three of five shapes the tensor unit is
 now within 2.5× of a SIMT kernel, which is a fact about how little of the core
 the single-CTA workaround lets it use rather than about the unit. The two columns on the right are printed by
@@ -1287,10 +1287,68 @@ anywhere — precisely because it could come back. A change that makes the inner
 loop expensive again would show up there as a wide tile winning, before it
 showed up anywhere else.
 
-Next here is the reference kernel's own loop, which is still 24 instructions for
-one multiply-add and has not been touched, and then the epilogue: the tail
-clamping and the `beta == 0` test are per-thread costs that a specialised entry
-point would not pay.
+**And the reference kernel's own loop stays as it is, deliberately.** It is 24
+instructions for one multiply-add and the same pointer rewrite would help it —
+but it is the ORACLE, and its value comes from being written the obvious way. If
+the reference and the tuned kernels shared an addressing idiom, a bug in that
+idiom would produce identical wrong answers in both and the bit-exact comparison
+would pass. It is also never on a hot path: the rule selects it only below
+`resident` outputs, where the work is tiny by definition.
+
+**Where the block's cycles are now, and it is no longer mostly GEMM.** With the
+GEMMs three times faster the profile has moved: at S = 8, GELU is the largest
+single stage.
+
+| stage | cycles | share |
+|---|---|---|
+| attention (2 GEMMs + mask + softmax) | 27443 | 17.5% |
+| mlp GEMM 1 | 26719 | 17.1% |
+| **gelu** | **26590** | **17.0%** |
+| qkv projection | 21569 | 13.8% |
+| mlp GEMM 2 | 18715 | 11.9% |
+| out projection | 10421 | 6.7% |
+| layer norm ×2 | 15537 | 9.9% |
+| bias ×2, residual | 9632 | 6.2% |
+
+**GELU: 1.34× faster, and the accuracy figures did not move by a bit.** Ablation
+first, because the roadmap had asserted the cost was the transcendental without
+measuring which part: of the stage's 35573 cycles, removing the whole `tanh`
+saved 24012 and removing only the divide saved 2243. So it is the exponential's
+polynomial — fifteen operations — and there is no cheaper polynomial at this
+accuracy.
+
+The polynomial was not what the kernel was spending its time on. Its column loop
+was 86 instructions for 21 float operations, and it carried **twelve `vx_split`
+and eighteen `vx_join`** — warp divergence machinery. The cause is worth stating
+plainly because it is not obvious and it applies to every kernel in the project:
+
+> **Float selects compile to branches on this toolchain.** The integer ternaries
+> in grxBLAS's kernels become `czero`/`or` — conditional moves, no control flow.
+> The float ones do not. Rewriting `dev_exp`'s early returns as ternaries left
+> the split and join counts at exactly 18 and 18.
+
+Asked for by name, `__builtin_fminf`, `__builtin_fmaxf` and `__builtin_copysignf`
+become the single RISC-V instructions `fmin.s`, `fmax.s` and `fsgnj.s`, and the
+branches go away: `dnn_gelu` drops from 352 instructions to 229 and from twelve
+`vx_split` to **none**. The arithmetic is untouched, and the measured accuracy is
+identical to the last digit — 5.36e-07 for the erf form and 4.77e-07 for the tanh
+form, at the same two argument values.
+
+Two guards disappeared entirely rather than moving, which is the part worth
+keeping in mind when reading the code. `dev_exp`'s underflow return is gone
+because clamping at −88 gives k = −127, so the exponent field is zero and the
+product is already exactly zero. `dev_tanh`'s saturation return is gone because
+`1 − 2/(e+1)` reaches 1.0f in fp32 once the argument passes 9.01 — and between
+9.0 and 9.01 the branch-free form is fractionally *more* accurate, since the old
+early return snapped to exactly 1.0 where the true value is 0.99999994.
+
+The same rewrite in softmax's row-maximum pass measures at 0.1%, inside relink
+noise: that pass is one of three and the rows here are 8 to 16 wide. It is kept
+for uniformity and because a per-element branch is a hazard class this project
+has been bitten by twice.
+
+**Whole block: 2.17× at S = 8 and 2.24× at S = 16** against the reference
+kernel — 339812 → 156626 and 729205 → 325710.
 
 **Fusing the bias into the GEMM epilogue would save about 2%.** That was the
 obvious next optimisation before anyone measured, and the measurement says not

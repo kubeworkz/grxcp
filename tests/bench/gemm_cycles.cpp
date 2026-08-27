@@ -393,10 +393,10 @@ int main(int argc, char** argv) {
       // This threshold was set when sgemm meant the one-thread-per-output
       // reference. It has since been beaten three times -- register blocking,
       // the 2x2 micro-tile, and hoisting the transpose decision out of the k
-      // loop -- and the tuned SIMT kernel is now 3.66x faster than the
-      // reference at these shapes. The tensor path did not move: 29.3 and 44.4
+      // loop -- and the tuned SIMT kernel is now 3.65x faster than the
+      // reference at these shapes. The tensor path did not move: 29.9 and 44.4
       // cycles per element in both configurations, which is why the line above
-      // is printed. The ratio has fallen from 5.62x to 2.74x with nothing
+      // is printed. The ratio has fallen from 5.62x to 2.69x with nothing
       // having got slower.
       //
       // Three things could have been done about that and only one of them is

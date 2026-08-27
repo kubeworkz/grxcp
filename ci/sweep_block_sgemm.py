@@ -68,29 +68,17 @@ def totals_of(doc):
             for sh in doc["shapes"]]
 
 
-def score(baseline, flips):
-    """Which flips made the block FASTER, ranked. Pure, so it can be self-tested.
+def score(flips):
+    """Split priced flips into the ones that helped and the ones that hurt.
 
-    `flips` is a list of dicts with 'call', 'shape', 'to' and 'totals'. A flip
-    is scored per shape, because a call belongs to one shape and leaves the
-    others untouched -- summing across shapes would dilute a real loss by the
-    zeros of every shape the call is not in.
+    Pure, so it can be self-tested without a device. A flip is priced against a
+    baseline of its OWN shape -- the sweep runs one sequence length at a time --
+    so there is nothing here to sum across shapes and nothing to dilute.
     """
-    helped, hurt = [], []
-    for f in flips:
-        best = None
-        for i, (b, t) in enumerate(zip(baseline, f["totals"])):
-            d = t - b
-            if d == 0:
-                continue
-            if best is None or abs(d) > abs(best[1]):
-                best = (i, d)
-        if best is None:
-            continue
-        rec = dict(f, shape_index=best[0], delta=best[1])
-        (helped if best[1] < 0 else hurt).append(rec)
-    helped.sort(key=lambda r: r["delta"])
-    hurt.sort(key=lambda r: -r["delta"])
+    helped = sorted([f for f in flips if f["delta"] < 0],
+                    key=lambda f: f["delta"])
+    hurt = sorted([f for f in flips if f["delta"] > 0],
+                  key=lambda f: -f["delta"])
     return helped, hurt
 
 
@@ -107,7 +95,7 @@ ENV_FOR = {
 }
 
 
-def run_block(binary, env_extra, out_json, trace=None):
+def run_block(binary, env_extra, out_json, trace=None, shape=None):
     env = dict(os.environ)
     for k in list(ENV_FOR.values()) + ["GRXBLAS_SGEMM_TRACE"]:
         env.pop(k, None)
@@ -118,8 +106,14 @@ def run_block(binary, env_extra, out_json, trace=None):
     # and every run here has one of its GEMMs forced onto another kernel. See
     # the flag's note in tests/bench/block_cycles.cpp. Nothing else is
     # suppressed and the JSON is the same.
-    r = subprocess.run([binary, "--out", out_json, "--sweep"], env=env,
-                       capture_output=True, text=True)
+    #
+    # --only-shape: a flipped call belongs to exactly one sequence length, so
+    # running the other one cannot change the answer. It also makes each flip a
+    # comparison against a baseline of its own configuration.
+    argv = [binary, "--out", out_json, "--sweep"]
+    if shape is not None:
+        argv += ["--only-shape", str(shape)]
+    r = subprocess.run(argv, env=env, capture_output=True, text=True)
     if r.returncode == 77:
         return None, 77
     if r.returncode != 0:
@@ -143,62 +137,72 @@ def shape_of(row):
 
 def sweep(binary, out_path=None):
     tmp = tempfile.mkdtemp(prefix="blocksweep.")
-    trace = os.path.join(tmp, "census.csv")
-    base, rc = run_block(binary, {}, os.path.join(tmp, "base.json"), trace)
-    if rc == 77:
-        print("  no device or no kernels; skipping")
-        return 77
-    if base is None:
-        print("  the block bench failed before any flip was tried")
-        return rc or 1
-    baseline = totals_of(base)
-    census = read_trace(trace)
-    seqs = [sh["seq"] for sh in base["shapes"]]
-
-    print(f"  the block issues {len(census)} sgemm calls; "
-          f"baseline totals {baseline}")
-    print(f"  {'call':>4}  {'shape':<14} {'ran':>5}  {'instead':>7} "
-          f"{'d(block)':>9}  where")
-
     flips, unreachable, outside = [], 0, 0
-    for call in sorted(census):
-        row = census[call]
-        ran = row["kernel"]
-        if row.get("probed") != "1":
-            # Outside every measured stage. Named rather than dropped: a sweep
-            # that silently skips calls reads as coverage it does not have.
-            print(f"  {call:>4}  {shape_of(row):<14} {ran:>5}  {'--':>7} "
-                  f"{'--':>9}  no probe: in no measured stage")
-            outside += 1
-            continue
-        for alt in KERNELS:
-            if alt == ran:
-                continue
-            ftrace = os.path.join(tmp, f"t{call}_{alt}.csv")
-            doc, rc = run_block(binary, {ENV_FOR[alt]: f"#{call}"},
-                                os.path.join(tmp, f"f{call}_{alt}.json"), ftrace)
-            if doc is None:
-                print(f"  {call:>4}  flip to {alt} failed (rc={rc})")
-                return rc or 1
-            got = read_trace(ftrace).get(call, {})
-            if got.get("kernel") != alt:
-                # Not a result about the kernel. Printed anyway, because a
-                # silently skipped alternative is how a sweep comes to claim
-                # coverage it does not have.
-                unreachable += 1
-                print(f"  {call:>4}  {shape_of(row):<14} {ran:>5}  {alt:>7} "
-                      f"{'--':>9}  not reachable: {got.get('why', '?')}")
-                continue
-            t = totals_of(doc)
-            d = [t[i] - baseline[i] for i in range(len(baseline))]
-            worst = max(range(len(d)), key=lambda i: abs(d[i]))
-            flips.append(dict(call=call, shape=shape_of(row), frm=ran, to=alt,
-                              totals=t))
-            where = f"S={seqs[worst]}" if d[worst] else "no shape moved"
-            print(f"  {call:>4}  {shape_of(row):<14} {ran:>5}  {alt:>7} "
-                  f"{d[worst]:>+9d}  {where}")
+    baselines, shape_seqs = [], []
+    ok_overall = True
 
-    helped, hurt = score(baseline, flips)
+    # ONE SHAPE AT A TIME. Each sequence length gets its own baseline, its own
+    # call numbering, and its own flips -- see --only-shape in
+    # tests/bench/block_cycles.cpp. The alternative, running both shapes for
+    # every flip, spent 405 seconds to compute a column of zeros.
+    for shape in (0, 1):
+        trace = os.path.join(tmp, f"census{shape}.csv")
+        base, rc = run_block(binary, {}, os.path.join(tmp, f"base{shape}.json"),
+                             trace, shape=shape)
+        if rc == 77:
+            print("  no device or no kernels; skipping")
+            return 77
+        if base is None:
+            print("  the block bench failed before any flip was tried")
+            return rc or 1
+        baseline = totals_of(base)
+        census = read_trace(trace)
+        seq = base["shapes"][shape]["seq"]
+        baselines.append(baseline[shape])
+        shape_seqs.append(seq)
+
+        print(f"  S={seq}: {len(census)} sgemm calls, baseline "
+              f"{baseline[shape]}")
+        print(f"  {'call':>4}  {'shape':<14} {'ran':>5}  {'instead':>7} "
+              f"{'d(block)':>9}")
+
+        for call in sorted(census):
+            row = census[call]
+            ran = row["kernel"]
+            if row.get("probed") != "1":
+                # Outside every measured stage. Named rather than dropped: a
+                # sweep that silently skips calls reads as coverage it does not
+                # have.
+                print(f"  {call:>4}  {shape_of(row):<14} {ran:>5}  {'--':>7} "
+                      f"{'--':>9}  no probe: in no measured stage")
+                outside += 1
+                continue
+            for alt in KERNELS:
+                if alt == ran:
+                    continue
+                ftrace = os.path.join(tmp, f"t{shape}_{call}_{alt}.csv")
+                doc, rc = run_block(
+                    binary, {ENV_FOR[alt]: f"#{call}"},
+                    os.path.join(tmp, f"f{shape}_{call}_{alt}.json"),
+                    ftrace, shape=shape)
+                if doc is None:
+                    print(f"  {call:>4}  flip to {alt} failed (rc={rc})")
+                    return rc or 1
+                got = read_trace(ftrace).get(call, {})
+                if got.get("kernel") != alt:
+                    unreachable += 1
+                    print(f"  {call:>4}  {shape_of(row):<14} {ran:>5}  "
+                          f"{alt:>7} {'--':>9}  not reachable: "
+                          f"{got.get('why', '?')}")
+                    continue
+                t = totals_of(doc)
+                d = t[shape] - baseline[shape]
+                flips.append(dict(call=call, seq=seq, shape=shape_of(row),
+                                  frm=ran, to=alt, delta=d))
+                print(f"  {call:>4}  {shape_of(row):<14} {ran:>5}  {alt:>7} "
+                      f"{d:>+9d}")
+
+    helped, hurt = score(flips)
     print()
     print(f"  {len(flips)} flips measured, one call at a time; "
           f"{unreachable} alternatives were not reachable; "
@@ -206,19 +210,20 @@ def sweep(binary, out_path=None):
     print(f"  {len(hurt)} made the block slower (the rule was right there).")
     print(f"  {len(helped)} made it FASTER (the rule picked a slower kernel).")
     for h in helped:
-        print(f"      call {h['call']} {h['shape']}: {h['frm']} -> "
+        print(f"      S={h['seq']} call {h['call']} {h['shape']}: {h['frm']} -> "
               f"{h['to']} saves {-h['delta']} cycles")
 
     if out_path:
         with open(out_path, "w") as f:
-            json.dump(dict(baseline=baseline, flips=flips), f, indent=1)
+            json.dump(dict(baselines=baselines, seqs=shape_seqs, flips=flips),
+                      f, indent=1)
         print(f"  wrote {out_path}")
 
-    ok = not helped
+    ok_overall = not helped
     print()
-    print(f"  {'ok  ' if ok else 'FAIL'}  no call's kernel choice can be "
-          f"improved by changing it in place")
-    return 0 if ok else 1
+    print(f"  {'ok  ' if ok_overall else 'FAIL'}  no call's kernel choice can "
+          f"be improved by changing it in place")
+    return 0 if ok_overall else 1
 
 
 def self_test():
@@ -233,32 +238,24 @@ def self_test():
             print(f"          got {got!r}, wanted {want!r}")
             fails += 1
 
-    base = [1000, 2000]
-    # A flip that costs on shape 0 and does nothing on shape 1: the rule was
-    # right, and the untouched shape must not dilute it.
-    helped, hurt = score(base, [dict(call=1, shape="a", to="naive",
-                                     totals=[1100, 2000])])
+    helped, hurt = score([dict(call=1, delta=100)])
     check("a flip that costs is scored as the rule being right",
           (len(helped), len(hurt)), (0, 1))
-    check("and it is priced on the shape it moved", hurt[0]["delta"], 100)
 
-    # A flip that helps must be caught even when another shape moved further
-    # in the other direction -- summing would hide it.
-    helped, _ = score(base, [dict(call=2, shape="b", to="rb",
-                                  totals=[900, 2000])])
+    helped, hurt = score([dict(call=2, delta=-100)])
     check("a flip that helps is caught", len(helped), 1)
     check("and named with the saving", helped[0]["delta"], -100)
 
-    # Ranking: the biggest saving first, not the first one seen.
-    helped, _ = score(base, [
-        dict(call=3, shape="c", to="rb", totals=[990, 2000]),
-        dict(call=4, shape="d", to="rb", totals=[500, 2000]),
-    ])
+    helped, _ = score([dict(call=3, delta=-10), dict(call=4, delta=-500)])
     check("savings are ranked by size", [h["call"] for h in helped], [4, 3])
 
-    # A flip that moves nothing at all is not evidence either way.
-    helped, hurt = score(base, [dict(call=5, shape="e", to="rb",
-                                     totals=[1000, 2000])])
+    _, hurt = score([dict(call=5, delta=7), dict(call=6, delta=70)])
+    check("and so are the costs", [h["call"] for h in hurt], [6, 5])
+
+    # A flip that moves nothing is not evidence either way, and must not be
+    # counted as the rule being right -- that would let a kernel selection
+    # that did nothing look like a confirmation.
+    helped, hurt = score([dict(call=7, delta=0)])
     check("a flip that moves nothing is not counted",
           (len(helped), len(hurt)), (0, 0))
     return 1 if fails else 0

@@ -480,15 +480,35 @@ int main(int argc, char** argv) {
   // every stage is still measured, every span still refused if it spans
   // launches, and the JSON is identical. ci/run_real.sh does NOT pass it.
   bool sweep_mode = false;
+  // --only-shape <i>: run one of the two sequence lengths instead of both.
+  //
+  // For ci/sweep_block_sgemm.py, which flips ONE sgemm call and re-runs the
+  // block. A call belongs to exactly one shape, so running the other one is
+  // work that cannot change the answer -- 73 runs of both shapes took 405
+  // seconds where 38 runs of one take about 95. It is also better isolation:
+  // each flip is now priced against a baseline of its own configuration, with
+  // no chance of the untouched shape contributing anything.
+  //
+  // Implies --sweep, because a single shape cannot support the differential
+  // control (which compares two of them).
+  int only_shape = -1;
   for (int i = 1; i < argc; ++i) {
     if (std::strcmp(argv[i], "--out") == 0 && i + 1 < argc) {
       out_path = argv[++i];
     } else if (std::strcmp(argv[i], "--sweep") == 0) {
       sweep_mode = true;
+    } else if (std::strcmp(argv[i], "--only-shape") == 0 && i + 1 < argc) {
+      only_shape = std::atoi(argv[++i]);
+      sweep_mode = true;
     } else {
-      std::printf("usage: block_cycles [--out <results.json>] [--sweep]\n");
+      std::printf("usage: block_cycles [--out <results.json>] [--sweep] "
+                  "[--only-shape <0|1>]\n");
       return 2;
     }
+  }
+  if (only_shape > 1) {
+    std::printf("--only-shape takes 0 or 1; this bench measures two shapes\n");
+    return 2;
   }
 
   int count = 0;
@@ -532,6 +552,7 @@ int main(int argc, char** argv) {
   std::vector<StageCost> stages[2];
 
   for (int i = 0; i < 2; ++i) {
+    if (only_shape >= 0 && i != only_shape) continue;
     if (!profile(bh, dh, shapes[i], &stages[i])) {
       std::printf("could not size the probe; skipping\n");
       grxdnnDestroy(dh); grxblasDestroy(bh);
@@ -541,16 +562,26 @@ int main(int argc, char** argv) {
   }
 
   std::printf("\ndoes the measurement respond to its input?\n");
-  expect(totals[0] > 0 && totals[1] > 0, "both shapes recorded cycles");
-  expect(totals[1] > totals[0],
-         "doubling the sequence costs more cycles");
+  if (only_shape >= 0) {
+    std::printf("        --only-shape %d: one sequence length was run, so the "
+                "differential\n        control below has nothing to compare "
+                "against and is not evaluated.\n", only_shape);
+    expect(totals[only_shape] > 0, "the requested shape recorded cycles");
+  } else {
+    expect(totals[0] > 0 && totals[1] > 0, "both shapes recorded cycles");
+    expect(totals[1] > totals[0],
+           "doubling the sequence costs more cycles");
+  }
   // The differential claim. Attention's scores matrix is seqLen SQUARED and
   // every other stage is linear in seqLen, so attention has to take a LARGER
   // share of a longer block -- not merely more cycles, which a counter that was
   // really counting launches would also show.
-  std::printf("        attention's share: %.1f%% at S=%d, %.1f%% at S=%d\n",
-              attn_share[0], shapes[0].seq, attn_share[1], shapes[1].seq);
-  if (sweep_mode)
+  if (only_shape < 0)
+    std::printf("        attention's share: %.1f%% at S=%d, %.1f%% at S=%d\n",
+                attn_share[0], shapes[0].seq, attn_share[1], shapes[1].seq);
+  if (only_shape >= 0) {
+    // nothing to gate: one shape
+  } else if (sweep_mode)
     std::printf("        --sweep: the share is reported, not gated. One of this "
                 "block's GEMMs is on a\n        kernel it does not ship with, so "
                 "the stage mix is not the one this control is about.\n");

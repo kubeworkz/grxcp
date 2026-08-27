@@ -76,9 +76,16 @@ __global__ void dnn_softmax(grxdnn_softmax_args* __UNIFORM__ arg) {
 
     // Pass 1: the row maximum. Lanes past the end contribute -FLT_MAX, which
     // cannot win; contributing 0 would, on a row of negatives.
+    //
+    // dev_fmax rather than `if (xr[j] > part)`, and the difference is not
+    // stylistic: a comparison between floats compiles to a BRANCH on this
+    // toolchain, and a branch inside a per-element loop diverges the warp on
+    // every element. See the note on dev_fmin in dnn_device.h -- the same
+    // rewrite took `dnn_gelu` from twelve vx_split instructions to none and
+    // made it 1.34x faster with the arithmetic untouched.
     float part = kNegInf;
     for (uint32_t j = m.lane; j < cols; j += m.width)
-      if (xr[j] > part) part = xr[j];
+      part = grxdnn_dev::dev_fmax(part, xr[j]);
     const float row_max = tile.reduce(part, cg::greater<float>());
 
     // Pass 2: the sum of the shifted exponentials.

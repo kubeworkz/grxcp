@@ -21,6 +21,20 @@
 // fp32 rounding contribute rather than the polynomial dominating -- which is
 // the sort of thing only a measurement tells you.
 //
+// THE NUMBERS ABOVE DID NOT MOVE when this file was made 1.34x faster, and that
+// is the claim the rewrite rests on. `dev_exp`, `dev_tanh` and `dev_erf` had
+// their guards replaced by fmin/fmax/copysign -- see dnn_device.h on why a
+// float select is a BRANCH here and a branch diverges the warp -- and the
+// arithmetic is byte for byte the same operations in the same order. Both worst
+// cases above are still at the same argument, to the last digit.
+//
+// WHERE THE TIME ACTUALLY GOES, ablated rather than assumed. Of the GELU stage's
+// 35573 cycles in tests/bench/block_cycles.cpp, removing the whole tanh saved
+// 24012 and removing only the divide saved 2243. It is the exponential's
+// fifteen-operation polynomial, and at this accuracy there is no cheaper one --
+// a degree-4 Taylor over the reduced range is 4e-5, two orders coarser than
+// what is gated here.
+//
 // Every accuracy figure in this file is measured, not quoted from a textbook.
 // That distinction has already cost this library once: dev_rsqrt shipped with a
 // comment claiming "about 2e-6 relative" for a bit-hack that is actually
@@ -45,11 +59,17 @@ using grxdnn_dev::row_map;
 // Beyond |x| = 9 the result is 1 to within fp32's last bit, so it saturates
 // rather than computing an exponential that has already gone to infinity.
 __forceinline__ float dev_tanh(float x) {
-  const float ax = (x < 0.0f) ? -x : x;
-  if (ax > 9.0f) return (x < 0.0f) ? -1.0f : 1.0f;
+  const float ax = grxdnn_dev::dev_fabs(x);
+  // The saturation guard is GONE, not moved, and that needs saying because it
+  // looks like a missing bound. dev_exp already clamps its own argument at 88,
+  // so e is finite for every ax; and 1 - 2/(e+1) reaches exactly 1.0f in fp32
+  // once e exceeds about 6.7e7, which is ax > 9.01. Between 9.0 and 9.01 the
+  // old early return gave exactly 1.0 where this gives 0.99999994 -- which is
+  // the TRUE value, so the branch-free form is fractionally more accurate as
+  // well as cheaper. Everywhere else the two agree bit for bit.
   const float e = dev_exp(2.0f * ax);
   const float t = 1.0f - 2.0f / (e + 1.0f);
-  return (x < 0.0f) ? -t : t;
+  return grxdnn_dev::dev_copysign(t, x);
 }
 
 // erf(x), Abramowitz & Stegun 7.1.26.
@@ -66,8 +86,13 @@ __forceinline__ float dev_tanh(float x) {
 // resolution, so it saturates -- and that also keeps e^{-x^2} away from the
 // underflow region where the polynomial would be multiplied by a denormal.
 __forceinline__ float dev_erf(float x) {
-  const float ax = (x < 0.0f) ? -x : x;
-  if (ax > 4.0f) return (x < 0.0f) ? -1.0f : 1.0f;
+  const float ax0 = grxdnn_dev::dev_fabs(x);
+  // Selected rather than returned early, for the reason in dev_exp: an early
+  // return is a place the lanes of a warp can disagree, and this one is inside
+  // the hottest kernel in the block. The polynomial is evaluated at a clamped
+  // ax so it never sees the region where e^{-ax*ax} is a denormal, and the
+  // saturated value is chosen afterwards.
+  const float ax = grxdnn_dev::dev_fmin(ax0, 4.0f);
 
   const float p  = 0.3275911f;
   const float a1 = 0.254829592f;
@@ -79,8 +104,11 @@ __forceinline__ float dev_erf(float x) {
   const float t = 1.0f / (1.0f + p * ax);
   // Horner, so the fifth-degree term does not need t^5 formed separately.
   const float poly = t * (a1 + t * (a2 + t * (a3 + t * (a4 + t * a5))));
+  // No saturation select either. At ax = 4 the polynomial already gives 1.0f to
+  // within fp32's last bit -- the true erf(4) is 1 - 1.5e-8 -- so clamping the
+  // argument produces the saturated value without a second decision.
   const float y = 1.0f - poly * dev_exp(-ax * ax);
-  return (x < 0.0f) ? -y : y;
+  return grxdnn_dev::dev_copysign(y, x);
 }
 
 __forceinline__ float dev_gelu_exact(float x) {

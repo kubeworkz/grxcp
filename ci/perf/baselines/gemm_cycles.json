@@ -17,46 +17,46 @@
       "m": 16,
       "n": 16,
       "k": 16,
-      "sgemm_span": 12853,
-      "tensor_span": 8734,
+      "sgemm_span": 13344,
+      "tensor_span": 8682,
       "nslots": 64,
-      "busy_median": 11998
+      "busy_median": 12705
     },
     {
       "m": 16,
       "n": 16,
       "k": 32,
-      "sgemm_span": 20666,
-      "tensor_span": 10668,
+      "sgemm_span": 21297,
+      "tensor_span": 10745,
       "nslots": 64,
-      "busy_median": 19896
+      "busy_median": 20531
     },
     {
       "m": 16,
       "n": 16,
       "k": 64,
-      "sgemm_span": 36476,
-      "tensor_span": 14553,
+      "sgemm_span": 36278,
+      "tensor_span": 14732,
       "nslots": 64,
-      "busy_median": 35080
+      "busy_median": 35833
     },
     {
       "m": 32,
       "n": 32,
       "k": 32,
-      "sgemm_span": 82201,
-      "tensor_span": 29994,
+      "sgemm_span": 82408,
+      "tensor_span": 30618,
       "nslots": 256,
-      "busy_median": 18675
+      "busy_median": 18678
     },
     {
       "m": 32,
       "n": 32,
       "k": 64,
-      "sgemm_span": 144557,
-      "tensor_span": 45479,
+      "sgemm_span": 141619,
+      "tensor_span": 45068,
       "nslots": 256,
-      "busy_median": 33851
+      "busy_median": 33342
     }
   ]
 }
