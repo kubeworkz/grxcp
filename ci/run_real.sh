@@ -821,9 +821,10 @@ echo "==> PHASE 3 EXIT GATE: scalar against tensor, in device cycles"
 #
 # "GemmEx costs at most a fifth of sgemm per output element" was set when sgemm
 # meant the one-thread-per-output reference. The SIMT kernel has since been
-# beaten twice -- register blocking, then the 2D micro-tile -- and is now 2.32x
-# faster at these shapes, so the ratio fell from 5.62x to 4.38x with the tensor
-# path completely unchanged (29.4 and 44.2 cycles per element either way). The
+# beaten three times -- register blocking, then the 2x2 micro-tile, then the
+# 4x2 -- and is now 2.68x faster at these shapes, so the ratio fell from 5.62x
+# to 3.85x with the tensor path completely unchanged (28.4 and 44.0 cycles per
+# element either way). The
 # threshold was NOT moved to match: AGENTS.md section 4 does not allow an
 # assertion to be relaxed as a side effect of unrelated progress, and this is
 # exactly that side effect. The bench prints the ratio against the reference

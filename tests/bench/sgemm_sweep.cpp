@@ -80,16 +80,7 @@ struct Probe {
 // Which kernel a measurement should reach. Three now: the reference, the
 // register-blocked kernel that reuses B, and the 2D micro-tile that reuses
 // both operands.
-enum class Which { kNaive, kRb, kTwoD };
-
-const char* which_name(Which w) {
-  switch (w) {
-    case Which::kNaive: return "naive";
-    case Which::kRb:    return "rb";
-    case Which::kTwoD:  return "2d";
-  }
-  return "?";
-}
+enum class Which { kNaive, kRb, kTwoD, kMid, kWide };
 
 // The selection is env-driven because that is the seam that exists; setting it
 // per measurement keeps every kernel running over identical operands through
@@ -98,10 +89,14 @@ void select(Which w) {
   unsetenv("GRXBLAS_SGEMM_NAIVE");
   unsetenv("GRXBLAS_SGEMM_RB");
   unsetenv("GRXBLAS_SGEMM_2D");
+  unsetenv("GRXBLAS_SGEMM_4X2");
+  unsetenv("GRXBLAS_SGEMM_4X4");
   switch (w) {
     case Which::kNaive: setenv("GRXBLAS_SGEMM_NAIVE", "1", 1); break;
     case Which::kRb:    setenv("GRXBLAS_SGEMM_RB", "1", 1); break;
     case Which::kTwoD:  setenv("GRXBLAS_SGEMM_2D", "1", 1); break;
+    case Which::kMid:   setenv("GRXBLAS_SGEMM_4X2", "1", 1); break;
+    case Which::kWide:  setenv("GRXBLAS_SGEMM_4X4", "1", 1); break;
   }
 }
 
@@ -152,8 +147,10 @@ Which rule_picks_kernel(int m, int n, int batch, long long resident) {
   // Every module this bench runs against carries sgemm_2d, so the rb fallback
   // branch of the shipping rule is not restated here -- restating a branch this
   // cannot reach would be a copy nothing checks.
-  if ((long long)m * n * batch < resident) return Which::kNaive;
-  return Which::kTwoD;
+  const long long outputs = (long long)m * n * batch;
+  if (outputs < resident) return Which::kNaive;
+  if (outputs < 16 * resident) return Which::kTwoD;
+  return Which::kMid;
 }
 
 // The rule this one REPLACED, kept so its score stays on the record. It shipped
@@ -369,10 +366,16 @@ int main() {
          "no shape the rule blocks runs more than 1% slower than the reference");
   expect(rule_wrong_missed == 0,
          "and it never picks a safe kernel where a faster one was available");
-  expect(former_wrong == 8,
-         "and the rule it replaced is still wrong about whether to block on the "
-         "8 cells that replaced it -- if that number moves, this sweep is "
-         "measuring something other than what it did");
+  // A RANGE, not a number, and the range is measured. One cell -- m = 4, k = 4,
+  // the smallest shape swept -- sits within 1% of a tie between blocking and
+  // not, and crosses it when the module is relinked and every kernel moves a
+  // little. Pinning 8 exactly turned that into a false alarm on a commit that
+  // only added a kernel. Pinning 8-or-9 still catches a real change: the other
+  // 41 cells are not close to their boundaries.
+  expect(former_wrong == 8 || former_wrong == 9,
+         "and the rule it replaced is still wrong about whether to block on 8 "
+         "or 9 cells -- outside that, this sweep is measuring something other "
+         "than what it did");
   // The head-to-head that justifies having a second blocked kernel at all. If
   // this ever stops holding, the 2D tile is not earning its place and the rule
   // should go back to sgemm_rb rather than keep two.
@@ -498,6 +501,97 @@ int main() {
                   r > 1.0 ? "wins" : "loses");
     }
   }
+
+  // ---- the WIDE tile, where the 2D one runs out of room ------------------
+  //
+  // sgemm_2d gives one thread a 2x2 patch: 4 loads per 4 multiply-adds, and a
+  // quarter of the threads. sgemm_4x4 gives it a 4x4 patch: 8 loads per 16, and
+  // a SIXTEENTH of the threads. If the load count is what costs -- which the
+  // 2x2-against-rb comparison above says it is at equal occupancy -- the wider
+  // tile should win wherever the machine still has work for it.
+  //
+  // THE PREDICTION, with a number in it. The 4x4 tile needs 16 * resident
+  // outputs to fill the core, against the 2x2 tile's 4 * resident. On this
+  // configuration that is 1024 against 256. So: 4x4 should LOSE below about
+  // 1024 outputs and win above it. The shapes below straddle that by a factor
+  // of eight either way, because a crossover claimed from two points is what
+  // this file exists to stop.
+  //
+  // Square shapes throughout, since the bracket above established that only the
+  // output COUNT matters and not how m and n reach it.
+  std::printf("\nthe wide tile. naive / 2x2 / 4x4, at k=16. resident = %lld,\n"
+              "so 2x2 fills the core at %lld outputs and 4x4 at %lld.\n\n",
+              resident, 4 * resident, 16 * resident);
+  std::printf("%10s %9s %9s %9s %9s %9s %9s\n", "m x n", "outputs",
+              "2x2/nv", "4x2/nv", "4x4/nv", "4x2:2x2", "4x4:2x2");
+  int wide_wins = 0, wide_measured = 0;
+  // Above the second threshold, where the rule says 4x2: it must beat 2x2, and
+  // 4x4 must not beat IT -- the two claims the third and fourth kernels exist
+  // to support.
+  int big_cells = 0, mid_wins_big = 0, wide_beats_mid_big = 0;
+  long long wide_first_win = 0;
+  {
+    const int wk = 16;
+    const int sides[] = {8, 12, 16, 24, 26, 28, 30, 32, 40, 48, 64, 80, 96};
+    const int wmax = 96;
+    std::vector<float> hwA((size_t)wmax * wk, 1.0f), hwB((size_t)wk * wmax, 1.0f);
+    void *wA = nullptr, *wB = nullptr, *wC = nullptr;
+    if (grxMalloc(&wA, hwA.size() * 4) == grxSuccess &&
+        grxMalloc(&wB, hwB.size() * 4) == grxSuccess &&
+        grxMalloc(&wC, (size_t)wmax * wmax * 4) == grxSuccess) {
+      grxMemcpy(wA, hwA.data(), hwA.size() * 4, grxMemcpyDefault);
+      grxMemcpy(wB, hwB.data(), hwB.size() * 4, grxMemcpyDefault);
+      for (int side : sides) {
+        Probe pw(grxblasCycleSlotsNeeded(h, side, side) + 8);
+        if (!pw.dev) continue;
+        const uint64_t nv = measure(h, &pw, side, side, wk, wA, wB, wC,
+                                    Which::kNaive);
+        const uint64_t td = measure(h, &pw, side, side, wk, wA, wB, wC,
+                                    Which::kTwoD);
+        const uint64_t md = measure(h, &pw, side, side, wk, wA, wB, wC,
+                                    Which::kMid);
+        const uint64_t wd = measure(h, &pw, side, side, wk, wA, wB, wC,
+                                    Which::kWide);
+        if (nv == 0 || td == 0 || md == 0 || wd == 0) continue;
+        ++wide_measured;
+        const double r2 = (double)nv / (double)td;
+        const double rm = (double)nv / (double)md;
+        const double r4 = (double)nv / (double)wd;
+        const double mm = (double)td / (double)md;   // 4x2 against 2x2
+        const double rr = (double)td / (double)wd;   // 4x4 against 2x2
+        if (mm > 1.0) {
+          ++wide_wins;
+          if (wide_first_win == 0) wide_first_win = (long long)side * side;
+        }
+        if ((long long)side * side >= 16 * resident) {
+          ++big_cells;
+          if (mm > 1.0) ++mid_wins_big;
+          if (r4 > rm) ++wide_beats_mid_big;
+        }
+        char shape[16];
+        std::snprintf(shape, sizeof(shape), "%dx%d", side, side);
+        std::printf("%10s %9d %8.2fx %8.2fx %8.2fx %8.2fx %8.2fx\n",
+                    shape, side * side, r2, rm, r4, mm, rr);
+      }
+      grxFree(wA); grxFree(wB); grxFree(wC);
+    }
+  }
+  if (wide_first_win)
+    std::printf("\n  4x2 first beats 2x2 at %lld outputs; the rule switches at "
+                "%lld.\n", wide_first_win, 16 * resident);
+  else
+    std::printf("\n  4x2 never beats 2x2 in this range.\n");
+  std::printf("  above the switch: 4x2 beats 2x2 on %d of %d cells; 4x4 beats "
+              "4x2 on %d.\n", mid_wins_big, big_cells, wide_beats_mid_big);
+  // Gated here rather than with the others above, because these two counters
+  // only exist once the wide sweep has run.
+  expect(wide_measured > 0, "the wide sweep produced measurements");
+  expect(big_cells > 0 && mid_wins_big == big_cells,
+         "above 16 * resident outputs, the 4x2 tile beats the 2x2 one on every "
+         "swept cell -- which is what the rule switches on");
+  expect(wide_beats_mid_big == 0,
+         "and the 4x4 tile beats it on none of them: its k loop spills, so its "
+         "lower load count is paid back and the ladder ends at 4x2");
 
   // ---- and batch, which the perf baselines caught the rule ignoring -------
   //

@@ -22,6 +22,10 @@ namespace {
 constexpr uint32_t kRbRows   = 4;   // sgemm_rb: outputs down a column
 constexpr uint32_t kTwoDRows = 2;   // sgemm_2d: rows of C per thread
 constexpr uint32_t kTwoDCols = 2;   // sgemm_2d: columns of C per thread
+constexpr uint32_t kWideRows = 4;   // sgemm_4x4: rows of C per thread
+constexpr uint32_t kWideCols = 4;   // sgemm_4x4: columns of C per thread
+constexpr uint32_t kMidRows  = 4;   // sgemm_4x2: rows of C per thread
+constexpr uint32_t kMidCols  = 2;   // sgemm_4x2: columns of C per thread
 }  // namespace
 
 // Named sgemm, not sgemm_nn: one entry point handles all four transpose
@@ -255,9 +259,16 @@ __global__ void sgemm_rb(grxblas_sgemm_args* __UNIFORM__ arg) {
 // thread does the work, not the order of the additions, so anything other than
 // equality is a bug. tests/libs/test_grxblas_rb.cpp compares all three kernels
 // on the device over the same operands with `==`.
-__global__ void sgemm_2d(grxblas_sgemm_args* __UNIFORM__ arg) {
-  if (arg->abi_version != GRXBLAS_SGEMM_ABI_VERSION) return;
-
+// The body, once, parameterised by the tile. A template rather than two copies
+// because the index algebra is the part that drifts -- and rather than one
+// runtime-sized loop because RM and RN have to be compile-time for the
+// accumulators to live in registers, which is the entire point of the kernel.
+//
+// __forceinline__ into thin entry points, the same shape hgemm_tcu.cpp uses for
+// its shape kernels: __global__ cannot be a template here.
+namespace {
+template <uint32_t RM, uint32_t RN>
+__forceinline__ void micro_tile_body(grxblas_sgemm_args* arg) {
   const float* A = reinterpret_cast<const float*>(arg->a);
   const float* B = reinterpret_cast<const float*>(arg->b);
   float*       C = reinterpret_cast<float*>(arg->c);
@@ -270,7 +281,6 @@ __global__ void sgemm_2d(grxblas_sgemm_args* __UNIFORM__ arg) {
   B += batch * arg->stride_b;
   C += batch * arg->stride_c;
 
-  constexpr uint32_t RM = kTwoDRows, RN = kTwoDCols;
   const uint32_t row_blocks = (m + RM - 1u) / RM;
   const uint32_t col_blocks = (n + RN - 1u) / RN;
   const uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -338,6 +348,59 @@ __global__ void sgemm_2d(grxblas_sgemm_args* __UNIFORM__ arg) {
 
   probe.finish();
 }
+}  // namespace
+
+__global__ void sgemm_2d(grxblas_sgemm_args* __UNIFORM__ arg) {
+  if (arg->abi_version != GRXBLAS_SGEMM_ABI_VERSION) return;
+  micro_tile_body<kTwoDRows, kTwoDCols>(arg);
+}
+
+// THE WIDE TILE, and what it is for.
+//
+// 2 x 2 pays RM + RN = 4 loads for RM * RN = 4 multiply-adds. 4 x 4 pays 8 for
+// 16 -- half a load per multiply-add against one. If the load count is what
+// costs, and the 2 x 2 measurement says it is at equal occupancy, then this
+// should be the better kernel wherever the machine still has work.
+//
+// The catch is the same one that decides between blocked and reference at all:
+// it needs a SIXTEENTH of the threads. At 256 outputs the 2 x 2 tile fills a
+// 64-thread core exactly and this one leaves it three-quarters empty. So the
+// prediction being tested is not "wider is better" but "wider is better above
+// the output count where it still fills the core, and worse below it" -- which
+// is a claim with a number in it, and the number is 16 * resident.
+//
+// Sixteen accumulators plus four A and four B values live across the k loop.
+// That is 24 floats where 2 x 2 needs 8, on a target whose register file is
+// small enough for it to matter (cuda_mapping.md 7.21). A spill here would show
+// up as this kernel losing where the arithmetic says it should win, so a loss
+// is not by itself evidence about load counts.
+__global__ void sgemm_4x4(grxblas_sgemm_args* __UNIFORM__ arg) {
+  if (arg->abi_version != GRXBLAS_SGEMM_ABI_VERSION) return;
+  micro_tile_body<kWideRows, kWideCols>(arg);
+}
+
+// THE MIDDLE RUNG, and it exists because 4 x 4 failed for a reason that
+// predicts this one will not.
+//
+// 4 x 4 spills. Its k loop carries SEVEN stack operations -- the only one of
+// these kernels whose inner loop touches the stack at all -- so its eight
+// global loads plus seven spill accesses come to 15 memory operations for 16
+// multiply-adds, against 2 x 2's four for four. The load-count advantage it was
+// built to have, 0.5 per multiply-add against 1.0, is paid straight back.
+//
+// 4 x 2 asks for eight accumulators plus four A and two B values, where 4 x 4
+// asks for sixteen plus four plus four. If register pressure is what stopped
+// the wider tile, this one should fit and should land where the arithmetic says:
+// 6 loads per 8 multiply-adds, 0.75, between the two. If it spills as well then
+// the ceiling is lower than 8 outputs per thread and no tile of this family is
+// going to beat 2 x 2 on this machine.
+//
+// That is a prediction with two distinguishable outcomes, which is the only
+// reason to build a third one.
+__global__ void sgemm_4x2(grxblas_sgemm_args* __UNIFORM__ arg) {
+  if (arg->abi_version != GRXBLAS_SGEMM_ABI_VERSION) return;
+  micro_tile_body<kMidRows, kMidCols>(arg);
+}
 
 // What the host has to know to size a launch, reported by the module that
 // knows it. See the note in sgemm_abi.h: the alternative is a host-side
@@ -350,4 +413,8 @@ __global__ void sgemm_shape(grxblas_sgemm_shape_args* __UNIFORM__ arg) {
   out[GRXBLAS_SGEMM_SHAPE_RB_RM] = kRbRows;
   out[GRXBLAS_SGEMM_SHAPE_2D_RM] = kTwoDRows;
   out[GRXBLAS_SGEMM_SHAPE_2D_RN] = kTwoDCols;
+  out[GRXBLAS_SGEMM_SHAPE_WIDE_RM] = kWideRows;
+  out[GRXBLAS_SGEMM_SHAPE_WIDE_RN] = kWideCols;
+  out[GRXBLAS_SGEMM_SHAPE_MID_RM] = kMidRows;
+  out[GRXBLAS_SGEMM_SHAPE_MID_RN] = kMidCols;
 }

@@ -94,7 +94,7 @@ def score(baseline, flips):
     return helped, hurt
 
 
-KERNELS = ("naive", "rb", "2d")
+KERNELS = ("naive", "rb", "2d", "4x2", "4x4")
 
 # The measurement hook that forces each kernel. Not API -- see the note in
 # src/libs/grxblas/grxblas.cpp. Each takes a list of call indices.
@@ -102,6 +102,8 @@ ENV_FOR = {
     "naive": "GRXBLAS_SGEMM_NAIVE",
     "rb": "GRXBLAS_SGEMM_RB",
     "2d": "GRXBLAS_SGEMM_2D",
+    "4x2": "GRXBLAS_SGEMM_4X2",
+    "4x4": "GRXBLAS_SGEMM_4X4",
 }
 
 

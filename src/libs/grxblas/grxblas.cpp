@@ -73,10 +73,17 @@ struct Context {
   // The 2D micro-tile, and the entry point that says what tile each blocked
   // kernel produces. Both optional in the same way sgemm_rb is.
   grxFunction_t sgemm_2d_fn = nullptr;
+  // The wide micro-tile. Same body, a bigger tile: half a load per multiply-add
+  // against the 2D tile's one, and a sixteenth of the threads instead of a
+  // quarter.
+  grxFunction_t sgemm_wide_fn = nullptr;
+  // And the middle rung: 4 x 2, the widest tile that still fits in registers.
+  grxFunction_t sgemm_mid_fn = nullptr;
   // Reported by sgemm_shape, never assumed. Zero means the module did not say,
   // and a kernel whose tile is unknown is not launched at all -- the host would
   // be sizing its grid from a guess. See sgemm_abi.h.
-  int rb_rows = 0, td_rows = 0, td_cols = 0;
+  int rb_rows = 0, td_rows = 0, td_cols = 0, wd_rows = 0, wd_cols = 0;
+  int md_rows = 0, md_cols = 0;
   std::string   sgemm_path;   // which file actually got loaded
   // Level 1 and 2, resolved from the same module. Absent in an older module,
   // which is why they are looked up lazily and reported rather than assumed.
@@ -107,68 +114,84 @@ struct Context {
 // WHEN TO BLOCK, AND WITH WHICH KERNEL. The rule is
 //
 //     outputs = m * n * batchCount
-//     outputs <  resident            ->  the reference kernel
-//     outputs >= resident            ->  sgemm_2d, the 2D micro-tile
+//     outputs <  resident        ->  sgemm,     the reference
+//     outputs <  16 * resident   ->  sgemm_2d,  a 2 x 2 tile per thread
+//     otherwise                  ->  sgemm_4x2, a 4 x 2 tile per thread
 //
 // where resident = warpSize * maxWarpsPerMultiProcessor * multiProcessorCount,
 // 64 on the configuration this was measured on. k does not appear. Neither does
-// how m and n split to reach the output count -- which is not an assumption,
-// it is the measurement: at 24, 32, 40, 48, 56, 64, 72, 80 and 96 outputs the
+// how m and n split to reach the output count -- which is not an assumption, it
+// is the measurement: at 24, 32, 40, 48, 56, 64, 72, 80 and 96 outputs the
 // speedup agrees to two decimals however the shape gets there (4x12, 8x6 and
 // 12x4 all read 0.88, 0.91, 0.88).
 //
-// sgemm_rb is in the rule only as the fallback for a module that has no
-// sgemm_2d, and with its own boundary of 2 * resident, because that is the one
-// measured for it. See below on why it is still here at all.
+// THE FAMILY, AND WHAT DECIDES BETWEEN ITS MEMBERS. Every blocked kernel here
+// is the same body with a different tile, so they differ in exactly two things:
+// how many memory operations the inner loop pays per multiply-add, and how many
+// threads the launch has left. Both are countable, and the second one is only
+// countable because the tile is compile-time.
 //
-// WHERE THE BOUNDARY IS, AND WHAT DECLINING COSTS. tests/bench/sgemm_sweep.cpp
-// brackets it in steps of 8 outputs, because the rule this one replaced was
-// wrong precisely for having a crossover bracketed by 8 and 16 with nothing
-// swept between:
+//     kernel      tile   inner loop: fp   global loads   stack   mem/FMA
+//     sgemm       1x1              1            2           0      2.00
+//     sgemm_rb    4x1              4            5           0      1.25
+//     sgemm_2d    2x2              4            4           0      1.00
+//     sgemm_4x2   4x2              8            6           0      0.75
+//     sgemm_4x4   4x4             16            8           7      0.94
 //
-//     outputs   48     56     64     72
-//     ratio    0.88   1.04   1.17   1.68
+// Counted from the disassembly of the shipped .vxbin, not from the source.
 //
-// The crossover is inside (48, 56]. The threshold ships at `resident` = 64
-// rather than at 56 because 56 is not a number the device reports and a fitted
-// constant is what went wrong last time. The cost of that choice is visible and
-// small: the one measured band it declines wins by 3-4%, while the band below
-// it LOSES by 12%. The asymmetry is the argument -- being too eager costs about
-// four times what being too shy does.
+// SO THE LADDER PAYS UNTIL THE REGISTER FILE STOPS IT. 2.00 -> 1.25 -> 1.00 ->
+// 0.75 tracks the measured speedup all the way. 4 x 4 breaks it: sixteen
+// accumulators plus four A and four B values do not fit, its k loop is the only
+// one that touches the stack, and seven spill accesses hand back almost exactly
+// the load-count advantage the wider tile was built to have. 0.5 loads per
+// multiply-add becomes 0.94 memory operations per multiply-add, and it measures
+// like it -- 0.93x to 1.05x against the 2 x 2 tile with no trend, at every
+// output count from 576 to 9216.
 //
-// A HYPOTHESIS ABOUT THE KNEE, RECORDED AS A HYPOTHESIS. The jump from 1.17 to
-// 1.68 between 64 and 72 outputs sits exactly where the reference kernel stops
-// fitting in the machine: it needs one thread per output, the core holds 64, so
-// at 65 it needs a second wave while the blocked kernels, at a quarter of the
-// threads, are still inside one. That predicts another jump at 136 and none
-// between 112 and 128. Measured: 1.87, 1.73, 1.84 across 112-128 and 2.12 at
-// 136 -- the jump is there and it is much smaller, and 144 falls back to 2.00.
-// So the wave account fits the first knee well and the second one only partly.
-// It is written down as what it is. The rule does not depend on it.
+// That was a prediction before it was a result. 4 x 4 was built and measured
+// first, failed, and the disassembly said why; 4 x 2 was then built to test
+// whether register pressure was the reason, with two distinguishable outcomes.
+// It does not spill, its ratio is the 0.75 the arithmetic asks for, and it wins.
 //
-// WHY THERE ARE THREE KERNELS AND THE RULE NAMES TWO. sgemm_rb gives one thread
-// RM = 4 outputs down a column and reuses B: RM + 1 loads per RM multiply-adds,
-// 5 for 4. sgemm_2d gives one thread a 2 x 2 patch and reuses BOTH operands:
-// RM + RN loads per RM * RN, 4 for 4. The tiles were chosen to produce the SAME
-// number of outputs per thread, so at any shape the two launch the same number
-// of threads and the only difference between them is the load count.
+// WHERE THE SECOND THRESHOLD IS. Bracketed, at k = 16, square shapes, 4 x 2
+// against 2 x 2:
 //
-// That was the point. The in-situ sweep had established that what decides
-// between blocked and reference on this device is how many threads are left
-// running, so a wider tile that also cut the thread count would have changed
-// two things at once. Holding occupancy fixed, the 2D tile is faster on 42 of
-// 42 swept cells, by 1.18x to 1.39x, and on 16 of the 18 GEMM calls a
-// transformer block makes -- the two it loses are the same 16x8x8 shape, by 147
-// and 473 cycles out of 256000, which is less than the spread between the two
-// instances of that shape. So: at equal occupancy, the load count is what
-// costs, and the rule does not try to carve out a shape whose effect is smaller
-// than its own position noise.
+//     outputs   576    676    784    900   1024   1600   4096   9216
+//     ratio    0.93   0.99   1.03   1.02   1.13   1.07   1.16   1.21
 //
-// sgemm_rb is therefore a kernel the rule now selects only as a fallback. It
-// stays because it is the CONTROL: without a kernel that differs from sgemm_2d
-// in exactly one variable, "the 2D tile is faster because it loads less" is an
-// argument rather than a measurement, and both sweeps compare against it every
-// run.
+// A tie from about 676 to 900 and a solid win from 1024, which is 16 * resident
+// and the point where a 4 x 2 launch has two full waves of warps. The threshold
+// ships there: the ties below it cost nothing either way, and it is a quantity
+// the device reports rather than a constant fitted to the tie band.
+//
+// WHERE THE FIRST ONE IS, and it is not the same kind of boundary. Blocking at
+// all crosses over between 48 and 56 outputs -- 0.88 then 1.04 -- long before
+// any tile fills the core. It ships at `resident` = 64 rather than at 56 because
+// 56 is not a number the device reports and a fitted constant is what went wrong
+// last time; the band it declines wins by 3-4% while the band below it LOSES by
+// 12%, and being too eager costs about four times what being too shy does.
+//
+// A HYPOTHESIS ABOUT THE FIRST KNEE, RECORDED AS A HYPOTHESIS. The jump from
+// 1.17 to 1.68 between 64 and 72 outputs sits exactly where the reference
+// kernel stops fitting in the machine: it needs one thread per output, the core
+// holds 64, so at 65 it needs a second wave while the blocked kernels are still
+// inside one. That predicts another jump at 136 and none between 112 and 128.
+// Measured: 1.87, 1.73, 1.84 across 112-128 and 2.12 at 136 -- the jump is
+// there, it is much smaller, and 144 falls back to 2.00. The wave account fits
+// the first knee well and the second only partly. The rule does not depend on it.
+//
+// WHY FIVE KERNELS SHIP AND THE RULE NAMES THREE. sgemm is the ORACLE:
+// tests/libs/test_grxblas_rb.cpp runs every tuned kernel against it on the
+// device over the same operands and requires agreement BIT FOR BIT, which is a
+// far stronger statement than landing inside a tolerance. sgemm_rb is the
+// CONTROL for the 2 x 2 tile: it produces the same four outputs per thread, so
+// the two launch identical thread counts and the only difference between them
+// is the load count -- without it, "the 2 x 2 tile wins because it loads less"
+// would be an argument rather than a measurement. sgemm_4x4 is the CONTROL for
+// the ladder: it is the evidence that the tile stops paying, and deleting it
+// would turn a gated result into a remembered one. All three are re-measured on
+// every tier-2 run.
 //
 // WHAT CAME BEFORE, kept because it is the reason these gates exist. The rule
 // was once `k >= 16 || ceil(m/RM) >= warpSize`, fitted to five points with a
@@ -226,13 +249,15 @@ bool env_forces(const char* name, uint64_t call) {
   return false;
 }
 
-enum class SgemmKernel { kNaive, kRegisterBlocked, kTwoD };
+enum class SgemmKernel { kNaive, kRegisterBlocked, kTwoD, kMid, kWide };
 
 const char* sgemm_kernel_name(SgemmKernel k) {
   switch (k) {
     case SgemmKernel::kNaive:           return "naive";
     case SgemmKernel::kRegisterBlocked: return "rb";
     case SgemmKernel::kTwoD:            return "2d";
+    case SgemmKernel::kMid:             return "4x2";
+    case SgemmKernel::kWide:            return "4x4";
   }
   return "?";
 }
@@ -254,18 +279,43 @@ SgemmChoice decide_sgemm_kernel(const Context& ctx, const grxDeviceProp_t& prop,
                              prop.maxWarpsPerMultiProcessor *
                              prop.multiProcessorCount;
   const long long outputs = (long long)m * n * batch;
-  const bool have_2d = ctx.sgemm_2d_fn && ctx.td_rows > 0 && ctx.td_cols > 0;
-  const bool have_rb = ctx.sgemm_rb_fn && ctx.rb_rows > 0 && m >= ctx.rb_rows;
+  const bool have_2d  = ctx.sgemm_2d_fn && ctx.td_rows > 0 && ctx.td_cols > 0;
+  const bool have_mid = ctx.sgemm_mid_fn && ctx.md_rows > 0 && ctx.md_cols > 0;
+  const bool have_rb  = ctx.sgemm_rb_fn && ctx.rb_rows > 0 && m >= ctx.rb_rows;
 
-  // THE RULE. Below `resident` outputs nothing blocks; at or above it the 2D
-  // micro-tile, and the register-blocked kernel only where the 2D one is absent
-  // -- with its OWN boundary, because that is the one measured for it.
-  if (outputs >= resident && have_2d)          c.rule = SgemmKernel::kTwoD;
+  // THE RULE, in output count. Two thresholds, both measured:
+  //
+  //     outputs <  resident        the reference kernel
+  //     outputs <  16 * resident   the 2 x 2 micro-tile
+  //     otherwise                  the 4 x 2 micro-tile
+  //
+  // The register-blocked kernel is reached only when the 2 x 2 tile is absent
+  // from the module, with its own boundary, because that is the one measured
+  // for it.
+  if (outputs >= 16 * resident && have_mid)    c.rule = SgemmKernel::kMid;
+  else if (outputs >= resident && have_2d)     c.rule = SgemmKernel::kTwoD;
+  else if (outputs >= resident && have_mid)    c.rule = SgemmKernel::kMid;
   else if (outputs >= 2 * resident && have_rb) c.rule = SgemmKernel::kRegisterBlocked;
 
   // force-naive first, because the reference is the ORACLE: a test comparing a
   // tuned kernel against it must be able to reach it from any state.
   if (env_forces("GRXBLAS_SGEMM_NAIVE", call)) { c.why = "forced naive"; return c; }
+  // THE WIDE TILE IS NOT IN THE RULE. Reachable only by asking, because
+  // nothing has measured it yet -- the same staging the 2D tile went through,
+  // and for the same reason: a kernel that ships on an argument about load
+  // counts is a kernel that ships on an argument.
+  if (ctx.sgemm_mid_fn && ctx.md_rows > 0 && ctx.md_cols > 0 &&
+      env_forces("GRXBLAS_SGEMM_4X2", call)) {
+    c.kernel = SgemmKernel::kMid;
+    c.why = "forced 4x2";
+    return c;
+  }
+  if (ctx.sgemm_wide_fn && ctx.wd_rows > 0 && ctx.wd_cols > 0 &&
+      env_forces("GRXBLAS_SGEMM_4X4", call)) {
+    c.kernel = SgemmKernel::kWide;
+    c.why = "forced 4x4";
+    return c;
+  }
   if (have_2d && env_forces("GRXBLAS_SGEMM_2D", call)) {
     c.kernel = SgemmKernel::kTwoD;
     c.why = "forced 2d";
@@ -368,7 +418,8 @@ int slots_for(int m, int n, int warp_size) {
 // still computes the right answer, which is the right way round. An older
 // module that predates sgemm_shape lands here and is served by the reference.
 void read_sgemm_shape(Context& ctx) {
-  ctx.rb_rows = ctx.td_rows = ctx.td_cols = 0;
+  ctx.rb_rows = ctx.td_rows = ctx.td_cols = ctx.wd_rows = ctx.wd_cols = 0;
+  ctx.md_rows = ctx.md_cols = 0;
   if (!ctx.module) return;
 
   grxFunction_t shape_fn = nullptr;
@@ -411,6 +462,16 @@ void read_sgemm_shape(Context& ctx) {
       shape[GRXBLAS_SGEMM_SHAPE_2D_RN] != 0) {
     ctx.td_rows = (int)shape[GRXBLAS_SGEMM_SHAPE_2D_RM];
     ctx.td_cols = (int)shape[GRXBLAS_SGEMM_SHAPE_2D_RN];
+  }
+  if (shape[GRXBLAS_SGEMM_SHAPE_WIDE_RM] != 0 &&
+      shape[GRXBLAS_SGEMM_SHAPE_WIDE_RN] != 0) {
+    ctx.wd_rows = (int)shape[GRXBLAS_SGEMM_SHAPE_WIDE_RM];
+    ctx.wd_cols = (int)shape[GRXBLAS_SGEMM_SHAPE_WIDE_RN];
+  }
+  if (shape[GRXBLAS_SGEMM_SHAPE_MID_RM] != 0 &&
+      shape[GRXBLAS_SGEMM_SHAPE_MID_RN] != 0) {
+    ctx.md_rows = (int)shape[GRXBLAS_SGEMM_SHAPE_MID_RM];
+    ctx.md_cols = (int)shape[GRXBLAS_SGEMM_SHAPE_MID_RN];
   }
 }
 
@@ -461,6 +522,10 @@ grxblasStatus_t ensure_module_locked(Context& ctx) {
         ctx.sgemm_rb_fn = nullptr;
       if (grxModuleGetFunction(&ctx.sgemm_2d_fn, mod, "sgemm_2d") != grxSuccess)
         ctx.sgemm_2d_fn = nullptr;
+      if (grxModuleGetFunction(&ctx.sgemm_wide_fn, mod, "sgemm_4x4") != grxSuccess)
+        ctx.sgemm_wide_fn = nullptr;
+      if (grxModuleGetFunction(&ctx.sgemm_mid_fn, mod, "sgemm_4x2") != grxSuccess)
+        ctx.sgemm_mid_fn = nullptr;
       ctx.sgemm_path = path;
       // What tile each blocked kernel produces, asked of the module. A module
       // that cannot say leaves all three at zero, and read_sgemm_shape drops
@@ -1365,6 +1430,14 @@ static grxblasStatus_t sgemm_batched(grxblasHandle_t handle,
       tiles = (size_t)((m + ctx->td_rows - 1) / ctx->td_rows) *
               (size_t)((n + ctx->td_cols - 1) / ctx->td_cols);
       break;
+    case SgemmKernel::kMid:
+      tiles = (size_t)((m + ctx->md_rows - 1) / ctx->md_rows) *
+              (size_t)((n + ctx->md_cols - 1) / ctx->md_cols);
+      break;
+    case SgemmKernel::kWide:
+      tiles = (size_t)((m + ctx->wd_rows - 1) / ctx->wd_rows) *
+              (size_t)((n + ctx->wd_cols - 1) / ctx->wd_cols);
+      break;
     case SgemmKernel::kNaive:
       break;
   }
@@ -1390,6 +1463,8 @@ static grxblasStatus_t sgemm_batched(grxblasHandle_t handle,
   grxFunction_t fn_to_run = ctx->sgemm_fn;
   if (choice.kernel == SgemmKernel::kRegisterBlocked) fn_to_run = ctx->sgemm_rb_fn;
   else if (choice.kernel == SgemmKernel::kTwoD)       fn_to_run = ctx->sgemm_2d_fn;
+  else if (choice.kernel == SgemmKernel::kMid)       fn_to_run = ctx->sgemm_mid_fn;
+  else if (choice.kernel == SgemmKernel::kWide)      fn_to_run = ctx->sgemm_wide_fn;
 
   e = grxLaunchFunction(fn_to_run,
                         dim3_t{grid, (unsigned)batch, 1},

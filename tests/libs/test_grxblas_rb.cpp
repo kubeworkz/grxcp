@@ -72,7 +72,7 @@ void fill(std::vector<float>& v, unsigned seed) {
 // it deliberately so that what is checked is the SHIPPING path rather than a
 // kernel the rule may never select. Below the row tile that means the
 // reference, and the cases say so.
-enum class Pick { kNaive, kRule, kRb, kTwoD };
+enum class Pick { kNaive, kRule, kRb, kTwoD, kMid, kWide };
 
 // Run one sgemm and return C. The kernel is chosen through the same
 // environment hooks the library reads, so every path goes through the real
@@ -83,9 +83,13 @@ bool run(Pick pick, bool ta, bool tb, int m, int n, int k,
   unsetenv("GRXBLAS_SGEMM_NAIVE");
   unsetenv("GRXBLAS_SGEMM_RB");
   unsetenv("GRXBLAS_SGEMM_2D");
+  unsetenv("GRXBLAS_SGEMM_4X2");
+  unsetenv("GRXBLAS_SGEMM_4X4");
   if (pick == Pick::kNaive) setenv("GRXBLAS_SGEMM_NAIVE", "1", 1);
   if (pick == Pick::kRb)    setenv("GRXBLAS_SGEMM_RB", "1", 1);
   if (pick == Pick::kTwoD)  setenv("GRXBLAS_SGEMM_2D", "1", 1);
+  if (pick == Pick::kMid)   setenv("GRXBLAS_SGEMM_4X2", "1", 1);
+  if (pick == Pick::kWide)  setenv("GRXBLAS_SGEMM_4X4", "1", 1);
 
   // A fresh handle each time: the kernel choice is made per call from the
   // environment, but creating the handle here also means neither run can be
@@ -193,8 +197,10 @@ int main() {
   // operands. Run in one pass rather than two loops so a shape that breaks one
   // of them is reported next to the shape that did not break the other.
   struct Path { Pick pick; const char* name; };
-  const Path paths[2] = {{Pick::kRule, "sgemm_rb (through the rule)"},
-                         {Pick::kTwoD, "sgemm_2d (forced)"}};
+  const Path paths[4] = {{Pick::kRule, "the rule's choice"},
+                         {Pick::kTwoD, "sgemm_2d (forced)"},
+                         {Pick::kMid,  "sgemm_4x2 (forced)"},
+                         {Pick::kWide, "sgemm_4x4 (forced)"}};
 
   for (const Path& path : paths) {
     char head[128];
@@ -237,7 +243,7 @@ int main() {
     }
   }
 
-  section("three kernels actually ran, not one kernel three times");
+  section("five kernels actually ran, not one kernel five times");
   {
     // Everything above would pass just as happily if all three runs were the
     // SAME kernel -- if a hook were misspelled, the host ignored it, or the
@@ -247,9 +253,11 @@ int main() {
     // The warp count can. One probe slot per BLOCK -- not per output -- and the
     // three kernels tile the same output differently. At warp 4, m=6, n=8:
     //
-    //   naive  6*8              = 48 threads -> 12 blocks
-    //   rb     ceil(6/4)*8      = 16         ->  4
-    //   2d     ceil(6/2)*ceil(8/2) = 12      ->  3
+    //   naive  6*8                 = 48 threads -> 12 blocks
+    //   rb     ceil(6/4)*8         = 16         ->  4
+    //   2d     ceil(6/2)*ceil(8/2) = 12         ->  3
+    //   4x2    ceil(6/4)*ceil(8/2) =  8         ->  2
+    //   4x4    ceil(6/4)*ceil(8/4) =  4         ->  1
     //
     // Three different numbers, and getting there took two goes. The first
     // version used m=6 n=4, where rb needs 8 threads and 2d needs 6 -- both two
@@ -263,18 +271,25 @@ int main() {
     // different question, asked by the pass above and by the sweeps.
     std::vector<float> A(64), B(64), out;
     fill(A, 3u); fill(B, 17u);
-    int w_naive = -1, w_rb = -1, w_2d = -1;
-    const bool ok =
-        run(Pick::kNaive, false, false, 6, 8, 5, A, B, &out, &w_naive) &&
-        run(Pick::kRb,    false, false, 6, 8, 5, A, B, &out, &w_rb) &&
-        run(Pick::kTwoD,  false, false, 6, 8, 5, A, B, &out, &w_2d);
-    check(ok, "all three probed runs completed");
-    std::printf("        warps: naive %d, rb %d, 2d %d\n", w_naive, w_rb, w_2d);
-    check(w_naive > 0 && w_rb > 0 && w_2d > 0,
-          "each run wrote probe slots");
-    check(w_naive != w_rb, "the reference and sgemm_rb are different launches");
-    check(w_rb != w_2d, "sgemm_rb and sgemm_2d are different launches");
-    check(w_naive != w_2d, "the reference and sgemm_2d are different launches");
+    int w[5] = {-1, -1, -1, -1, -1};
+    const Pick picks[5] = {Pick::kNaive, Pick::kRb, Pick::kTwoD, Pick::kMid,
+                           Pick::kWide};
+    bool ok = true;
+    for (int i = 0; i < 5; ++i)
+      ok = ok && run(picks[i], false, false, 6, 8, 5, A, B, &out, &w[i]);
+    check(ok, "all five probed runs completed");
+    std::printf("        warps: naive %d, rb %d, 2d %d, 4x2 %d, 4x4 %d\n",
+                w[0], w[1], w[2], w[3], w[4]);
+    bool wrote = true, all_distinct = true;
+    for (int i = 0; i < 5; ++i) {
+      if (w[i] <= 0) wrote = false;
+      for (int j = i + 1; j < 5; ++j)
+        if (w[i] == w[j]) all_distinct = false;
+    }
+    check(wrote, "each run wrote probe slots");
+    check(all_distinct,
+          "all five launches are distinguishable by their warp count, so five "
+          "kernels ran");
   }
 
   section("the comparison can actually fail");

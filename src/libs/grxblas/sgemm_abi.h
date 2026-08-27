@@ -63,6 +63,10 @@ enum {
   GRXBLAS_SGEMM_SHAPE_RB_RM = 0,  // sgemm_rb: outputs per thread, down a column
   GRXBLAS_SGEMM_SHAPE_2D_RM,      // sgemm_2d: rows of C per thread
   GRXBLAS_SGEMM_SHAPE_2D_RN,      // sgemm_2d: columns of C per thread
+  GRXBLAS_SGEMM_SHAPE_WIDE_RM,    // sgemm_4x4: rows of C per thread
+  GRXBLAS_SGEMM_SHAPE_WIDE_RN,    // sgemm_4x4: columns of C per thread
+  GRXBLAS_SGEMM_SHAPE_MID_RM,     // sgemm_4x2: rows of C per thread
+  GRXBLAS_SGEMM_SHAPE_MID_RN,     // sgemm_4x2: columns of C per thread
   GRXBLAS_SGEMM_SHAPE_COUNT
 };
 

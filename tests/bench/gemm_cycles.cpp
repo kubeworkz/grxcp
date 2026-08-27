@@ -391,12 +391,12 @@ int main(int argc, char** argv) {
       // NOT MET, AND LEFT THAT WAY ON PURPOSE.
       //
       // This threshold was set when sgemm meant the one-thread-per-output
-      // reference. It has since been beaten twice -- register blocking, then
-      // the 2D micro-tile -- and the tuned SIMT kernel is now 2.32x faster than
-      // the reference at these shapes. The tensor path did not move: 29.4 and
-      // 44.2 cycles per element in both configurations, which is why the line
-      // above is printed. The ratio fell from 5.62x to 4.30x with nothing
-      // having got slower.
+      // reference. It has since been beaten three times -- register blocking,
+      // the 2x2 micro-tile, then the 4x2 -- and the tuned SIMT kernel is now
+      // 2.68x faster than the reference at these shapes. The tensor path did
+      // not move: 28.4 and 44.0 cycles per element in both configurations,
+      // which is why the line above is printed. The ratio has fallen from 5.62x
+      // to 3.85x with nothing having got slower.
       //
       // Three things could have been done about that and only one of them is
       // honest without a decision on the record. Moving the threshold to 4x
