@@ -114,7 +114,11 @@ def run_block(binary, env_extra, out_json, trace=None):
     env.update(env_extra)
     if trace:
         env["GRXBLAS_SGEMM_TRACE"] = trace
-    r = subprocess.run([binary, "--out", out_json], env=env,
+    # --sweep: the bench's differential control is about the block as it ships,
+    # and every run here has one of its GEMMs forced onto another kernel. See
+    # the flag's note in tests/bench/block_cycles.cpp. Nothing else is
+    # suppressed and the JSON is the same.
+    r = subprocess.run([binary, "--out", out_json, "--sweep"], env=env,
                        capture_output=True, text=True)
     if r.returncode == 77:
         return None, 77

@@ -149,8 +149,7 @@ Which rule_picks_kernel(int m, int n, int batch, long long resident) {
   // cannot reach would be a copy nothing checks.
   const long long outputs = (long long)m * n * batch;
   if (outputs < resident) return Which::kNaive;
-  if (outputs < 16 * resident) return Which::kTwoD;
-  return Which::kMid;
+  return Which::kTwoD;
 }
 
 // The rule this one REPLACED, kept so its score stays on the record. It shipped
@@ -401,7 +400,9 @@ int main() {
   for (int nn : ns) std::printf("%9d", nn);
   std::printf("\n");
 
-  int n_disagree = 0;
+  int n_disagree = 0, n_blocked_losses = 0;
+  double n_worst = 1.0;
+  int n_worst_m = 0, n_worst_n = 0, n_worst_k = 0;
   for (int m : nm) {
     for (int k : nk) {
       std::printf("m=%2d k=%2d  ", m, k);
@@ -428,13 +429,25 @@ int main() {
         // program worse off than before any of this existed.
         const bool predicted = (pick != Which::kNaive);
         const char flag = (predicted == (r > 1.0)) ? ' ' : '!';
-        (void)flag;
+        // A cell the rule BLOCKS and loses on is the only kind that can leave a
+        // program slower than before any of this existed, and this sweep is
+        // where it shows: the m/k grid above holds n at 16, so every cell in it
+        // has 64 outputs or more and none of them is near the boundary. The
+        // k-sensitivity of the crossover was found here.
+        if (predicted && r < 0.99) {
+          ++n_blocked_losses;
+          if (r < n_worst) { n_worst = r; n_worst_m = m; n_worst_n = nn;
+                             n_worst_k = k; }
+        }
         if (flag == '!') ++n_disagree;
         std::printf("%8.2f%c", r, flag);
       }
       std::printf("\n");
     }
   }
+  if (n_blocked_losses)
+    std::printf("\n  worst cell the rule BLOCKS and loses on: m=%d n=%d k=%d at "
+                "%.2fx\n", n_worst_m, n_worst_n, n_worst_k, n_worst);
   std::printf("\n  scored against the shipping rule: %d of %d cells disagree\n",
               n_disagree, (int)(sizeof(nm)/sizeof(nm[0]) * sizeof(nk)/sizeof(nk[0])
                                 * sizeof(ns)/sizeof(ns[0])));
@@ -457,6 +470,12 @@ int main() {
   {
     struct Cell { int m, n; };
     const Cell cells[] = {
+      // The small end, added when hoisting the transpose select out of the k
+      // loop moved the crossover from (48, 56] down past the old first cell.
+      { 4,  2}, { 2,  4},          //   8
+      { 4,  3}, { 6,  2},          //  12
+      { 4,  4}, { 8,  2},          //  16
+      { 4,  5}, {10,  2},          //  20
       { 4,  6}, {12,  2},          //  24
       { 4,  8}, { 8,  4}, {16, 2}, //  32
       { 4, 10}, {10,  4},          //  40
@@ -502,6 +521,13 @@ int main() {
     }
   }
 
+  // The same claim as the m/k grid's gate, over the shapes that actually probe
+  // the boundary. Gated here rather than there because these counters only
+  // exist once the n sweep has run.
+  expect(n_blocked_losses == 0,
+         "no shape the rule blocks loses to the reference anywhere in the n "
+         "sweep either -- which is where the crossover's k-sensitivity is");
+
   // ---- the WIDE tile, where the 2D one runs out of room ------------------
   //
   // sgemm_2d gives one thread a 2x2 patch: 4 loads per 4 multiply-adds, and a
@@ -525,10 +551,11 @@ int main() {
   std::printf("%10s %9s %9s %9s %9s %9s %9s\n", "m x n", "outputs",
               "2x2/nv", "4x2/nv", "4x4/nv", "4x2:2x2", "4x4:2x2");
   int wide_wins = 0, wide_measured = 0;
-  // Above the second threshold, where the rule says 4x2: it must beat 2x2, and
-  // 4x4 must not beat IT -- the two claims the third and fourth kernels exist
-  // to support.
-  int big_cells = 0, mid_wins_big = 0, wide_beats_mid_big = 0;
+  // The claim the two wide tiles exist to support: neither beats the 2x2 one
+  // ANYWHERE, once the k loop stops re-deciding its addressing every iteration.
+  // Counted over every swept cell, not just the large ones, because the whole
+  // point is that there is no crossover left to find.
+  int mid_beats_2d = 0, wide_beats_2d = 0;
   long long wide_first_win = 0;
   {
     const int wk = 16;
@@ -563,11 +590,8 @@ int main() {
           ++wide_wins;
           if (wide_first_win == 0) wide_first_win = (long long)side * side;
         }
-        if ((long long)side * side >= 16 * resident) {
-          ++big_cells;
-          if (mm > 1.0) ++mid_wins_big;
-          if (r4 > rm) ++wide_beats_mid_big;
-        }
+        if (mm > 1.0) ++mid_beats_2d;
+        if (rr > 1.0) ++wide_beats_2d;
         char shape[16];
         std::snprintf(shape, sizeof(shape), "%dx%d", side, side);
         std::printf("%10s %9d %8.2fx %8.2fx %8.2fx %8.2fx %8.2fx\n",
@@ -581,17 +605,28 @@ int main() {
                 "%lld.\n", wide_first_win, 16 * resident);
   else
     std::printf("\n  4x2 never beats 2x2 in this range.\n");
-  std::printf("  above the switch: 4x2 beats 2x2 on %d of %d cells; 4x4 beats "
-              "4x2 on %d.\n", mid_wins_big, big_cells, wide_beats_mid_big);
+  std::printf("  over %d cells: 4x2 beats 2x2 on %d, 4x4 beats 2x2 on %d.\n",
+              wide_measured, mid_beats_2d, wide_beats_2d);
   // Gated here rather than with the others above, because these two counters
   // only exist once the wide sweep has run.
   expect(wide_measured > 0, "the wide sweep produced measurements");
-  expect(big_cells > 0 && mid_wins_big == big_cells,
-         "above 16 * resident outputs, the 4x2 tile beats the 2x2 one on every "
-         "swept cell -- which is what the rule switches on");
-  expect(wide_beats_mid_big == 0,
-         "and the 4x4 tile beats it on none of them: its k loop spills, so its "
-         "lower load count is paid back and the ladder ends at 4x2");
+  // WHAT THIS ASSERTS, AND WHAT IT ASSERTED LAST WEEK. Until the k loop stopped
+  // re-deciding its transpose every iteration, the 4x2 tile beat the 2x2 one
+  // above 16 * resident outputs and the rule had a second threshold there. It
+  // was winning by spreading address arithmetic over more outputs -- half of
+  // that loop was neither load nor multiply-add. With the arithmetic hoisted
+  // there is nothing left to spread, and neither wide tile crosses 1.00
+  // anywhere: they approach it from below as the shape grows.
+  //
+  // So the claim is now the negative one, and it is worth gating precisely
+  // because it could come back. A change that makes the inner loop expensive
+  // again would show up here as a wide tile winning, before it showed up
+  // anywhere else.
+  expect(mid_beats_2d == 0,
+         "the 4x2 tile beats the 2x2 one on no swept cell -- with the address "
+         "arithmetic hoisted there is nothing for a wider tile to amortise");
+  expect(wide_beats_2d == 0,
+         "and neither does the 4x4 tile, which pays twice the occupancy for it");
 
   // ---- and batch, which the perf baselines caught the rule ignoring -------
   //

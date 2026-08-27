@@ -464,11 +464,29 @@ void write_json(const char* path, const grxDeviceProp_t& prop,
 
 int main(int argc, char** argv) {
   const char* out_path = nullptr;
+  // --sweep: report the differential control instead of gating it.
+  //
+  // The control below asks that attention's SHARE of the block grow when the
+  // sequence doubles, because its scores matrix is seqLen squared and every
+  // other stage is linear. That holds for the block as it SHIPS. It does not
+  // have to hold for a block one of whose GEMMs has been forced onto a slower
+  // kernel: ci/sweep_block_sgemm.py does exactly that, and forcing the S=16 mlp
+  // projection to the reference inflates that stage until attention's share
+  // falls below its S=8 value. The bench then reported FAILED for a
+  // configuration nobody ships, and the sweep read that as its own flip having
+  // failed to run.
+  //
+  // The flag says which question is being asked. It suppresses nothing else:
+  // every stage is still measured, every span still refused if it spans
+  // launches, and the JSON is identical. ci/run_real.sh does NOT pass it.
+  bool sweep_mode = false;
   for (int i = 1; i < argc; ++i) {
     if (std::strcmp(argv[i], "--out") == 0 && i + 1 < argc) {
       out_path = argv[++i];
+    } else if (std::strcmp(argv[i], "--sweep") == 0) {
+      sweep_mode = true;
     } else {
-      std::printf("usage: block_cycles [--out <results.json>]\n");
+      std::printf("usage: block_cycles [--out <results.json>] [--sweep]\n");
       return 2;
     }
   }
@@ -532,8 +550,13 @@ int main(int argc, char** argv) {
   // really counting launches would also show.
   std::printf("        attention's share: %.1f%% at S=%d, %.1f%% at S=%d\n",
               attn_share[0], shapes[0].seq, attn_share[1], shapes[1].seq);
-  expect(attn_share[1] > attn_share[0],
-         "and attention's SHARE grows, as a seqLen-squared stage must");
+  if (sweep_mode)
+    std::printf("        --sweep: the share is reported, not gated. One of this "
+                "block's GEMMs is on a\n        kernel it does not ship with, so "
+                "the stage mix is not the one this control is about.\n");
+  else
+    expect(attn_share[1] > attn_share[0],
+           "and attention's SHARE grows, as a seqLen-squared stage must");
 
   if (out_path) {
     // The label records what was ASKED FOR, not what grxBLAS did -- the

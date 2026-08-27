@@ -471,35 +471,47 @@ explains every cell where the old rule is wrong on 8 of the m·k grid. Cells wit
 equal m·n agree to two decimals however m and n split, and batch scales it
 exactly.
 
-The first threshold is `resident`, not `2 × resident`, because the **2×2
-micro-tile** moved it: at equal thread count that kernel beats register blocking
+The threshold is `resident`, not `2 × resident`, because the **2×2 micro-tile**
+moved it: at equal thread count that kernel beats register blocking
 on **42 of 42** cells by 1.18× to 1.39×, so it stays ahead further down. The
 crossover is bracketed in steps of 8 outputs — 0.88 at 48, 1.04 at 56, 1.17 at
 64 — which is the diligence the rule before last lacked, its own crossover
 having been bracketed by 8 and 16 with nothing swept between.
 
-The second threshold is `16 × resident`, where the **4×2 tile** takes over. The
-sweep runs the whole family and the ladder is legible in the disassembly of the
-shipped image, counted per multiply-add in the inner loop:
+**There is no second threshold, and there was one for exactly one commit.** The
+sweep runs the whole kernel family and the reason is legible in the disassembly
+of the shipped image, counted per multiply-add in the inner loop:
 
-| kernel | tile | fp | global loads | stack | mem/FMA |
-|---|---|---|---|---|---|
-| `sgemm` | 1×1 | 1 | 2 | 0 | 2.00 |
-| `sgemm_rb` | 4×1 | 4 | 5 | 0 | 1.25 |
-| `sgemm_2d` | 2×2 | 4 | 4 | 0 | 1.00 |
-| `sgemm_4x2` | 4×2 | 8 | 6 | 0 | **0.75** |
-| `sgemm_4x4` | 4×4 | 16 | 8 | **7** | 0.94 |
+| kernel | tile | loop ins | fp | loads | stack | ins/FMA | mem/FMA |
+|---|---|---|---|---|---|---|---|
+| `sgemm` | 1×1 | 24 | 1 | 2 | 0 | 24.00 | 2.00 |
+| `sgemm_rb` | 4×1 | 53 | 4 | 5 | 0 | 13.25 | 1.25 |
+| `sgemm_2d` | 2×2 | 14 | 4 | 4 | 0 | 3.50 | 1.00 |
+| `sgemm_4x2` | 4×2 | 23 | 8 | 6 | 0 | 2.88 | 0.75 |
+| `sgemm_4x4` | 4×4 | 35 | 16 | 8 | 0 | 2.19 | 0.50 |
 
-`sgemm_4x4` is the only one whose k loop touches the stack. It spills, and the
-seven spill accesses hand back almost exactly the load-count advantage a wider
-tile was built to have — which is why the ladder ends at 4×2 and why the 4×4
-kernel ships but is never selected. It is the evidence for that sentence.
+The 4×2 tile used to beat the 2×2 one above `16 × resident` outputs, and the
+rule had a threshold there. It was winning for a reason that had nothing to do
+with its load count: the k loop indexed its operands as
+`ta ? A[l + row*lda] : A[row + l*lda]`, and the compiler re-decided the
+loop-invariant transpose every iteration. The 4×2 loop was **64** instructions
+for 8 multiply-adds — 6 loads, 8 multiply-adds, 18 czero/or conditional selects
+and 12 slli/srli index widenings. Half of it was address arithmetic, and a wider
+tile won by spreading that over more outputs.
+
+Walking pointers instead — the step is a constant decided once, before the loop
+— cut that to 23, un-spilled the 4×4 kernel, and left the wider tiles with
+nothing to amortise. Neither now beats the 2×2 tile anywhere: they approach it
+from below as the shape grows. So the gate asserts the **negative**, which is
+worth pinning precisely because it could come back — a change that makes the
+inner loop expensive again would show up here as a wide tile winning, before it
+showed up anywhere else.
 
 The gate asserts that no shape the rule blocks runs more than 1% slower than the
-reference, that the rule never picks a safe kernel where a faster one existed,
-that the 2×2 tile still beats the register-blocked one everywhere, that above
-`16 × resident` the 4×2 tile beats the 2×2 one on every swept cell, and that the
-4×4 tile beats it on none of them. 113 seconds.
+reference — in the m/k grid **and** in the n sweep, which is where the
+crossover's k-sensitivity lives — that the rule never picks a safe kernel where
+a faster one existed, that the 2×2 tile still beats the register-blocked one
+everywhere, and that neither wide tile beats it anywhere. 113 seconds.
 
 The **BLOCK SGEMM IN SITU** gate (`ci/sweep_block_sgemm.py`) asks the same
 question where the GEMMs actually live. It flips **exactly one** of the block's
@@ -556,11 +568,12 @@ after it still execute.
 It asserts that `grxblasGemmEx` costs at most a fifth of `sgemm` per output
 element. That threshold was set when `sgemm` meant the one-thread-per-output
 reference. The SIMT kernel has since been beaten three times — register blocking,
-the 2×2 micro-tile, then the 4×2 — and is now 2.68× faster at these shapes, so
-the ratio fell from 5.62× to **3.85×** with the tensor path completely unchanged:
-28.4 and 44.0 cycles per element in both configurations. The bench measures
-`sgemm` a second time with the reference forced and prints that ratio (10.30×)
-beside the gated one, so a reader can see which side of the fraction moved.
+the 2×2 micro-tile, and hoisting the transpose decision out of the k loop — and
+is now 3.66× faster at these shapes, so the ratio fell from 5.62× to **2.74×**
+with the tensor path completely unchanged: 29.3 and 44.4 cycles per element in
+both configurations. The bench measures `sgemm` a second time with the reference
+forced and prints that ratio (10.03×) beside the gated one, so a reader can see
+which side of the fraction moved.
 
 The threshold was **not** adjusted to match. Moving it to 4× would read as a
 relaxation forever; restating the gate against the reference kernel would freeze

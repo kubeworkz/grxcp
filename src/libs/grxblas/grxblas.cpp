@@ -114,94 +114,110 @@ struct Context {
 // WHEN TO BLOCK, AND WITH WHICH KERNEL. The rule is
 //
 //     outputs = m * n * batchCount
-//     outputs <  resident        ->  sgemm,     the reference
-//     outputs <  16 * resident   ->  sgemm_2d,  a 2 x 2 tile per thread
-//     otherwise                  ->  sgemm_4x2, a 4 x 2 tile per thread
+//     outputs <  resident   ->  sgemm,    the reference
+//     otherwise             ->  sgemm_2d, a 2 x 2 tile per thread
 //
 // where resident = warpSize * maxWarpsPerMultiProcessor * multiProcessorCount,
 // 64 on the configuration this was measured on. k does not appear. Neither does
 // how m and n split to reach the output count -- which is not an assumption, it
-// is the measurement: at 24, 32, 40, 48, 56, 64, 72, 80 and 96 outputs the
-// speedup agrees to two decimals however the shape gets there (4x12, 8x6 and
-// 12x4 all read 0.88, 0.91, 0.88).
+// is the measurement: at every count from 8 to 9216 the speedup agrees to two
+// decimals however the shape gets there (4x8, 8x4 and 16x2 read 1.13, 1.12,
+// 1.13).
 //
-// THE FAMILY, AND WHAT DECIDES BETWEEN ITS MEMBERS. Every blocked kernel here
-// is the same body with a different tile, so they differ in exactly two things:
-// how many memory operations the inner loop pays per multiply-add, and how many
-// threads the launch has left. Both are countable, and the second one is only
-// countable because the tile is compile-time.
+// WHERE THE THRESHOLD IS, bracketed rather than asserted -- at k = 16:
 //
-//     kernel      tile   inner loop: fp   global loads   stack   mem/FMA
-//     sgemm       1x1              1            2           0      2.00
-//     sgemm_rb    4x1              4            5           0      1.25
-//     sgemm_2d    2x2              4            4           0      1.00
-//     sgemm_4x2   4x2              8            6           0      0.75
-//     sgemm_4x4   4x4             16            8           7      0.94
+//     outputs    8     12     16     20     24     32     40     48     64
+//     ratio    0.94   0.94   0.96   0.97   0.99   1.13   1.35   1.58   2.03
 //
-// Counted from the disassembly of the shipped .vxbin, not from the source.
+// which puts the crossover inside (24, 32] and would argue for resident / 2.
+// The threshold ships at `resident` instead, and the reason is the one place
+// where k DOES decide something.
 //
-// SO THE LADDER PAYS UNTIL THE REGISTER FILE STOPS IT. 2.00 -> 1.25 -> 1.00 ->
-// 0.75 tracks the measured speedup all the way. 4 x 4 breaks it: sixteen
-// accumulators plus four A and four B values do not fit, its k loop is the only
-// one that touches the stack, and seven spill accesses hand back almost exactly
-// the load-count advantage the wider tile was built to have. 0.5 loads per
-// multiply-add becomes 0.94 memory operations per multiply-add, and it measures
-// like it -- 0.93x to 1.05x against the 2 x 2 tile with no trend, at every
-// output count from 576 to 9216.
+// K DOES NOT DECIDE WHICH KERNEL WINS, EXCEPT AT THE BOUNDARY, and the sweep
+// that established the first half never tested the second. "k never changes
+// which kernel wins anywhere in range" was measured over a grid held at n = 16,
+// where every cell has 64 outputs or more. Swept over n as well, at 32 outputs:
 //
-// That was a prediction before it was a result. 4 x 4 was built and measured
-// first, failed, and the disassembly said why; 4 x 2 was then built to test
-// whether register pressure was the reason, with two distinguishable outcomes.
-// It does not spill, its ratio is the 0.75 the arithmetic asks for, and it wins.
+//     32 outputs, k = 16   1.12x   blocking wins
+//     32 outputs, k =  8   0.89x   blocking LOSES by 11%
 //
-// WHERE THE SECOND THRESHOLD IS. Bracketed, at k = 16, square shapes, 4 x 2
-// against 2 x 2:
+// Three shapes, 4x8, 8x4 and 16x2, all three at 0.88-0.89. At 64 outputs the
+// k = 8 cells win (1.56x to 1.62x), so the boundary is k-sensitive between 32
+// and 64 and not above it. `resident` is the smallest device-reported quantity
+// that is safe at every swept k. It declines the k = 16 band from 32 to 63,
+// which wins by 1.12x to 1.58x -- a real cost, stated rather than hidden, and
+// the alternative is a rule that is 11% slower than doing nothing on three
+// shapes a transformer block actually contains.
 //
-//     outputs   576    676    784    900   1024   1600   4096   9216
-//     ratio    0.93   0.99   1.03   1.02   1.13   1.07   1.16   1.21
+// FIVE KERNELS SHIP AND THE RULE NAMES TWO. That is not an oversight, and the
+// three it does not name are the reason the two it does can be trusted.
 //
-// A tie from about 676 to 900 and a solid win from 1024, which is 16 * resident
-// and the point where a 4 x 2 launch has two full waves of warps. The threshold
-// ships there: the ties below it cost nothing either way, and it is a quantity
-// the device reports rather than a constant fitted to the tie band.
+//   sgemm      1x1  the ORACLE. Every tuned kernel is run against it on the
+//                   device over the same operands and must agree BIT FOR BIT,
+//                   on all four transpose combinations. Blocking changes which
+//                   thread computes what, not the order of the additions, so
+//                   anything but equality is a bug -- a far stronger statement
+//                   than landing inside a tolerance.
+//   sgemm_rb   4x1  the control for OCCUPANCY. It produces the same four
+//                   outputs per thread that sgemm_2d does, so the two launch
+//                   identical thread counts at every shape and the only
+//                   difference between them is what the inner loop does.
+//   sgemm_4x2  4x2  the control for TILE WIDTH, low.
+//   sgemm_4x4  4x4  the control for TILE WIDTH, high.
 //
-// WHERE THE FIRST ONE IS, and it is not the same kind of boundary. Blocking at
-// all crosses over between 48 and 56 outputs -- 0.88 then 1.04 -- long before
-// any tile fills the core. It ships at `resident` = 64 rather than at 56 because
-// 56 is not a number the device reports and a fitted constant is what went wrong
-// last time; the band it declines wins by 3-4% while the band below it LOSES by
-// 12%, and being too eager costs about four times what being too shy does.
+// WHAT THE WIDE TILES ESTABLISHED, and it is the opposite of what they were
+// built to establish. A 4 x 2 tile pays 6 loads per 8 multiply-adds and a 4 x 4
+// pays 8 per 16, against the 2 x 2 tile's 4 per 4. On load count alone both
+// should win at any shape with work to spare. Neither does: measured against
+// 2 x 2 at output counts from 64 to 9216, 4 x 2 reads 0.66x to 0.99x and 4 x 4
+// reads 0.44x to 0.94x, both approaching 1 from below and never crossing it.
 //
-// A HYPOTHESIS ABOUT THE FIRST KNEE, RECORDED AS A HYPOTHESIS. The jump from
-// 1.17 to 1.68 between 64 and 72 outputs sits exactly where the reference
-// kernel stops fitting in the machine: it needs one thread per output, the core
-// holds 64, so at 65 it needs a second wave while the blocked kernels are still
-// inside one. That predicts another jump at 136 and none between 112 and 128.
-// Measured: 1.87, 1.73, 1.84 across 112-128 and 2.12 at 136 -- the jump is
-// there, it is much smaller, and 144 falls back to 2.00. The wave account fits
-// the first knee well and the second only partly. The rule does not depend on it.
+// They DID win, before the k loop was fixed. That is the part worth keeping.
+// The loop used to index its operands as
 //
-// WHY FIVE KERNELS SHIP AND THE RULE NAMES THREE. sgemm is the ORACLE:
-// tests/libs/test_grxblas_rb.cpp runs every tuned kernel against it on the
-// device over the same operands and requires agreement BIT FOR BIT, which is a
-// far stronger statement than landing inside a tolerance. sgemm_rb is the
-// CONTROL for the 2 x 2 tile: it produces the same four outputs per thread, so
-// the two launch identical thread counts and the only difference between them
-// is the load count -- without it, "the 2 x 2 tile wins because it loads less"
-// would be an argument rather than a measurement. sgemm_4x4 is the CONTROL for
-// the ladder: it is the evidence that the tile stops paying, and deleting it
-// would turn a gated result into a remembered one. All three are re-measured on
-// every tier-2 run.
+//     a[i] = ta ? A[l + row[i] * lda] : A[row[i] + l * lda];
+//
+// and the compiler re-decided the loop-invariant transpose on every iteration.
+// The shipped 4 x 2 inner loop was 64 instructions for 8 multiply-adds: 6
+// loads, 8 multiply-adds, EIGHTEEN czero/or conditional selects and TWELVE
+// slli/srli pairs re-widening a 32-bit index. Half the loop was address
+// arithmetic, and a wider tile won because it spread that overhead over more
+// outputs. Walking pointers instead -- the step is a constant decided once,
+// before the loop -- cut it to 23 instructions, and with the overhead gone the
+// wider tiles have nothing left to amortise and pay for their lower occupancy
+// with nothing:
+//
+//     kernel      tile   loop ins   fp   loads   stack   ins/FMA   mem/FMA
+//     sgemm       1x1        24      1     2       0      24.00     2.00
+//     sgemm_rb    4x1        53      4     5       0      13.25     1.25
+//     sgemm_2d    2x2        14      4     4       0       3.50     1.00
+//     sgemm_4x2   4x2        23      8     6       0       2.88     0.75
+//     sgemm_4x4   4x4        35     16     8       0       2.19     0.50
+//
+// Counted from the disassembly of the shipped .vxbin, not from the source, and
+// gated there: tests/bench/sgemm_sweep.cpp asserts that neither wide tile beats
+// the 2 x 2 one on any swept cell. If that ever stops holding, the balance has
+// moved and the rule should gain a second threshold again.
+//
+// The same rewrite un-spilled 4 x 4, which is the other thing it settled. That
+// kernel's k loop used to carry seven stack accesses -- the address arithmetic
+// was what would not fit, not the sixteen accumulators.
+//
+// A HYPOTHESIS ABOUT THE KNEE, RECORDED AS A HYPOTHESIS. There is a jump around
+// 72 outputs, where the reference kernel stops fitting in the machine: it needs
+// one thread per output and the core holds 64. It predicts another jump at 136
+// and none between 112 and 128, and the second prediction holds only partly.
+// The rule does not depend on it.
 //
 // WHAT CAME BEFORE, kept because it is the reason these gates exist. The rule
 // was once `k >= 16 || ceil(m/RM) >= warpSize`, fitted to five points with a
-// coalescing story attached. The sweep disproved the story -- k never changes
-// which kernel wins anywhere in range, and the boundary is not at m = 16 -- and
-// the output-count rule that replaced it was then REVERTED for a commit,
-// because the block appeared to get slower. It had not. Attention is four
-// launches sharing one probe buffer and MCYCLE restarts at zero at every
-// launch, so its "cost" was a maximum over four unrelated clocks
-// (include/grx/grx_cycles.h). Every number above is a sum of per-launch spans.
+// coalescing story attached. The sweep disproved the story, the output-count
+// rule that replaced it was REVERTED for a commit on a block measurement that
+// turned out to be a span across four launches on four clocks
+// (include/grx/grx_cycles.h), and a second threshold at 16 * resident shipped
+// for one commit on the strength of a wide tile that was only winning because
+// the loop it was widening was half address arithmetic. Every number above is a
+// sum of per-launch spans.
 
 // ---------------------------------------------------------------------------
 // THE MEASUREMENT HOOKS. Not API: nothing in grxblas.h mentions them, no
@@ -283,19 +299,17 @@ SgemmChoice decide_sgemm_kernel(const Context& ctx, const grxDeviceProp_t& prop,
   const bool have_mid = ctx.sgemm_mid_fn && ctx.md_rows > 0 && ctx.md_cols > 0;
   const bool have_rb  = ctx.sgemm_rb_fn && ctx.rb_rows > 0 && m >= ctx.rb_rows;
 
-  // THE RULE, in output count. Two thresholds, both measured:
+  // THE RULE, in output count. ONE threshold:
   //
-  //     outputs <  resident        the reference kernel
-  //     outputs <  16 * resident   the 2 x 2 micro-tile
-  //     otherwise                  the 4 x 2 micro-tile
+  //     outputs <  resident / 2    the reference kernel
+  //     otherwise                  the 2 x 2 micro-tile
   //
   // The register-blocked kernel is reached only when the 2 x 2 tile is absent
   // from the module, with its own boundary, because that is the one measured
-  // for it.
-  if (outputs >= 16 * resident && have_mid)    c.rule = SgemmKernel::kMid;
-  else if (outputs >= resident && have_2d)     c.rule = SgemmKernel::kTwoD;
-  else if (outputs >= resident && have_mid)    c.rule = SgemmKernel::kMid;
+  // for it. The wider tiles are reached by nothing -- see below.
+  if (outputs >= resident && have_2d)          c.rule = SgemmKernel::kTwoD;
   else if (outputs >= 2 * resident && have_rb) c.rule = SgemmKernel::kRegisterBlocked;
+  (void)have_mid;
 
   // force-naive first, because the reference is the ORACLE: a test comparing a
   // tuned kernel against it must be able to reach it from any state.

@@ -424,23 +424,25 @@ What is left before the phase 3 exit gate: WGMMA warp groups (needs
 `pipeline<Stages>` structure, and the blocked grxBLAS kernel that composes
 tensor cores with async staging.
 
-**Phase 3 exit gate: NO LONGER MET — 3.85× against a 5× threshold, and the
+**Phase 3 exit gate: NO LONGER MET — 2.74× against a 5× threshold, and the
 threshold has not been moved.** `grxblasGemmEx` (fp16 in, fp32 accumulate)
 composes the tensor unit with DXA staging and is exact against a CPU reference
 on every shape including ragged ones. What it no longer does is cost less than a
-fifth of sgemm per output element — because **sgemm got 2.68× faster**, three
+fifth of sgemm per output element — because **sgemm got 3.66× faster**, three
 times over, and the gate is a ratio between two things that both move.
 
 | shape | sgemm cyc/elem | GemmEx cyc/elem | vs tuned sgemm | vs reference sgemm |
 |---|---|---|---|---|
-| 16 x 16 x 16 | 79.8 | 33.8 | 2.36× (starved) | 4.84× |
-| 16 x 16 x 32 | 130.4 | 41.3 | 3.16× (starved) | 7.16× |
-| 16 x 16 x 64 | 234.5 | 56.7 | 4.14× (starved) | 9.74× |
-| 32 x 32 x 32 | 109.5 | 28.4 | **3.85×** | 10.30× |
-| 32 x 32 x 64 | 188.0 | 44.0 | 4.27× | 12.41× |
+| 16 x 16 x 16 | 50.2 | 34.1 | 1.47× (starved) | 4.84× |
+| 16 x 16 x 32 | 80.7 | 41.7 | 1.94× (starved) | 7.16× |
+| 16 x 16 x 64 | 142.5 | 56.8 | 2.51× (starved) | 9.74× |
+| 32 x 32 x 32 | 80.3 | 29.3 | **2.74×** | 10.03× |
+| 32 x 32 x 64 | 141.2 | 44.4 | 3.18× | 12.41× |
 
-The tensor path did not regress: 28.4 and 44.0 cycles per element are what it
-read before the SIMT work as well. The two columns on the right are printed by
+The tensor path did not regress: 29.3 and 44.4 cycles per element are what it
+read before the SIMT work as well. On three of five shapes the tensor unit is
+now within 2.5× of a SIMT kernel, which is a fact about how little of the core
+the single-CTA workaround lets it use rather than about the unit. The two columns on the right are printed by
 `tests/bench/gemm_cycles.cpp` on every run precisely so this is legible.
 
 Three things could have been done and only one is honest without a decision on
@@ -1220,63 +1222,75 @@ gets the reference kernel and nothing else, because a host that guesses a tile
 launches a grid covering the wrong number of outputs — silently, in whichever
 direction the two drifted.
 
-**Then the wider tile, and the ladder ends at 4 × 2.** 4 × 4 was built first,
-because it has the best arithmetic on paper — 8 loads per 16 multiply-adds
-against 2 × 2's 4 per 4. It does not win anywhere: 0.93× to 1.05× against the
-2 × 2 tile with no trend, at every output count from 576 to 9216.
+**Then the wider tile, and it taught the opposite of what it was built to
+teach.** 4 × 4 was built first because it has the best arithmetic on paper — 8
+loads per 16 multiply-adds against 2 × 2's 4 per 4. It lost. The disassembly
+said it spilled: seven stack accesses inside the k loop, handing back exactly
+the advantage. 4 × 2 was then built to test whether register pressure was the
+reason, with two distinguishable outcomes; it did not spill, it landed at the
+0.75 memory operations per multiply-add the arithmetic asks for, and it won
+above 16 × resident outputs. A second threshold shipped there.
 
-The disassembly of the shipped image says why, counted per multiply-add in the
-inner loop:
+**It was wrong, and one look at the inner loop said why.** The k loop indexed
+its operands the way the reference does:
 
-| kernel | tile | fp | global loads | stack | mem/FMA |
-|---|---|---|---|---|---|
-| `sgemm` | 1×1 | 1 | 2 | 0 | 2.00 |
-| `sgemm_rb` | 4×1 | 4 | 5 | 0 | 1.25 |
-| `sgemm_2d` | 2×2 | 4 | 4 | 0 | 1.00 |
-| `sgemm_4x2` | 4×2 | 8 | 6 | 0 | **0.75** |
-| `sgemm_4x4` | 4×4 | 16 | 8 | **7** | 0.94 |
+```
+a[i] = ta ? A[l + row[i] * lda] : A[row[i] + l * lda];
+```
 
-`sgemm_4x4` is the only kernel here whose k loop touches the stack. Sixteen
-accumulators plus four A and four B values do not fit, and the seven spill
-accesses hand back almost exactly the advantage the wider tile was built to
-have: 0.5 loads per multiply-add becomes 0.94 memory operations per
-multiply-add.
+`ta` is loop-invariant and the compiler re-decided it every iteration. The
+shipped 4 × 2 inner loop was **64 instructions for 8 multiply-adds**: 6 loads, 8
+multiply-adds, **18** czero/or conditional selects choosing between the two
+address expressions, and **12** slli/srli pairs re-widening a 32-bit index into
+a 64-bit offset. Thirty of sixty-four instructions were neither arithmetic nor
+memory. A wider tile was winning by spreading that overhead across more outputs.
 
-**That was a prediction before it was a result**, which is the only reason a
-third tile was built. If register pressure was what stopped 4 × 4, then 4 × 2 —
-eight accumulators plus four A and two B — should fit and should land at the
-0.75 the arithmetic asks for. It does, on both counts, and it wins:
+Walking pointers instead — the step is `lda` or `1` depending on the transpose,
+decided once before the loop — changes the picture completely:
 
-| outputs | 576 | 676 | 784 | 900 | 1024 | 1600 | 4096 | 9216 |
-|---|---|---|---|---|---|---|---|---|
-| 4×2 against 2×2 | 0.93 | 0.99 | 1.03 | 1.02 | **1.13** | 1.07 | 1.16 | 1.21 |
+| kernel | tile | loop ins | fp | loads | stack | ins/FMA | mem/FMA |
+|---|---|---|---|---|---|---|---|
+| `sgemm` | 1×1 | 24 | 1 | 2 | 0 | 24.00 | 2.00 |
+| `sgemm_rb` | 4×1 | 53 | 4 | 5 | 0 | 13.25 | 1.25 |
+| `sgemm_2d` | 2×2 | **14** | 4 | 4 | 0 | **3.50** | 1.00 |
+| `sgemm_4x2` | 4×2 | **23** | 8 | 6 | 0 | 2.88 | 0.75 |
+| `sgemm_4x4` | 4×4 | **35** | 16 | 8 | **0** | 2.19 | 0.50 |
 
-A tie from about 676 to 900 and a solid win from 1024, which is `16 × resident`.
-The rule switches there — the ties below cost nothing either way, and it is a
-quantity the device reports rather than a constant fitted to the tie band.
+The 2 × 2 loop went 42 → 14 instructions, the 4 × 2 went 64 → 23, and **4 × 4
+stopped spilling entirely** — the address arithmetic was what would not fit in
+registers, not the sixteen accumulators. With the overhead gone the wider tiles
+have nothing left to amortise and pay for their lower occupancy with nothing:
+neither beats the 2 × 2 tile on any swept cell, approaching it from below as the
+shape grows. **The second threshold was removed after one commit.**
 
-**Whole block: 1.63× at S = 8, 1.78× at S = 16.**
+**Whole block: 2.10× at S = 8, 2.20× at S = 16** — 347851 → 165600 and 736743 →
+335120, against the reference kernel. 72 of 72 in-situ flips make the block
+slower.
 
-| stage | naive → rule | |
-|---|---|---|
-| mlp GEMM 1 | 84622 → 38334 | 2.21× |
-| mlp GEMM 2 | 69881 → 32705 | 2.14× |
-| qkv projection | 63187 → 34169 | 1.85× |
-| output projection | 26162 → 15588 | 1.68× |
-| attention (4 launches) | 42275 → 31983 | 1.32× |
-| **whole block** | **345947 → 212617** | **1.63×** |
+**And the threshold did not move, for a reason worth recording.** With the loop
+that much cheaper, blocking crosses over at 32 outputs rather than 56 — at
+k = 16. At k = 8 the same 32-output shapes *lose* by 11%, all three of them
+(4×8, 8×4, 16×2 at 0.88–0.89), and at 64 outputs they win by 1.56–1.62×. So the
+crossover is k-sensitive between 32 and 64 and not above it, and "k never
+changes which kernel wins" — established over a grid held at n = 16, where every
+cell has 64 outputs or more — was never tested near the boundary. `resident` is
+the smallest device-reported quantity that is safe at every swept k. The n sweep
+now gates that, because the m/k grid structurally cannot.
 
-Five kernels ship and the rule names three. `sgemm` is the ORACLE — every tuned
+Five kernels ship and the rule names two. `sgemm` is the ORACLE — every tuned
 kernel is compared against it on the device over the same operands and must
-agree **bit for bit**. `sgemm_rb` is the control for the 2 × 2 tile: same
-outputs per thread, so identical thread counts, so the load count is the only
-difference between them. `sgemm_4x4` is the control for the ladder: it is the
-evidence that the tile stops paying, and deleting it would turn a gated result
-into a remembered one.
+agree **bit for bit**. `sgemm_rb` is the control for occupancy: same outputs per
+thread as the 2 × 2 tile, so identical thread counts, so the inner loop is the
+only difference. `sgemm_4x2` and `sgemm_4x4` are the controls for tile width,
+and the sweep now gates the negative claim — that neither beats the 2 × 2 tile
+anywhere — precisely because it could come back. A change that makes the inner
+loop expensive again would show up there as a wide tile winning, before it
+showed up anywhere else.
 
-Next here is not another tile. The ladder is register-bound, so the moves left
-are the ones that change what has to be live: staging a k-panel of B through
-shared memory, or unrolling k so the loads of two iterations overlap.
+Next here is the reference kernel's own loop, which is still 24 instructions for
+one multiply-add and has not been touched, and then the epilogue: the tail
+clamping and the `beta == 0` test are per-thread costs that a specialised entry
+point would not pay.
 
 **Fusing the bias into the GEMM epilogue would save about 2%.** That was the
 obvious next optimisation before anyone measured, and the measurement says not

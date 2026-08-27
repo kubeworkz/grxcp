@@ -314,18 +314,47 @@ __forceinline__ void micro_tile_body(grxblas_sgemm_args* arg) {
       #pragma unroll
       for (uint32_t j = 0; j < RN; ++j) acc[i][j] = 0.0f;
 
-    // RM + RN loads, RM * RN multiply-adds. The same index algebra as the two
-    // kernels above -- op(A)(row, l) and op(B)(l, col) are each a swap of one
-    // subscript pair, written the same way in all three so a transposed GEMM
-    // cannot drift between them.
+    // THE K LOOP, AND WHY IT IS WRITTEN AS POINTERS RATHER THAN SUBSCRIPTS.
+    //
+    // The obvious form is the one the reference kernel uses:
+    //
+    //     a[i] = ta ? A[l + row[i] * lda] : A[row[i] + l * lda];
+    //
+    // which is how this loop was written, and it costs far more than it looks.
+    // `ta` is loop-invariant and the compiler still re-decided it every
+    // iteration: the shipped 4x2 inner loop was 64 instructions for 8
+    // multiply-adds, of which SIX were loads, EIGHTEEN were czero/or
+    // conditional selects picking between the two address expressions, and
+    // TWELVE were slli/srli pairs re-widening a 32-bit index into a 64-bit
+    // offset. Thirty of sixty-four instructions doing neither arithmetic nor
+    // memory.
+    //
+    // Both go away if the loop walks POINTERS. Stepping l by one moves op(A)'s
+    // element by lda when A is stored untransposed and by 1 when it is not, and
+    // that step is a constant for the whole loop -- so the transpose is decided
+    // once, before the loop, and each iteration is an add.
+    //
+    // The addresses this produces are the same addresses. That is checked
+    // rather than argued: tests/libs/test_grxblas_rb.cpp compares every kernel
+    // against the reference over the same operands with `==`, on all four
+    // transpose combinations, and the reference still uses the subscript form.
+    const float* ap[RM];
+    const float* bp[RN];
+    const uint32_t a_step = ta ? 1u : lda;
+    const uint32_t b_step = tb ? ldb : 1u;
+    #pragma unroll
+    for (uint32_t i = 0; i < RM; ++i)
+      ap[i] = A + (ta ? (size_t)row[i] * lda : (size_t)row[i]);
+    #pragma unroll
+    for (uint32_t j = 0; j < RN; ++j)
+      bp[j] = B + (tb ? (size_t)col[j] : (size_t)col[j] * ldb);
+
     for (uint32_t l = 0; l < k; ++l) {
       float a[RM], b[RN];
       #pragma unroll
-      for (uint32_t i = 0; i < RM; ++i)
-        a[i] = ta ? A[l + row[i] * lda] : A[row[i] + l * lda];
+      for (uint32_t i = 0; i < RM; ++i) { a[i] = *ap[i]; ap[i] += a_step; }
       #pragma unroll
-      for (uint32_t j = 0; j < RN; ++j)
-        b[j] = tb ? B[col[j] + l * ldb] : B[l + col[j] * ldb];
+      for (uint32_t j = 0; j < RN; ++j) { b[j] = *bp[j]; bp[j] += b_step; }
       #pragma unroll
       for (uint32_t i = 0; i < RM; ++i)
         #pragma unroll
