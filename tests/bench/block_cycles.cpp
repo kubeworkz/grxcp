@@ -23,6 +23,22 @@
 // refuses to produce a span when the warps landed on different cores, and this
 // reports that refusal rather than printing a plausible number.
 //
+// ONE SPAN PER LAUNCH, AND THIS FILE GOT IT WRONG. MCYCLE restarts at zero at
+// every launch: SimX's ProcessorImpl::run() opens with reset(), which assigns a
+// fresh PerfStats, and MCYCLE reads PerfStats::cycles. So a span taken across
+// two launches is a maximum over two clocks that both started at zero, and it
+// looks exactly like a duration. Attention (four launches) and the output
+// projection (H launches) were both read that way for three commits. The
+// symptom was there to be seen the whole time and nothing was looking at it:
+// summarising attention's buffer reported SIXTY-FOUR warps live at once on a
+// device that holds sixteen.
+//
+// What it cost: grxBLAS's sgemm kernel-selection rule was reverted because
+// forcing the blocked kernel in attention showed a 27.6% regression. That
+// number came from this defect. Every multi-launch stage below now measures
+// each launch against its own clock and ADDS the spans, and grxCycleSummary
+// carries `maxLive` so the impossible reading is refused instead of printed.
+//
 // THE CONTROL, and why the shape list has two entries.
 //
 // A profiler whose numbers nobody has watched respond to their input is not
@@ -89,14 +105,22 @@ struct StageCost {
   uint64_t    span = 0;
   bool        valid = false;
   int         warps = 0;
+  // The most warps live at once, over every slot counted into this stage. It is
+  // reported because it is the only thing that can prove the span came from
+  // more than one launch -- see grx_cycles.h and `occupancy` below.
+  int         maxLive = 0;
+  int         overOccupancy = 0;   // maxLive exceeded what the device holds
 };
 
-// Why a stage has no number. Two very different reasons, and the first version
-// of this file printed the second for both -- which is how a probe that never
+// Why a stage has no number. THREE reasons now, and the first version of this
+// file printed the same one for the first two -- which is how a probe that never
 // fired came to look like a device that had scattered the warps.
 const char* why_no_span(const StageCost& c) {
   if (c.warps == 0)
     return "no warp wrote a slot -- is the kernel's probe reaching finish()?";
+  if (c.overOccupancy)
+    return "more warps live at once than the device holds: these slots come "
+           "from more than one launch, and MCYCLE restarts at every launch";
   return "the warps spanned cores; a span across two counters means nothing";
 }
 
@@ -113,9 +137,15 @@ const char* why_no_span(const StageCost& c) {
 struct Probe {
   void* dev = nullptr;
   int   n   = 0;
+  // How many warps this device can hold at once. A summary reporting more live
+  // than this did not come from one launch, and a span over more than one
+  // launch is not a duration -- MCYCLE restarts at zero at every launch
+  // (grx_cycles.h). This is the whole reason the number is here.
+  int   occupancy = 0;
   std::vector<grxCycleSlot> host;
 
-  explicit Probe(int capacity) : n(capacity), host((size_t)capacity) {
+  Probe(int capacity, int occ)
+      : n(capacity), occupancy(occ), host((size_t)capacity) {
     if (grxMalloc(&dev, (size_t)capacity * sizeof(grxCycleSlot)) != grxSuccess)
       dev = nullptr;
     clear();
@@ -127,17 +157,62 @@ struct Probe {
   void clear() {
     if (dev) grxMemset(dev, 0, (size_t)n * sizeof(grxCycleSlot));
   }
+
+  bool fetch() {
+    if (!dev) return false;
+    return grxMemcpy(host.data(), dev, (size_t)n * sizeof(grxCycleSlot),
+                     grxMemcpyDefault) == grxSuccess;
+  }
+
+  // One launch's worth of slots, summarised and checked against occupancy.
+  void fold(const grxCycleSlot* slots, int count, StageCost* c) const {
+    grxCycleSummary s{};
+    grxCycleSummarize(slots, count, &s);
+    if (s.warps == 0) return;
+    c->warps += s.warps;
+    if (s.maxLive > c->maxLive) c->maxLive = s.maxLive;
+    if (occupancy > 0 && s.maxLive > occupancy) {
+      c->overOccupancy = 1;
+      c->valid = false;
+      return;
+    }
+    if (s.spanIsValid == 0) { c->valid = false; return; }
+    c->span += s.span;
+  }
+
+  // A stage that is ONE launch. Summarising the whole buffer is right here and
+  // only here.
   StageCost take(const char* name) {
     StageCost c;
     c.name = name;
-    if (!dev) return c;
-    grxMemcpy(host.data(), dev, (size_t)n * sizeof(grxCycleSlot),
-              grxMemcpyDefault);
-    grxCycleSummary s{};
-    grxCycleSummarize(host.data(), n, &s);
-    c.span  = s.span;
-    c.valid = s.spanIsValid != 0 && s.warps > 0;
-    c.warps = s.warps;
+    if (!fetch()) return c;
+    c.valid = true;
+    fold(host.data(), n, &c);
+    if (c.warps == 0) c.valid = false;
+    clear();
+    return c;
+  }
+
+  // A stage that is SEVERAL launches, each in its own region of the buffer.
+  //
+  // The spans are ADDED, not spanned: the launches are ordered on one stream,
+  // so the stage costs their sum, and each is measured against its own clock.
+  // Taking a span across the regions is exactly the mistake this function
+  // exists to stop -- it read a maximum over four unrelated counters and called
+  // it attention's cost, and a kernel-selection rule was reverted on it.
+  StageCost take_regions(const char* name, const grxdnnCycleRegion_t* regions,
+                         int count) {
+    StageCost c;
+    c.name = name;
+    if (!fetch()) return c;
+    if (count <= 0) { clear(); return c; }   // no regions: nothing to trust
+    c.valid = true;
+    for (int i = 0; i < count; ++i) {
+      const int off = regions[i].offset, len = regions[i].slots;
+      if (off < 0 || len <= 0 || off + len > n) { c.valid = false; break; }
+      fold(host.data() + off, len, &c);
+    }
+    if (c.warps == 0) c.valid = false;
     clear();
     return c;
   }
@@ -164,7 +239,11 @@ bool profile(grxblasHandle_t bh, grxdnnHandle_t dh, const Shape& sh,
   const int attn_cap = grxdnnAttentionCycleSlotsNeeded(dh, 1, H, S, Dh);
   if (attn_cap > cap) cap = attn_cap;
   if (cap <= 0) return false;
-  Probe probe(cap + 8);
+  grxDeviceProp_t dprop{};
+  grxGetDeviceProperties(&dprop, 0);
+  const int occupancy =
+      dprop.maxWarpsPerMultiProcessor * dprop.multiProcessorCount;
+  Probe probe(cap + 8, occupancy);
   if (!probe.dev) return false;
 
   Buf *x = upload((size_t)S * D, 1), *g1 = upload(D, 2), *b1 = upload(D, 3),
@@ -197,13 +276,14 @@ bool profile(grxblasHandle_t bh, grxdnnHandle_t dh, const Shape& sh,
     const P ps[3] = {{Wq, bq, &q}, {Wk, bk, &k}, {Wv, bv, &v}};
     uint64_t total = 0;
     bool valid = true;
-    int warps = 0;
+    int warps = 0, qkv_live = 0;
     for (const P& pr : ps) {
       grxblasSgemmStridedBatched(bh, GRXBLAS_OP_N, GRXBLAS_OP_N, Dh, S, D, &one,
                                  pr.w->f(), D, (long long)Dh, h1.f(), D, 0,
                                  &zero, pr.o->f(), Dh, (long long)S * Dh, H);
       const StageCost c = probe.take("qkv");
       total += c.span; valid = valid && c.valid; warps = c.warps;
+      if (c.maxLive > qkv_live) qkv_live = c.maxLive;
       for (int hh = 0; hh < H; ++hh)
         grxdnnAddBiasForward(dh, S, Dh, pr.o->f() + (size_t)hh * S * Dh, Dh,
                              pr.b->f() + (size_t)hh * Dh,
@@ -211,35 +291,58 @@ bool profile(grxblasHandle_t bh, grxdnnHandle_t dh, const Shape& sh,
       probe.clear();   // the per-head bias is counted with the other biases
     }
     StageCost c; c.name = "qkv proj (3 GEMMs)"; c.span = total;
-    c.valid = valid; c.warps = warps;
+    c.valid = valid; c.warps = warps; c.maxLive = qkv_live;
     out->push_back(c);
   }
 
-  // Attention is three launches of its own -- two GEMMs, a mask, a softmax --
-  // and the probe records only the LAST of them, so it is measured as a whole
-  // by summing what its internals report. Reported as one line because that is
-  // how a caller buys it.
-  // ATTENTION AS A WHOLE, which it was not before. The probe used to record
-  // only the last of attention's four launches, so its two GEMMs -- the ones
-  // that make it seqLen-squared -- were missing from the profile entirely and
-  // the block's GEMM share was understated. Each launch now writes its own
-  // region, and a span across the buffer covers all four.
+  // ATTENTION, MEASURED ONE LAUNCH AT A TIME.
+  //
+  // It is four launches -- the scores GEMM, the mask, the softmax, the output
+  // GEMM -- each writing its own region of one probe buffer. This used to
+  // summarise the whole buffer and call the result attention's cost. It was
+  // not: MCYCLE restarts at zero at EVERY launch (grx_cycles.h), so those four
+  // regions carry four unrelated clocks and a span across them is a maximum
+  // over strangers. The reading was not merely imprecise -- it reported 64
+  // warps live at once on a device that holds 16, and grxBLAS's kernel-
+  // selection rule was reverted on a 27.6% "regression" measured with it.
+  //
+  // grxdnnGetCycleRegions says where each launch wrote. Each is summarised
+  // against its own clock and the spans are ADDED, because the launches are
+  // ordered on one stream and the stage costs their sum.
   {
     const grxdnnStatus_t st =
         grxdnnAttentionForward(dh, 1, H, S, Dh, q.f(), k.f(), v.f(),
                                GRXDNN_ATTN_MASK_CAUSAL, ws.p, ws_bytes, a.f());
-    StageCost c = probe.take("attention (2 GEMMs+mask+softmax)");
+    grxdnnCycleRegion_t regions[8];
+    int nregions = 0;
+    grxdnnGetCycleRegions(dh, regions, 8, &nregions);
+    if (nregions > 8) nregions = 8;
+    StageCost c = probe.take_regions("attention (2 GEMMs+mask+softmax)",
+                                     regions, nregions);
     if (st != GRXDNN_STATUS_SUCCESS) c.valid = false;
     out->push_back(c);
   }
 
-  for (int hh = 0; hh < H; ++hh) {
-    const float* beta = (hh == 0) ? &zero : &one;
-    grxblasSgemm(bh, GRXBLAS_OP_N, GRXBLAS_OP_N, D, S, Dh, &one,
-                 Wo->f() + (size_t)hh * Dh * D, D,
-                 a.f() + (size_t)hh * S * Dh, Dh, beta, p.f(), D);
+  // The output projection is H SEPARATE LAUNCHES, and for the same reason it is
+  // read after each one and the spans added. Read once at the end it spanned
+  // two launches, which on this device meant a maximum over two clocks that
+  // both started at zero -- the smaller head simply vanished into the larger.
+  {
+    StageCost c; c.name = "out proj (H GEMMs)"; c.valid = true;
+    for (int hh = 0; hh < H; ++hh) {
+      const float* beta = (hh == 0) ? &zero : &one;
+      grxblasSgemm(bh, GRXBLAS_OP_N, GRXBLAS_OP_N, D, S, Dh, &one,
+                   Wo->f() + (size_t)hh * Dh * D, D,
+                   a.f() + (size_t)hh * S * Dh, Dh, beta, p.f(), D);
+      const StageCost one_head = probe.take("out proj");
+      c.span += one_head.span;
+      c.warps = one_head.warps;
+      if (one_head.maxLive > c.maxLive) c.maxLive = one_head.maxLive;
+      c.overOccupancy |= one_head.overOccupancy;
+      if (!one_head.valid) c.valid = false;
+    }
+    out->push_back(c);
   }
-  out->push_back(probe.take("out proj (H GEMMs)"));
 
   grxdnnAddBiasForward(dh, S, D, p.f(), D, bo->f(), p.f(), D);
   out->push_back(probe.take("bias"));
@@ -292,8 +395,9 @@ double report(const Shape& sh, const std::vector<StageCost>& stages,
       continue;
     }
     const double share = 100.0 * (double)c.span / (double)total;
-    std::printf("  %-26s %10llu cycles  %5.1f%%  (%d warps)\n", c.name.c_str(),
-                (unsigned long long)c.span, share, c.warps);
+    std::printf("  %-26s %10llu cycles  %5.1f%%  (%d warps, %d live)\n",
+                c.name.c_str(), (unsigned long long)c.span, share, c.warps,
+                c.maxLive);
     if (c.name.rfind("attention", 0) == 0) attn += share;
   }
   std::printf("  %-26s %10llu cycles\n", "TOTAL (measured stages)",
@@ -308,10 +412,16 @@ double report(const Shape& sh, const std::vector<StageCost>& stages,
 // The machine-readable half, for ci/perf/baselines/. Written from the SAME
 // StageCost records the prose report prints, so the two cannot disagree.
 //
-// Only raw integers go in: spans and warp counts. Shares, totals-per-element
-// and speedups are derived by ci/check_perf.py from these. A baseline holding
-// "4.6%" would drift against its own rounding and would have to carry a
-// tolerance to survive it; a baseline holding 13834 does not.
+// Only raw integers go in: spans, warp counts, and the greatest number of warps
+// live at once. Shares, totals-per-element and speedups are derived by
+// ci/check_perf.py from these. A baseline holding "4.6%" would drift against
+// its own rounding and would have to carry a tolerance to survive it; a
+// baseline holding 13834 does not.
+//
+// maxLive is in the baseline because it is what proves a span came from ONE
+// launch. A stage that quietly starts spanning two would move its cycles and
+// its maxLive together, and pinning only the cycles is how the last one went
+// unnoticed for three commits.
 void write_json(const char* path, const grxDeviceProp_t& prop,
                 const char* sgemm_config, const Shape* shapes,
                 const std::vector<StageCost>* stages, int nshapes) {
@@ -338,9 +448,9 @@ void write_json(const char* path, const grxDeviceProp_t& prop,
       const StageCost& c = stages[i][j];
       std::fprintf(f,
                    "       {\"name\": \"%s\", \"span\": %llu, \"warps\": %d, "
-                   "\"valid\": %s}%s\n",
+                   "\"maxLive\": %d, \"valid\": %s}%s\n",
                    c.name.c_str(), (unsigned long long)c.span, c.warps,
-                   c.valid ? "true" : "false",
+                   c.maxLive, c.valid ? "true" : "false",
                    j + 1 == stages[i].size() ? "" : ",");
     }
     std::fprintf(f, "     ]}%s\n", i + 1 == nshapes ? "" : ",");

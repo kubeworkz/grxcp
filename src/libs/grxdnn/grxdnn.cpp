@@ -86,6 +86,10 @@ struct Context {
   // code. See grxdnnSetCycleProbe.
   grxCycleSlot* probe = nullptr;
   int           probe_capacity = 0;
+  // Where each launch of the LAST instrumented call wrote. Rebuilt per call
+  // rather than accumulated, because a caller asking after one call wants that
+  // call's launches and nothing else. See grxdnnGetCycleRegions.
+  std::vector<grxdnnCycleRegion_t> regions;
 };
 
 
@@ -189,8 +193,18 @@ unsigned warps_in(const Shape& shape, unsigned warp_size) {
 // writing four disjoint regions summarise to exactly the span of all four:
 // attention's cost as its caller experiences it, gaps between launches
 // included.
-grxdnnStatus_t attach_probe(const Context& ctx, const Shape& shape,
-                            uint64_t* cycles_field, int* offset = nullptr) {
+// Reserve a region of the probe for one launch, and RECORD that it was
+// reserved.
+//
+// `offset` null means this call is a single launch, so the region list starts
+// over; non-null means the caller is walking a multi-launch call and this
+// region is appended to the ones already recorded. The recording is not
+// optional bookkeeping: MCYCLE restarts at zero at every launch, so a caller
+// that cannot tell the regions apart cannot get a duration out of the buffer
+// at all (grx_cycles.h, and grxdnnGetCycleRegions).
+grxdnnStatus_t attach_probe(Context& ctx, const Shape& shape,
+                            uint64_t* cycles_field, const char* name,
+                            int* offset = nullptr) {
   if (!ctx.probe) return GRXDNN_STATUS_SUCCESS;
   int device = 0;
   grxDeviceProp_t prop{};
@@ -201,6 +215,8 @@ grxdnnStatus_t attach_probe(const Context& ctx, const Shape& shape,
   const int warps = (int)warps_in(shape, (unsigned)prop.warpSize);
   if (base + warps > ctx.probe_capacity) return GRXDNN_STATUS_INVALID_VALUE;
   *cycles_field = (uint64_t)(uintptr_t)(ctx.probe + base);
+  if (!offset) ctx.regions.clear();
+  ctx.regions.push_back(grxdnnCycleRegion_t{base, warps, name});
   if (offset) *offset = base + warps;
   return GRXDNN_STATUS_SUCCESS;
 }
@@ -281,6 +297,23 @@ grxdnnStatus_t grxdnnSetCycleProbe(grxdnnHandle_t handle,
   return GRXDNN_STATUS_SUCCESS;
 }
 
+grxdnnStatus_t grxdnnGetCycleRegions(grxdnnHandle_t handle,
+                                     grxdnnCycleRegion_t* out, int max,
+                                     int* count) {
+  if (!handle) return GRXDNN_STATUS_NOT_INITIALIZED;
+  if (!count || max < 0 || (max > 0 && !out))
+    return GRXDNN_STATUS_INVALID_VALUE;
+  Context* ctx = reinterpret_cast<Context*>(handle);
+  std::lock_guard<std::mutex> lock(ctx->mutex);
+  // *count is what there ARE, not what was copied, so a caller that guessed the
+  // buffer size too small can size it and ask again rather than believing it
+  // got everything.
+  *count = (int)ctx->regions.size();
+  const int n = (*count < max) ? *count : max;
+  for (int i = 0; i < n; ++i) out[i] = ctx->regions[(size_t)i];
+  return GRXDNN_STATUS_SUCCESS;
+}
+
 int grxdnnCycleSlotsNeeded(grxdnnHandle_t handle, int rows) {
   if (!handle || rows <= 0) return 0;
   // Asked of the same launch_shape the call itself will use, so the answer is
@@ -336,7 +369,7 @@ grxdnnStatus_t grxdnnSoftmaxForward(grxdnnHandle_t handle,
   args.x    = (uint64_t)(uintptr_t)x;
   args.y    = (uint64_t)(uintptr_t)y;
 
-  st = attach_probe(*ctx, shape, &args.cycles);
+  st = attach_probe(*ctx, shape, &args.cycles, "softmax");
   if (st != GRXDNN_STATUS_SUCCESS) return st;
 
   return map_launch(grxLaunchFunction(ctx->softmax,
@@ -380,7 +413,7 @@ grxdnnStatus_t grxdnnLayerNormForward(grxdnnHandle_t handle,
   args.gamma = (uint64_t)(uintptr_t)gamma;
   args.beta  = (uint64_t)(uintptr_t)beta;
 
-  st = attach_probe(*ctx, shape, &args.cycles);
+  st = attach_probe(*ctx, shape, &args.cycles, "layernorm");
   if (st != GRXDNN_STATUS_SUCCESS) return st;
 
   return map_launch(grxLaunchFunction(ctx->layernorm,
@@ -422,7 +455,7 @@ grxdnnStatus_t grxdnnAddBiasForward(grxdnnHandle_t handle,
   args.bias = (uint64_t)(uintptr_t)bias;
   args.y    = (uint64_t)(uintptr_t)y;
 
-  st = attach_probe(*ctx, shape, &args.cycles);
+  st = attach_probe(*ctx, shape, &args.cycles, "add bias");
   if (st != GRXDNN_STATUS_SUCCESS) return st;
 
   return map_launch(grxLaunchFunction(ctx->add_bias,
@@ -464,7 +497,7 @@ grxdnnStatus_t grxdnnGeluForward(grxdnnHandle_t handle,
   args.x    = (uint64_t)(uintptr_t)x;
   args.y    = (uint64_t)(uintptr_t)y;
 
-  st = attach_probe(*ctx, shape, &args.cycles);
+  st = attach_probe(*ctx, shape, &args.cycles, "gelu");
   if (st != GRXDNN_STATUS_SUCCESS) return st;
 
   return map_launch(grxLaunchFunction(ctx->gelu,
@@ -582,6 +615,7 @@ grxdnnStatus_t grxdnnAttentionForward(grxdnnHandle_t handle,
   // The GEMMs go on grxDNN's OWN grxBLAS handle, which no caller can see, so
   // setting a probe on it cannot disturb a handle the caller is using.
   int probe_off = 0;
+  ctx->regions.clear();
 
   float* scores = reinterpret_cast<float*>(workspace);
   const int nheads = batch * heads;              // heads are contiguous
@@ -612,6 +646,7 @@ grxdnnStatus_t grxdnnAttentionForward(grxdnnHandle_t handle,
     if (probe_off + need > ctx->probe_capacity) return GRXDNN_STATUS_INVALID_VALUE;
     grxblasSetCycleProbe(ctx->blas, ctx->probe + probe_off,
                          ctx->probe_capacity - probe_off);
+    ctx->regions.push_back(grxdnnCycleRegion_t{probe_off, need, "scores GEMM"});
     probe_off += need;
   }
 
@@ -640,7 +675,8 @@ grxdnnStatus_t grxdnnAttentionForward(grxdnnHandle_t handle,
     margs.ld      = seqLen;
     margs.scores  = (uint64_t)(uintptr_t)scores;
 
-    st = attach_probe(*ctx, shape, &margs.cycles, &probe_off);
+    st = attach_probe(*ctx, shape, &margs.cycles, "causal mask",
+                      &probe_off);
     if (st != GRXDNN_STATUS_SUCCESS) return st;
 
     st = map_launch(grxLaunchFunction(ctx->causal_mask,
@@ -669,7 +705,8 @@ grxdnnStatus_t grxdnnAttentionForward(grxdnnHandle_t handle,
     sargs.x    = (uint64_t)(uintptr_t)scores;
     sargs.y    = (uint64_t)(uintptr_t)scores;   // in place
 
-    st = attach_probe(*ctx, shape, &sargs.cycles, &probe_off);
+    st = attach_probe(*ctx, shape, &sargs.cycles, "softmax",
+                      &probe_off);
     if (st != GRXDNN_STATUS_SUCCESS) return st;
 
     st = map_launch(grxLaunchFunction(ctx->softmax,
@@ -691,6 +728,7 @@ grxdnnStatus_t grxdnnAttentionForward(grxdnnHandle_t handle,
     if (probe_off + need > ctx->probe_capacity) return GRXDNN_STATUS_INVALID_VALUE;
     grxblasSetCycleProbe(ctx->blas, ctx->probe + probe_off,
                          ctx->probe_capacity - probe_off);
+    ctx->regions.push_back(grxdnnCycleRegion_t{probe_off, need, "out GEMM"});
     probe_off += need;
   }
 

@@ -118,6 +118,16 @@ echo
 echo "==> PERF COMPARATOR: the baseline checker's own logic, without a device"
 python3 "$ROOT/ci/check_perf.py" --self-test
 
+echo
+echo "==> IN-SITU SWEEP SCORING: the block sgemm gate's logic, without a device"
+# ci/sweep_block_sgemm.py needs a device to measure anything, but the part that
+# decides whether a flip HELPED is arithmetic, and arithmetic that only ever
+# runs on the one machine with a simulator is arithmetic nobody has watched
+# fail. The self-test plants a flip that helps, one that hurts, one that moves
+# nothing, and a pair to rank -- including the case that would be hidden by
+# summing across shapes instead of scoring the shape the call belongs to.
+python3 "$ROOT/ci/sweep_block_sgemm.py" --self-test
+
 # Also before the build, and it compiles for four targets of its own. The kernel
 # argument structs are WRITTEN by the host and READ by the device; a disagreement
 # about one offset is not an error anywhere, the kernel just reads the blob where

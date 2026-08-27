@@ -661,11 +661,14 @@ echo "==> SGEMM CROSSOVER GATE: is the kernel-selection rule still right"
 # properly -- 66 shapes across m, n and k, both kernels over the same operands --
 # it was wrong on 19 of them, including three where it picked the SLOWER kernel.
 #
-# What replaced it is `m*n >= 2 * resident threads`, which explains all 66 with
-# no exceptions and in which k does not appear at all. This gate re-measures the
-# sweep and fails if the rule ever picks the slower kernel again; declining a
-# win is reported rather than gated, because only picking a loss can make a
-# program slower than it was before the tuned kernel existed.
+# What replaced it is `m*n*batch >= 2 * resident threads`, which explains all 66
+# with no exceptions and in which k does not appear at all. It was shipped,
+# reverted on a block measurement that turned out to be broken, and shipped
+# again once that was fixed -- see the BLOCK SGEMM IN SITU gate below, which
+# prices the same decision inside the workload rather than beside it.
+#
+# This gate re-measures the sweep and fails if the rule picks the slower kernel
+# anywhere, or declines a faster one.
 #
 # 21 seconds, measured.
 if [[ -n "$GRXGPU" && -d "$TOOLDIR/llvm-vortex" ]]; then
@@ -720,6 +723,38 @@ if [[ -n "$GRXGPU" && -d "$TOOLDIR/llvm-vortex" ]]; then
   grep -E "TOTAL" "$BUILD/block_naive.log" | sed 's/^/     /' || true
 else
   echo "SKIPPED: needs --grxgpu <path> and a device toolchain in $TOOLDIR."
+fi
+
+echo
+echo "==> BLOCK SGEMM IN SITU: is the kernel rule right where the GEMMs live"
+# The sweep above measures GEMMs ALONE. This measures the same decision in the
+# transformer block, one call at a time: flip exactly one of the block's sgemm
+# calls to the other kernel, run the whole block again, and price the
+# difference. Nothing else moves, so what it costs is what that stage's kernel
+# choice costs.
+#
+# It is here because the two questions were once answered differently and the
+# difference was believed. The sweep said blocking wins at attention's 8x8x8
+# batch-2 shape by 1.39x; the block profile said shipping that cost 3766 cycles;
+# the rule that loses in isolation was kept. The block profile was wrong --
+# attention's four launches were being spanned on four clocks that each restart
+# at zero -- and measured per launch, flipping those two calls SAVES 5990 cycles
+# on a 259043-cycle block.
+#
+# The gate: no single flip may make the block faster. Declining a win is
+# reported and not gated, matching the isolated sweep, because only picking a
+# loss can leave a program slower than it was before the tuned kernel existed.
+#
+# 112 seconds, measured: 19 runs of the block bench.
+if [[ -n "$GRXGPU" && -d "$TOOLDIR/llvm-vortex" && -x "$BUILD/block_cycles" ]]; then
+  if ! python3 "$ROOT/ci/sweep_block_sgemm.py" --bin "$BUILD/block_cycles" \
+        --json "$BUILD/block_sgemm_flips.json"; then
+    rc=$?
+    [[ $rc -eq 77 ]] || exit $rc
+  fi
+else
+  echo "SKIPPED: needs --grxgpu <path>, a device toolchain in $TOOLDIR,"
+  echo "         and the block bench the section above builds."
 fi
 
 echo

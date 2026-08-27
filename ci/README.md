@@ -458,38 +458,49 @@ the register-blocking speedup to a measured pair, and it is the control that
 proves the kernel selection does anything at all.
 
 The **SGEMM CROSSOVER GATE** (`tests/bench/sgemm_sweep.cpp`) is the sweep the
-roadmap said was owed, and it is the rare gate that exists to record a
-contradiction rather than to assert a rule.
+roadmap said was owed. 66 shapes across m, n and k with both kernels over the
+same operands, plus batch and transpose.
 
-The kernel-selection rule — `k >= 16 || ceil(m/RM) >= warpSize` — was fitted to
-five points from the block profile. Swept properly, 66 shapes across m, n and k
-with both kernels over the same operands: **k never changes which kernel wins**
-anywhere in the range (it moves the magnitude, 1.17× at k=4 against 1.53× at
-k=32), and the coalescing boundary is not at m = 16 — m = 8 wins at n = 16.
-What does predict the isolated GEMM is `m*n*batch >= 2 × resident threads`,
-which explains **all 66 cells** where the shipping rule is wrong on 19. Cells
+The rule it replaced — `k >= 16 || ceil(m/RM) >= warpSize` — was fitted to five
+points from the block profile. Swept properly: **k never changes which kernel
+wins** anywhere in the range (it moves the magnitude, 1.17× at k=4 against 1.53×
+at k=32), and the coalescing boundary is not at m = 16 — m = 8 wins at n = 16.
+What predicts the isolated GEMM is `m*n*batch >= 2 × resident threads`, which
+explains **all 66 cells** where the old rule is wrong on 9 of the m·k grid. Cells
 with equal m·n agree to two decimals however m and n split, and batch scales it
-exactly.
+exactly. The gate asserts the shipping rule never picks the slower kernel and
+never declines a faster one — 0 and 0 — and pins the replaced rule's 9 so that a
+change which stops measuring the difference is visible. 21 seconds.
 
-**And shipping that better rule made the transformer block slower** — 230171
-cycles against 226405 at S=8, because attention's scores GEMM loses inside the
-block while winning by 1.39× in isolation. Transpose was checked and explains
-none of it. So an isolated sweep does not predict the workload, nobody here
-knows why yet, and the rule that wins on the block is the one that ships with
-its comment corrected to say its stated mechanism is disproven.
+The **BLOCK SGEMM IN SITU** gate (`ci/sweep_block_sgemm.py`) asks the same
+question where the GEMMs actually live. It flips **exactly one** of the block's
+sgemm calls to the other kernel, runs the whole block again, and prices the
+difference — once per call, at both sequence lengths, with nothing else moving.
+On all 18 flippable calls the rule picks the kernel that makes the block faster.
+112 seconds; 19 runs of the block bench.
 
-What the gate therefore checks is that the **disagreement does not grow**: no
-more than the 3 recorded shapes where the rule picks the slower kernel, no more
-than the 6 where it declines a faster one, and that the output-count rule still
-explains every isolated cell — because that last one is what makes the block's
-disagreement worth chasing rather than a rounding artifact. 21 seconds.
+That gate exists because this pair of questions was once answered differently
+and the difference was believed. The isolated sweep said blocking wins at
+attention's 8×8×8 batch-2 shape by 1.39×; the block profile said shipping that
+cost 3766 cycles; the losing rule was kept, and `ci/README.md` said in this
+paragraph that nobody knew why. **The block profile was wrong.** `VX_CSR_MCYCLE`
+restarts at zero at every launch, attention is four launches sharing one probe
+buffer, and its "cost" was a maximum over four unrelated clocks — visible, had
+anyone looked, as 64 warps live at once on a device that holds 16. Measured per
+launch, flipping those two calls *saves* 5990 cycles. See `include/grx/grx_cycles.h`
+on `maxLive`, and the tier-1 gate `tests/unit/test_cycle_summary.cpp`.
 
-`GRXBLAS_SGEMM_RB` exists for this bench and only for it: the rule refuses the
-blocked kernel at shapes it dislikes, so measuring whether the refusal was right
-needs a way to run it anyway.
+`GRXBLAS_SGEMM_RB` and `GRXBLAS_SGEMM_NAIVE` exist for these two benches and
+only for them: the rule refuses one kernel at shapes it dislikes, so measuring
+whether the refusal was right needs a way to run it anyway. Both accept a list
+of **call indices** — `#4,#5` — so one GEMM of a block can be moved while the
+rest stay where they are; shape cannot express that, because at S = 8
+attention's two GEMMs are both 8×8×8. `GRXBLAS_SGEMM_TRACE=<path>` writes what
+the library actually did, one line per call, which is what the block bench could
+not previously tell.
 
 The **PERF BASELINE GATE** (`ci/check_perf.py`, `ci/perf/baselines/`) compares
-152 measured cycle counts against stored golden files. AGENTS.md section 4 had
+196 measured cycle counts against stored golden files. AGENTS.md section 4 had
 said since the first commit that a moved number means real cycles moved, and
 `grxcp_architecture.md` section 10 listed `ci/perf/baselines/` among five
 verification gates — while no such directory existed and nothing compared any
@@ -501,7 +512,11 @@ consecutive runs of both benches were byte-identical, every stage and every
 shape, and rebuilding `src/libs/kernels_all.cpp` produced a bit-identical
 `.vxbin`. Only raw integers are stored — shares, cycles per element and speedups
 are derived at compare time, because a stored `4.6%` drifts against its own
-rounding and needs a tolerance to survive it while a stored `13834` does not.
+rounding and needs a tolerance to survive it while a stored `36749` does not.
+The greatest number of warps live at once is stored beside each stage's span,
+because that is what proves the span came from one launch: a stage that quietly
+starts spanning two moves its cycles and its `maxLive` together, and pinning only
+the cycles is how the last one went unnoticed for three commits.
 
 Three things it refuses to do. It will not compare across a **different device
 record** — a different core width or SM count is not a regression and not a

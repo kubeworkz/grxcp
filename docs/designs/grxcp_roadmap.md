@@ -1024,20 +1024,23 @@ attention is four launches, the slot index comes from the block and warp, and
 four different grids collide at the low indices — the earliest start is simply
 lost. Each launch now writes its own region of the probe buffer.
 
-The fix validated itself against theory. Attention's share goes 4.55% → 8.47%
-when the sequence doubles — 13834/304145 against 53008/626196, both from the
-baseline file — a ratio of **1.86** against the ~2× that a seqLen-squared stage
-among linear ones must show. With only its softmax counted, the figures recorded
-at the time were 4.6% and 5.7%, a ratio of 1.24; those two are history and do
-not reproduce from this tree, because the bug that produced them is fixed.
+Giving each launch its own region was still not enough, and the rest of that
+story is below under **the instrument was broken**: the four regions were then
+*spanned*, and `VX_CSR_MCYCLE` restarts at zero at every launch, so the result
+was a maximum over four unrelated clocks. Each launch is now summarised against
+its own clock and the spans are added.
 
-This paragraph previously claimed 1.93, which did not follow from its own two
-numbers (8.5/4.6 is 1.85) and which nothing checked. That is the second reason
-the shares above are now derived from a gated file rather than transcribed.
+Attention's share goes 14.19% → 20.34% when the sequence doubles — 36749/259043
+against 103692/509808, both from the baseline file. In absolute cycles it grows
+2.82× while the block grows 1.97×, which is the direction a seqLen-squared stage
+among linear ones must move and short of the 4× a saturated machine would show,
+because at S = 8 most of these launches do not fill the core. Two earlier
+versions of this paragraph quoted 1.86 and 1.93 from numbers that were spans
+across launches; they are history and do not reproduce from this tree.
 
-**GEMMs are 76% of the block** — 75.7% in the four stages named as GEMMs above,
-and 80.3% once attention's own two are counted, which is the number that matters
-and the one the profile hole was hiding. That is where the work is, and `grxblas.h`
+**GEMMs are 77% of the block** — 76.8% at S = 8 and 78.1% at S = 16 across every
+stage that carries one, attention's own two included, which is the number that
+matters and the one the profile hole was hiding. That is where the work is, and `grxblas.h`
 already says why: sgemm v0 is one thread per output element with no blocking,
 correct and not fast. Tuning it is worth more than everything else on this list
 combined.
@@ -1058,67 +1061,86 @@ no tolerance to hide in.
 | mlp GEMM 2 | 16 | 64 | 70031 → 43253 | 1.62× |
 | mlp GEMM 1 | 64 | 16 | 84379 → 53614 | 1.57× |
 | qkv projection | 8 | 16 | 62815 → 45236 | 1.39× |
-| output projection | 16 | 8 | 13056 → 9987 | 1.31× |
-| attention | 8 | 8 | 13834 → 13861 | 1.00× — takes the reference |
-| **whole block** | | | **304145 → 226405** | **1.34×** |
+| output projection | 16 | 8 | 25960 → 19984 | 1.30× |
+| attention (4 launches) | 8 | 8 | 42267 → 36749 | 1.15× |
+| **whole block** | | | **345482 → 259043** | **1.33×** |
 
-Both columns are the shipping build, and every number in them is a span from
-`ci/perf/baselines/block_cycles.{naive,register-blocked}.json`, gated exactly.
-The attention row previously read 17690 and **0.78×**, which was a real
-measurement of a build that no longer exists: it is what attention cost *before*
-the crossover rule below, and it is why that rule exists. Leaving it in a column
-labelled "blocked" made the table mix two builds, and the total did not then
-follow from its own rows.
+Both columns are the shipping build, and every number in them is a sum of
+per-launch spans from `ci/perf/baselines/block_cycles.{naive,register-blocked}.json`,
+gated exactly. Two rows here have been wrong before and it is worth saying how,
+because the same defect produced both. The attention row once read `13834 →
+13861` and `1.00×`, and the output-projection row once read `13056 → 9987`.
+Neither was a cost. Attention is four launches and the output projection is
+H = 2, and both were being read as a single span across the whole probe buffer.
 
-Attention got *slower* in that provisional build, and chasing it is where the
-interesting part is. k
-alone does not explain it: the output projection also has k = 8 and is 1.31×
-faster. They differ in **m**, 16 against 8 — and thread `sub` owns column
-`idx / row_blocks`, so once `row_blocks` falls below the warp width the column
-changes *within a warp* and consecutive lanes stop writing consecutive
-addresses. At warp 4 and RM 4 that boundary is exactly m = 16.
+**The instrument was broken, and it changed an engineering decision.**
+`VX_CSR_MCYCLE` restarts at zero at **every launch**: SimX's
+`ProcessorImpl::run()` opens with `reset()`, which assigns a fresh `PerfStats`,
+and MCYCLE reads `PerfStats::cycles`. Three stages sampled from very different
+points in the block all report their first warp starting at ~4900 cycles. So a
+span taken across two launches is a maximum over two clocks that both began at
+zero — and it looks exactly like a duration.
 
-So blocking pays when **either** the k loop amortises the setup **or** the
-stores stay coalesced, and attention is the only stage with neither. With that
-rule in the host, no stage regresses and the block is 1.34× faster.
+The symptom was in the data the whole time and nothing was looking at it:
+summarising attention's buffer reported **64 warps live at once on a device that
+holds 16**. `grxCycleSummary` now carries `maxLive`, `block_cycles.cpp` refuses
+any span whose `maxLive` exceeds `maxWarpsPerMultiProcessor ×
+multiProcessorCount` and says why, `grxdnnGetCycleRegions` reports where each of
+attention's launches wrote, and every multi-launch stage is measured one launch
+at a time and summed. `tests/unit/test_cycle_summary.cpp` is the tier-1 gate —
+no device needed, which is the point.
 
-**The sweep was owed and has now been done, and it disproved the mechanism
-above while leaving the rule standing.** `tests/bench/sgemm_sweep.cpp`, 66
-shapes across m, n and k with both kernels over the same operands, plus batch
-and transpose. SGEMM CROSSOVER GATE in `ci/run_real.sh`.
+**The sweep was owed and has now been done, twice: alone and in place.**
+`tests/bench/sgemm_sweep.cpp` runs 66 shapes across m, n and k with both kernels
+over the same operands, plus batch and transpose. SGEMM CROSSOVER GATE in
+`ci/run_real.sh`.
 
 What it found, in order:
 
 * **k never decides anything.** Across the whole swept range it moves the
   magnitude — 1.17× at k=4 against 1.53× at k=32, same m and n — and never
-  changes which kernel wins. The `k >= 16` clause is not doing what its comment
+  changes which kernel wins. The `k >= 16` clause was not doing what its comment
   said it was.
 * **The coalescing boundary is not at m = 16.** m = 8 wins at n = 16 by 1.27×.
-* **What actually predicts the isolated GEMM is the output count.**
+* **What predicts the isolated GEMM is the output count.**
   `m*n*batch >= 2 × resident threads` explains **all 66 cells with no
-  exceptions**, where the shipping rule is wrong on 19. Cells with equal m·n
-  agree to two decimals however m and n split — m=4,n=16 and m=8,n=8 and
-  m=16,n=4 all read 0.90 — and batch scales it exactly: m=n=8 at batch 2 reads
-  1.43, and the unbatched m=8,n=16 cell, the same 128 outputs, reads 1.44. The
-  mechanism is that the blocked kernel produces the same outputs with a quarter
-  of the threads, so below saturation it just idles the core.
-* **And shipping that rule made the block SLOWER.** 230171 cycles against
-  226405 at S=8. Attention's scores GEMM — m=n=8, k=8, batch=2, which the sweep
-  says blocking wins by 1.39× *in isolation* — runs 27.6% slower inside the
-  block. Transpose was checked and explains none of it: 0 of 4 shapes flip.
+  exceptions**, where the old rule was wrong on 19. Cells with equal m·n agree
+  to two decimals however m and n split — m=4,n=16 and m=8,n=8 and m=16,n=4 all
+  read 0.90 — and batch scales it exactly: m=n=8 at batch 2 reads 1.43, and the
+  unbatched m=8,n=16 cell, the same 128 outputs, reads 1.44. The mechanism is
+  that the blocked kernel produces the same outputs with a quarter of the
+  threads, so below saturation it just idles the core.
 
-**So the rule stays, and its comment no longer claims to know why.** An
-isolated-GEMM sweep does not predict the workload, and replacing a rule that
-wins on the block with one that loses on it would be optimising the measurement
-instead of the program. The gate now pins the disagreement counts — 3 shapes
-where the rule picks the slower kernel, 6 where it declines a faster one — so
-they cannot grow quietly while the question is open.
+**It was shipped, reverted, and shipped again.** The revert is the part worth
+keeping on the record. Shipping the output rule appeared to make the block
+slower — 230171 cycles against 226405 at S = 8, with attention's two GEMMs 27.6%
+worse in place while winning 1.39× in isolation — so the losing rule was kept
+and its comment was left saying nobody knew why an isolated sweep disagreed with
+the workload. Nothing disagreed. Both of those numbers were spans across
+attention's four launches.
 
-What a real answer needs is the same sweep run **inside a block, per stage**, so
-the thing being optimised is the thing being measured. That is the next piece of
-work here, ahead of the 2D micro-tile (RM × RN), which reuses **both** operands
-instead of one — 4 loads per 4 outputs beats 5 — and which would be tuned
-against the same misleading isolated numbers if it were done first.
+**Measured in place, one call at a time.** `ci/sweep_block_sgemm.py` flips
+exactly one of the block's sgemm calls to the other kernel and runs the whole
+block again — for every call it makes, at both sequence lengths, with nothing
+else moving. That is the sweep this section used to say was owed, and it is
+finer than what was asked for: per *call*, not per stage, because shape cannot
+tell the block's stages apart. At S = 8 attention's two GEMMs are both 8×8×8,
+and at S = 16 the qkv projection and attention's output GEMM are both 8×16×16.
+Calls are selected by index through a measurement hook in `grxblas.cpp`, and
+`GRXBLAS_SGEMM_TRACE` records what the library actually did rather than what the
+caller asked for.
+
+The result, on all 18 flippable calls at both shapes: **every one of them is
+slower with the other kernel.** The rule is right everywhere the workload goes,
+and forcing the blocked kernel on attention's two GEMMs — the change that was
+reverted — **saves 5990 cycles**, 2613 and 3377, on a 259043-cycle block. The
+two flips compose exactly. BLOCK SGEMM IN SITU gate in `ci/run_real.sh`, 112
+seconds, and it fails on the old rule naming those two calls.
+
+Next here is the **2D micro-tile (RM × RN)**, which reuses *both* operands
+instead of one — 4 loads per 4 outputs beats 5. It waited for this, and it was
+right to: tuned against the pre-fix block numbers it would have been fitted to a
+maximum over four clocks.
 
 **Fusing the bias into the GEMM epilogue would save about 2%.** That was the
 obvious next optimisation before anyone measured, and the measurement says not

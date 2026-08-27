@@ -122,20 +122,20 @@ uint64_t measure_batched(grxblasHandle_t h, Probe* probe, int m, int n, int k,
 }
 
 // The shipping rule, restated here so the sweep can score it. Deliberately a
-// COPY rather than a call: if it drifts from grxblas.cpp the numbers below stop
-// meaning anything, and the gate at the end is what notices.
-// The SHIPPING rule, restated so the sweep can score it. A copy rather than a
+// The SHIPPING rule, restated so the sweep can score it. A COPY rather than a
 // call: if it drifts from grxblas.cpp the counts below stop meaning anything,
-// which is what the recorded totals at the end are there to notice.
-bool rule_picks_blocked(int m, int n, int k, int warp) {
-  (void)n;   // the shipping rule does not look at n. That is part of the finding.
-  const int row_blocks = (m + 4 - 1) / 4;
-  return m >= 4 && ((k >= 16) || (row_blocks >= warp));
+// which is what the gate at the end is there to notice.
+bool rule_picks_blocked(int m, int n, int batch, long long resident) {
+  return m >= 4 && (long long)m * n * batch >= 2 * resident;
 }
 
-// What the sweep says instead: the output count, against the core's capacity.
-bool outputs_rule(int m, int n, int batch, long long resident) {
-  return m >= 4 && (long long)m * n * batch >= 2 * resident;
+// The rule this one REPLACED, kept so its score stays on the record. It shipped
+// for months on a coalescing story that this sweep disproved: k never changes
+// which kernel wins anywhere in range, and the boundary is not at m = 16.
+bool former_rule(int m, int n, int k, int warp) {
+  (void)n;   // it did not look at n. That was part of the finding.
+  const int row_blocks = (m + 4 - 1) / 4;
+  return m >= 4 && ((k >= 16) || (row_blocks >= warp));
 }
 
 }  // namespace
@@ -224,7 +224,7 @@ int main() {
       if (naive == 0 || blocked == 0) { std::printf("        -"); continue; }
 
       const double ratio = (double)naive / (double)blocked;
-      const bool picks = rule_picks_blocked(m, n, k, prop.warpSize);
+      const bool picks = rule_picks_blocked(m, n, 1, resident);
       points.push_back({m, k, ratio, picks});
       ++measured;
 
@@ -259,45 +259,43 @@ int main() {
   }
   std::printf("\n\n");
 
-  // How well does the OUTPUT-COUNT rule do on the same cells? Scored here
-  // rather than asserted, because it wins on these and loses on the block.
-  int outputs_wrong = 0;
+  // How the rule this one replaced does on the same cells, kept on the record.
+  int former_wrong = 0;
   for (const Point& p : points)
-    if (outputs_rule(p.m, n, 1, resident) != (p.ratio > 1.0)) ++outputs_wrong;
+    if (former_rule(p.m, n, p.k, prop.warpSize) != (p.ratio > 1.0)) ++former_wrong;
 
   std::printf("scoring, on isolated GEMMs:\n");
-  std::printf("        shipping rule (k >= 16 || ceil(m/4) >= warp): %2d of %d wrong\n",
+  std::printf("        shipping rule (m*n*batch >= 2 * resident):   %2d of %d wrong\n",
               rule_wrong_slow + rule_wrong_missed, measured);
   std::printf("          %d pick the SLOWER kernel", rule_wrong_slow);
   if (rule_wrong_slow > 0)
     std::printf(", worst m=%d k=%d at %.2fx", worst_m, worst_k, worst_loss);
   std::printf("; %d decline a faster one\n", rule_wrong_missed);
-  std::printf("        outputs rule  (m*n*batch >= 2 * resident):   %2d of %d wrong\n",
-              outputs_wrong, measured);
+  std::printf("        former rule   (k >= 16 || ceil(m/4) >= warp): %2d of %d wrong\n",
+              former_wrong, measured);
 
   expect(measured == (int)(sizeof(ms) / sizeof(ms[0]) * sizeof(ks) / sizeof(ks[0])),
          "every shape produced two measurements");
 
-  // WHAT IS GATED, AND WHY IT IS NOT "the rule is right".
+  // WHAT IS GATED. That the shipping rule is right on every cell -- which it
+  // now is, and which this bench could not assert while the old one shipped.
   //
-  // The rule is NOT right on these cells and shipping the one that is made the
-  // transformer block SLOWER -- 230171 cycles against 226405 at S=8, because
-  // attention's scores GEMM loses inside the block while winning by 1.39x in
-  // isolation. So an isolated sweep does not predict the workload, nobody here
-  // knows why yet, and asserting either rule as correct would be asserting
-  // something this bench has actively disproven.
-  //
-  // What IS gated is that the disagreement does not grow. These counts are the
-  // measured state of a known-imperfect rule; a change that makes it worse is a
-  // regression whether or not the rule is ever replaced.
-  expect(rule_wrong_slow <= 3,
-         "the shipping rule picks the slower kernel on no MORE shapes than the "
-         "3 already recorded");
-  expect(rule_wrong_missed <= 6,
-         "and declines a faster one on no more than the 6 already recorded");
-  expect(outputs_wrong == 0,
-         "and the output-count rule still explains every isolated cell, which "
-         "is what makes the block's disagreement worth chasing");
+  // This gate used to read "no MORE wrong than the 3 and 6 already recorded",
+  // because the rule that explains these cells appeared to make the transformer
+  // block slower and so was not shipped. That appearance was a measurement
+  // defect, not a conflict: attention's cost was being read as a span across
+  // four launches, and MCYCLE restarts at zero at every launch. Measured per
+  // launch, the block agrees with this sweep -- see ci/sweep_block_sgemm.py,
+  // which flips one call of the block at a time and gates the same claim in
+  // situ.
+  expect(rule_wrong_slow == 0,
+         "the shipping rule never picks the slower kernel");
+  expect(rule_wrong_missed == 0,
+         "and never declines a faster one");
+  expect(former_wrong == 9,
+         "and the rule it replaced is still wrong on the 9 cells that "
+         "replaced it -- if that number moves, this sweep is measuring "
+         "something other than what it did");
 
   // ---- and now n, because the sweep above holds it fixed ------------------
   //
@@ -326,9 +324,10 @@ int main() {
         const uint64_t bl = measure(h, &p2, m, nn, k, dA, dB, dC, true);
         if (nv == 0 || bl == 0) { std::printf("        -"); continue; }
         const double r = (double)nv / (double)bl;
-        // Scored against m >= 8, which is what the m/k sweep above says the
-        // boundary actually is. If n moves it, this is where that shows.
-        const bool predicted = rule_picks_blocked(m, nn, k, prop.warpSize);
+        // Scored against the shipping rule, which counts outputs and so DOES
+        // look at n. If n moves the boundary somewhere the rule does not
+        // expect, this is where that shows.
+        const bool predicted = rule_picks_blocked(m, nn, 1, resident);
         const char flag = (predicted == (r > 1.0)) ? ' ' : '!';
         if (flag == '!') ++n_disagree;
         std::printf("%8.2f%c", r, flag);
@@ -370,9 +369,11 @@ int main() {
   // ---- and the transpose, which the perf baselines caught next ------------
   //
   // Attention's scores GEMM is OP_T with m=n=8, k=8, batch=2 -- 128 outputs, so
-  // the batched rule sends it to the blocked kernel, where the block profile
-  // says it runs 27.6% SLOWER. Every cell above is OP_N. If transposing moves
-  // the crossover, the rule has to know.
+  // the shipping rule sends it to the blocked kernel. The block profile once
+  // said that ran 27.6% SLOWER; that number was a span taken across four
+  // launches on four clocks, and measured per launch the blocked kernel saves
+  // 2613 cycles there. Every cell above is OP_N, so the transpose is checked
+  // anyway: if transposing moved the crossover the rule would have to know.
   std::printf("\ntranspose sweep. batch=2 throughout; OP_T transposes A.\n\n");
   std::printf("%-22s %9s %9s\n", "m  n  k", "OP_N", "OP_T");
   int t_disagree = 0;

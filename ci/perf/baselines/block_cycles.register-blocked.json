@@ -20,66 +20,77 @@
           "name": "layernorm 1",
           "span": 7377,
           "warps": 8,
+          "maxLive": 8,
           "valid": true
         },
         {
           "name": "qkv proj (3 GEMMs)",
           "span": 45236,
           "warps": 8,
+          "maxLive": 8,
           "valid": true
         },
         {
           "name": "attention (2 GEMMs+mask+softmax)",
-          "span": 13861,
-          "warps": 96,
+          "span": 36749,
+          "warps": 48,
+          "maxLive": 16,
           "valid": true
         },
         {
           "name": "out proj (H GEMMs)",
-          "span": 9987,
+          "span": 19984,
           "warps": 8,
+          "maxLive": 8,
           "valid": true
         },
         {
           "name": "bias",
-          "span": 2293,
+          "span": 2291,
           "warps": 8,
+          "maxLive": 8,
           "valid": true
         },
         {
           "name": "residual (saxpy)",
-          "span": 3674,
+          "span": 3429,
           "warps": 32,
+          "maxLive": 16,
           "valid": true
         },
         {
           "name": "layernorm 2",
           "span": 7824,
           "warps": 8,
+          "maxLive": 8,
           "valid": true
         },
         {
           "name": "mlp GEMM 1 (D->F)",
           "span": 53614,
           "warps": 32,
+          "maxLive": 16,
           "valid": true
         },
         {
           "name": "bias",
           "span": 4161,
           "warps": 8,
+          "maxLive": 8,
           "valid": true
         },
         {
           "name": "gelu",
           "span": 35125,
           "warps": 8,
+          "maxLive": 8,
           "valid": true
         },
         {
           "name": "mlp GEMM 2 (F->D)",
           "span": 43253,
           "warps": 8,
+          "maxLive": 8,
           "valid": true
         }
       ]
@@ -94,66 +105,77 @@
           "name": "layernorm 1",
           "span": 13729,
           "warps": 16,
+          "maxLive": 16,
           "valid": true
         },
         {
           "name": "qkv proj (3 GEMMs)",
           "span": 80231,
           "warps": 16,
+          "maxLive": 16,
           "valid": true
         },
         {
           "name": "attention (2 GEMMs+mask+softmax)",
-          "span": 37030,
+          "span": 103692,
           "warps": 112,
+          "maxLive": 16,
           "valid": true
         },
         {
           "name": "out proj (H GEMMs)",
-          "span": 18003,
+          "span": 35872,
           "warps": 16,
+          "maxLive": 16,
           "valid": true
         },
         {
           "name": "bias",
           "span": 3982,
           "warps": 16,
+          "maxLive": 16,
           "valid": true
         },
         {
           "name": "residual (saxpy)",
           "span": 7134,
           "warps": 64,
+          "maxLive": 16,
           "valid": true
         },
         {
           "name": "layernorm 2",
           "span": 14936,
           "warps": 16,
+          "maxLive": 16,
           "valid": true
         },
         {
           "name": "mlp GEMM 1 (D->F)",
           "span": 99848,
           "warps": 64,
+          "maxLive": 16,
           "valid": true
         },
         {
           "name": "bias",
           "span": 7361,
           "warps": 16,
+          "maxLive": 16,
           "valid": true
         },
         {
           "name": "gelu",
           "span": 64504,
           "warps": 16,
+          "maxLive": 16,
           "valid": true
         },
         {
           "name": "mlp GEMM 2 (F->D)",
           "span": 78519,
           "warps": 16,
+          "maxLive": 16,
           "valid": true
         }
       ]

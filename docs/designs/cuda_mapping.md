@@ -297,6 +297,46 @@ A kernel that needs real device time reads the device's own cycle counter,
 to come from that, or from the simulator's own cycle statistics — never from
 event elapsed time on a simulator.
 
+**And that counter has a scope, which is one launch.** See 7.25.
+
+### 7.25 `VX_CSR_MCYCLE` restarts at zero at every launch — **SIM, silent**
+
+The device's own cycle counter is the only clock that measures the device, and
+its readings are comparable **within one launch on one core**. Not across
+launches: `ProcessorImpl::run()` opens with `reset()`, which assigns a fresh
+`PerfStats`, and MCYCLE reads `PerfStats::cycles`
+(`sim/simx/processor.cpp`, `sim/simx/csr_unit.cpp`). Three stages sampled from
+very different points in a transformer block all report their first warp
+starting at ~4900 cycles.
+
+Why it is listed as a gap rather than as a fact about simulators: nothing about
+the numbers says so. Two launches produce two sets of small overlapping
+timestamps, and `end - start` across them is a maximum over unrelated clocks
+that has the shape, the units and the plausibility of a duration. The
+cross-*core* case has been refused since `grx_cycles.h` was written; this one
+had no detector at all.
+
+It cost a real decision. `tests/bench/block_cycles.cpp` gave each of attention's
+four launches its own region of one probe buffer and summarised the buffer,
+believing the result was attention's cost. grxBLAS's sgemm kernel-selection rule
+was then reverted on a 27.6% "regression" read off that number. Measured per
+launch the sign flips: the reverted rule *saves* 5990 cycles on the block.
+
+What catches it now is `grxCycleSummary::maxLive`, the greatest number of slots
+live at once. A device holds `maxWarpsPerMultiProcessor × multiProcessorCount`
+warps and not one more, so a buffer reporting more than that did not come from
+one launch whatever its timestamps say — attention's reported 64 on a machine
+that holds 16. The comparison is left to the caller, which is the one holding a
+`grxDeviceProp_t`; `block_cycles.cpp` refuses such a span and prints why, and
+`tests/unit/test_cycle_summary.cpp` gates the arithmetic in tier 1 where no
+simulator is present at all.
+
+This is a property of the SimX model and it has not been checked against
+hardware or rtlsim, neither of which this project can run yet (7.1). On silicon
+MCYCLE is a free-running counter and the question would not arise in this form —
+but a probe buffer holding two launches would still be two launches, and the
+`maxLive` check does not depend on which is true.
+
 ### 7.5 Managed memory on FPGA paths — **DRV**
 
 VM works on simx/rtlsim/gem5 and silently no-ops on FPGA (no `CP_SATP` decode,

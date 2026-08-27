@@ -8,6 +8,7 @@
 
 #include <grx/grxblas.h>
 
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -102,40 +103,174 @@ struct Context {
 // outputs -- silently, in whichever direction the two drifted.
 constexpr int kSgemmRowsPerThread = 4;
 
-// WHEN THE BLOCKED KERNEL PAYS -- and this rule is KEPT DESPITE BEING WRONG
-// about its own mechanism, which needs explaining rather than hiding.
+// WHEN THE BLOCKED KERNEL PAYS. The rule is
 //
-// The rule is: k >= kSgemmMinK, OR ceil(m/RM) >= warpSize. It was fitted to
-// five points from the block profile and the roadmap called it provisional.
-// tests/bench/sgemm_sweep.cpp swept it properly -- 66 shapes across m, n and k,
-// both kernels over the same operands, plus batch and transpose:
+//     m >= RM  AND  m * n * batchCount >= 2 * (resident threads)
 //
-//   * The STATED MECHANISM IS WRONG. The coalescing story says the boundary is
-//     m = 16 at warp 4; the sweep shows m = 8 winning at n = 16 by 1.27x. And k
-//     never changes which kernel wins ANYWHERE in the swept range -- it moves
+// where resident = warpSize * maxWarpsPerMultiProcessor * multiProcessorCount.
+// It is a rule about how many OUTPUTS the call has, and k does not appear in
+// it. Both halves of that sentence were arrived at the hard way.
+//
+// WHAT IT REPLACED, and why. The rule used to be `k >= 16 OR ceil(m/RM) >=
+// warpSize`, fitted to five points from the block profile with a coalescing
+// story attached. tests/bench/sgemm_sweep.cpp swept it -- 66 shapes across m, n
+// and k, both kernels over the same operands, plus batch and transpose -- and
+// the story did not survive:
+//
+//   * k never changes which kernel wins ANYWHERE in the swept range. It moves
 //     the magnitude (1.17x at k=4 to 1.53x at k=32, same m and n) and nothing
-//     else. The k clause is not doing what its comment says.
-//   * WHAT ACTUALLY PREDICTS THE ISOLATED GEMM is the output count:
-//     m*n*batch >= 2 * resident threads explains all 66 cells with no
-//     exceptions, where the old rule is wrong on 19 of them. Cells with equal
-//     m*n agree to two decimals however m and n split (m=4,n=16 / m=8,n=8 /
-//     m=16,n=4 all read 0.90), and batch scales it exactly (m=n=8 batch=2 reads
-//     1.43; unbatched m=8,n=16 -- the same 128 outputs -- reads 1.44).
-//   * AND YET IT LOSES ON THE REAL WORKLOAD. Shipping the output-count rule
-//     made the transformer block SLOWER: 230171 cycles against 226405 at S=8,
-//     because attention's scores GEMM -- m=n=8, k=8, batch=2, which the sweep
-//     says blocking wins by 1.39x IN ISOLATION -- runs 27.6% slower inside the
-//     block. Transpose was checked and does not explain it (0 of 4 shapes flip).
+//     else.
+//   * the coalescing boundary is not at m = 16: m = 8 wins at n = 16 by 1.27x.
+//   * the output count explains all 66 cells with no exceptions. Cells with
+//     equal m*n agree to two decimals however m and n split -- (4,16), (8,8)
+//     and (16,4) all read 0.90 -- and batch scales it exactly: m=n=8 batch=2
+//     reads 1.43, and unbatched m=8 n=16, the same 128 outputs, reads 1.44.
 //
-// So an isolated-GEMM sweep does not predict the block, and nobody here knows
-// why yet. Until that is understood, the rule that wins on the workload ships,
-// with its mechanism corrected to "fitted, and its stated reason disproven"
-// rather than left reading as though it were understood. The sweep is a gate
-// so the disagreement count cannot grow quietly.
+// AND IT WAS REVERTED ONCE, WRONGLY. Shipping the output rule appeared to make
+// the transformer block SLOWER -- 230171 cycles against 226405 at S=8 -- with
+// attention's two GEMMs (8x8x8, batch 2) 27.6% worse inside the block while
+// winning 1.39x in isolation. That looked like a real conflict between isolated
+// and in-situ measurement, so the old rule was kept and this comment was left
+// saying nobody knew why.
 //
-// What a real answer needs: the same sweep run INSIDE a block, per stage, so
-// the thing being optimised is the thing being measured.
-constexpr int kSgemmMinK = 16;
+// The conflict was not real. Attention is FOUR launches sharing one probe
+// buffer, and MCYCLE restarts at zero at every launch, so the "cost of
+// attention" was a maximum over four unrelated clocks (grx_cycles.h). Measured
+// per launch, attention at S=8 costs 42440 cycles and not 13861 -- and forcing
+// the blocked kernel there SAVES 2613 and 3377 cycles on its two GEMMs.
+//
+// MEASURED IN PLACE, ONE CALL AT A TIME. ci/sweep_block_sgemm.py flips exactly
+// one of the block's GEMM calls and re-runs the whole block, for every call it
+// makes, at two sequence lengths. On all 18 calls this rule picks the kernel
+// that makes the block faster, and the old rule picks the slower one twice.
+// That is the sweep the roadmap asked for, and it is a gate.
+
+// ---------------------------------------------------------------------------
+// THE MEASUREMENT HOOKS. Not API: nothing in grxblas.h mentions them, no
+// program should depend on them, and they exist so the rule above can be
+// measured on the workload it was fitted to instead of on isolated GEMMs.
+//
+// WHY THE SELECTOR IS A CALL INDEX AND NOT A SHAPE. To find out what one
+// stage's kernel choice costs the block, exactly one stage must change while
+// the rest stay where they are. Shape cannot express that, because shape does
+// not tell the stages apart: at S=8 attention's two GEMMs are BOTH 8x8x8, and
+// at S=16 the qkv projection and attention's output GEMM are both 8x16x16. A
+// shape filter would move two stages every time it moved one -- which is the
+// confound tests/bench/block_sgemm.cpp exists to remove, so it cannot be built
+// on top of it.
+//
+// The counter is process-wide rather than per handle because grxDNN issues its
+// GEMMs through a handle of its own that the caller never holds. A counter on
+// the caller's handle would number the block's stages with attention missing
+// from the sequence.
+std::atomic<uint64_t> g_sgemm_calls{0};
+
+// Does an override env var apply to THIS call?
+//
+// Unset: no. Set to anything not beginning with '#': every call -- the meaning
+// these have always had and the one ci/run_real.sh still passes as "=1". Set to
+// "#3" or "#3,#7": only those calls, numbered from 0 in issue order.
+//
+// Parsed on every call rather than cached, so that a bench can setenv() between
+// runs of the same process. Host-side work only: the spans these hooks are used
+// to compare are device cycles between kernel entry and exit, which nothing
+// here is inside of.
+bool env_forces(const char* name, uint64_t call) {
+  const char* v = std::getenv(name);
+  if (!v) return false;
+  if (v[0] != '#') return true;
+  for (const char* p = v; *p; ) {
+    while (*p == '#' || *p == ',' || *p == ' ') ++p;
+    if (!*p) break;
+    char* end = nullptr;
+    const unsigned long long want = std::strtoull(p, &end, 10);
+    if (end == p) break;               // malformed: stop, do not guess
+    if (want == call) return true;
+    p = end;
+  }
+  return false;
+}
+
+enum class SgemmKernel { kNaive, kRegisterBlocked };
+
+struct SgemmChoice {
+  SgemmKernel kernel   = SgemmKernel::kNaive;
+  bool        rule_rb  = false;   // what the RULE alone would have picked
+  const char* why      = "rule";  // what actually picked it
+};
+
+// The one place the kernel is chosen. The launch path below and the trace both
+// go through it, so a trace line cannot describe a kernel other than the one
+// that ran -- which is the whole point of having a trace.
+SgemmChoice decide_sgemm_kernel(const Context& ctx, const grxDeviceProp_t& prop,
+                                int m, int n, int k, int batch, uint64_t call) {
+  (void)k;
+  SgemmChoice c;
+  const long long resident = (long long)prop.warpSize *
+                             prop.maxWarpsPerMultiProcessor *
+                             prop.multiProcessorCount;
+  c.rule_rb = (m >= kSgemmRowsPerThread) &&
+              ((long long)m * n * batch >= 2 * resident);
+
+  // Order matters and matches what shipped: a missing kernel beats everything,
+  // then force-naive, then the m < RM floor -- which force-rb does NOT lift,
+  // because below RM the blocked kernel is not slower, it is wrong.
+  if (!ctx.sgemm_rb_fn)               { c.why = "module has no sgemm_rb"; return c; }
+  if (env_forces("GRXBLAS_SGEMM_NAIVE", call)) { c.why = "forced naive"; return c; }
+  if (m < kSgemmRowsPerThread)        { c.why = "m < RM"; return c; }
+  if (env_forces("GRXBLAS_SGEMM_RB", call)) {
+    c.kernel = SgemmKernel::kRegisterBlocked;
+    c.why = "forced rb";
+    return c;
+  }
+  if (c.rule_rb) c.kernel = SgemmKernel::kRegisterBlocked;
+  return c;
+}
+
+// GRXBLAS_SGEMM_TRACE=<path>: what the library ACTUALLY DID, one line per call.
+//
+// tests/bench/block_cycles.cpp labels its results with the configuration it
+// ASKED FOR and says in a comment that it cannot tell whether the request took
+// effect -- the register-blocked kernel is an optional symbol lookup and falls
+// back silently. A label that records the request is a label that survives the
+// request being ignored. This records the answer instead.
+//
+// Buffered to memory and written once at exit, so that file I/O can never land
+// between two launches and become part of what is being measured.
+struct SgemmTraceLine {
+  uint64_t call;
+  int      m, n, k, batch, transa, transb;
+  bool     rb, rule_rb;
+  unsigned grid, block;
+  const char* why;
+};
+
+class SgemmTrace {
+ public:
+  ~SgemmTrace() {
+    const char* path = std::getenv("GRXBLAS_SGEMM_TRACE");
+    if (!path || lines_.empty()) return;
+    std::FILE* f = std::fopen(path, "w");
+    if (!f) return;
+    std::fprintf(f, "call,m,n,k,batch,transa,transb,kernel,rule,grid,block,why\n");
+    for (const SgemmTraceLine& l : lines_)
+      std::fprintf(f, "%llu,%d,%d,%d,%d,%d,%d,%s,%s,%u,%u,%s\n",
+                   (unsigned long long)l.call, l.m, l.n, l.k, l.batch,
+                   l.transa, l.transb, l.rb ? "rb" : "naive",
+                   l.rule_rb ? "rb" : "naive", l.grid, l.block, l.why);
+    std::fclose(f);
+  }
+  void add(const SgemmTraceLine& l) {
+    if (!std::getenv("GRXBLAS_SGEMM_TRACE")) return;
+    std::lock_guard<std::mutex> g(m_);
+    lines_.push_back(l);
+  }
+ private:
+  std::mutex m_;
+  std::vector<SgemmTraceLine> lines_;
+};
+
+SgemmTrace g_sgemm_trace;
 
 // One warp per block, so one slot per block. Kept as a function because the
 // launch geometry below has to agree with it exactly, and two places computing
@@ -1066,57 +1201,18 @@ static grxblasStatus_t sgemm_batched(grxblasHandle_t handle,
   args.stride_b = (int64_t)strideB;
   args.stride_c = (int64_t)strideC;
 
-  // WHICH KERNEL, and why the choice is a threshold rather than "always the
-  // fast one".
+  // The rule and both overrides live in decide_sgemm_kernel, above. They are
+  // there rather than here so that the trace reads the SAME function the launch
+  // does: a trace that recomputed the choice could describe a kernel other than
+  // the one that ran, which is the failure it was built to end.
   //
-  // sgemm_rb gives each thread RM = 4 outputs down a column, so it launches a
-  // quarter of the threads and loads B once per four multiply-adds instead of
-  // once each. It buys that with a fixed per-thread cost -- four row indices,
-  // four accumulators, four stores -- which is paid once and amortised over the
-  // k loop. At m < RM it is pure waste, every thread but one discarding.
-  //
-  // SO IT ALSO LOSES WHEN k IS SMALL, and that is measured, not guessed. On the
-  // transformer block (tests/bench/block_cycles.cpp, one SM, four lanes),
-  // blocked against reference over the same stages:
-  //
-  //   stage        m    k     naive -> blocked        ratio
-  //   mlp GEMM 2   16   64     70031 -> 43253          1.62x
-  //   mlp GEMM 1   64   16     84379 -> 53614          1.57x
-  //   qkv proj      8   16     62815 -> 45236          1.39x
-  //   out proj     16    8     13056 -> 10171          1.28x
-  //   attention     8    8     13834 -> 17690          0.78x  -- SLOWER
-  //
-  // k ALONE DOES NOT EXPLAIN THAT. The output projection has k = 8 and is 1.28x
-  // faster; attention has k = 8 and is slower. They differ in m: 16 against 8.
-  //
-  // The mechanism is coalescing. Thread `sub` owns column `idx / row_blocks`,
-  // so once row_blocks drops below the warp width the column changes WITHIN a
-  // warp and consecutive lanes stop writing consecutive addresses. At warp 4
-  // and RM 4 that boundary is exactly m = 16 -- which is where the output
-  // projection sits and attention does not.
-  //
-  // So blocking pays when EITHER the k loop amortises the setup OR the stores
-  // stay coalesced, and attention is the only stage here with neither.
-  //
-  // FITTED TO FIVE POINTS ON ONE CONFIGURATION, and provisional. The k
-  // crossover is bracketed by 8 and 16 with nothing swept between; the
-  // coalescing boundary has a mechanism behind it but only one measurement
-  // either side. A shape near either edge gets the reference kernel: correct,
-  // merely not the fastest, which is the right way round.
-  //
-  // GRXBLAS_SGEMM_NAIVE=1 forces the reference. tests/libs/test_grxblas_rb.cpp
-  // uses it to run both kernels over the same operands and compare them, which
-  // is what makes the naive one an oracle rather than merely a fallback.
-  const bool force_naive = std::getenv("GRXBLAS_SGEMM_NAIVE") != nullptr;
-  // The other direction, and it exists so the RULE below can be measured
-  // rather than believed. tests/bench/sgemm_sweep.cpp runs the blocked kernel
-  // at shapes the rule declines, which is the only way to find out whether
-  // declining them was right. Never consulted unless it is set.
-  const bool force_rb = std::getenv("GRXBLAS_SGEMM_RB") != nullptr;
-  const int row_blocks = (m + kSgemmRowsPerThread - 1) / kSgemmRowsPerThread;
-  const bool rb_pays = (k >= kSgemmMinK) || (row_blocks >= prop.warpSize);
-  const bool use_rb = ctx->sgemm_rb_fn && !force_naive &&
-                      m >= kSgemmRowsPerThread && (rb_pays || force_rb);
+  // The index is taken here, after validation and before the decision, so that
+  // two runs of the same program number the same calls the same way -- which is
+  // what makes "#3" mean one stage of the block.
+  const uint64_t call = g_sgemm_calls.fetch_add(1, std::memory_order_relaxed);
+  const SgemmChoice choice =
+      decide_sgemm_kernel(*ctx, prop, m, n, k, batch, call);
+  const bool use_rb = choice.kernel == SgemmKernel::kRegisterBlocked;
 
   const unsigned block = (unsigned)prop.warpSize;
   const unsigned outputs = use_rb
@@ -1134,6 +1230,10 @@ static grxblasStatus_t sgemm_batched(grxblasHandle_t handle,
       return GRXBLAS_STATUS_INVALID_VALUE;
     args.cycles = (uint64_t)(uintptr_t)ctx->probe;
   }
+
+  g_sgemm_trace.add(SgemmTraceLine{call, m, n, k, batch, (int)transa,
+                                   (int)transb, use_rb, choice.rule_rb, grid,
+                                   block, choice.why});
 
   e = grxLaunchFunction(use_rb ? ctx->sgemm_rb_fn : ctx->sgemm_fn,
                         dim3_t{grid, (unsigned)batch, 1},

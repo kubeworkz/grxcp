@@ -1,0 +1,225 @@
+#!/usr/bin/env python3
+"""Does grxBLAS pick the right sgemm kernel for the block, IN THE BLOCK?
+
+tests/bench/sgemm_sweep.cpp answers the same question for GEMMs measured alone.
+That is not the same question, and for most of a year the two appeared to give
+opposite answers: the sweep said blocking wins at attention's 8x8x8 batch-2
+shape by 1.39x, and the block profile said shipping that rule cost 3766 cycles.
+The rule that loses in isolation was kept on the strength of the block number.
+
+The block number was wrong. Attention is four launches sharing one probe
+buffer, MCYCLE restarts at zero at every launch, and the "cost of attention"
+was a maximum over four unrelated clocks -- see include/grx/grx_cycles.h. The
+conflict was never real.
+
+WHAT THIS DOES INSTEAD, and why it is not just the sweep again. It runs the
+whole transformer block, flips EXACTLY ONE of its sgemm calls to the other
+kernel, and runs it again -- once per call, at every shape the bench measures.
+Nothing else moves. That is the only way to price one stage's kernel choice
+where the stage actually lives, next to the launches it shares a machine with.
+
+Calls are selected by INDEX, not by shape, because shape does not tell the
+block's stages apart: at S=8 attention's two GEMMs are both 8x8x8, and at S=16
+the qkv projection and attention's output GEMM are both 8x16x16. See the
+measurement-hook note in src/libs/grxblas/grxblas.cpp.
+
+THE GATE: no single flip may make the block faster. A flip that helps is the
+rule picking the slower kernel for that call, in place, with everything else
+held still -- which is the only kind of wrongness that can make a program
+slower than it was before the tuned kernel existed. Declining a win is
+reported, not gated, for the same reason the isolated sweep does that.
+"""
+
+import argparse
+import csv
+import json
+import os
+import subprocess
+import sys
+import tempfile
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(HERE)
+
+
+def totals_of(doc):
+    """Block total per shape, from the same valid stages the bench reports."""
+    return [sum(st["span"] for st in sh["stages"] if st["valid"])
+            for sh in doc["shapes"]]
+
+
+def score(baseline, flips):
+    """Which flips made the block FASTER, ranked. Pure, so it can be self-tested.
+
+    `flips` is a list of dicts with 'call', 'shape', 'to' and 'totals'. A flip
+    is scored per shape, because a call belongs to one shape and leaves the
+    others untouched -- summing across shapes would dilute a real loss by the
+    zeros of every shape the call is not in.
+    """
+    helped, hurt = [], []
+    for f in flips:
+        best = None
+        for i, (b, t) in enumerate(zip(baseline, f["totals"])):
+            d = t - b
+            if d == 0:
+                continue
+            if best is None or abs(d) > abs(best[1]):
+                best = (i, d)
+        if best is None:
+            continue
+        rec = dict(f, shape_index=best[0], delta=best[1])
+        (helped if best[1] < 0 else hurt).append(rec)
+    helped.sort(key=lambda r: r["delta"])
+    hurt.sort(key=lambda r: -r["delta"])
+    return helped, hurt
+
+
+def run_block(binary, env_extra, out_json, trace=None):
+    env = dict(os.environ)
+    for k in ("GRXBLAS_SGEMM_RB", "GRXBLAS_SGEMM_NAIVE", "GRXBLAS_SGEMM_TRACE"):
+        env.pop(k, None)
+    env.update(env_extra)
+    if trace:
+        env["GRXBLAS_SGEMM_TRACE"] = trace
+    r = subprocess.run([binary, "--out", out_json], env=env,
+                       capture_output=True, text=True)
+    if r.returncode == 77:
+        return None, 77
+    if r.returncode != 0:
+        sys.stdout.write(r.stdout[-2000:])
+        return None, r.returncode
+    with open(out_json) as f:
+        return json.load(f), 0
+
+
+def sweep(binary, out_path=None):
+    tmp = tempfile.mkdtemp(prefix="blocksweep.")
+    trace = os.path.join(tmp, "census.csv")
+    base, rc = run_block(binary, {}, os.path.join(tmp, "base.json"), trace)
+    if rc == 77:
+        print("  no device or no kernels; skipping")
+        return 77
+    if base is None:
+        print("  the block bench failed before any flip was tried")
+        return rc or 1
+    baseline = totals_of(base)
+    with open(trace) as f:
+        census = list(csv.DictReader(f))
+
+    print(f"  the block issues {len(census)} sgemm calls; "
+          f"baseline totals {baseline}")
+    print(f"  {'call':>4}  {'shape':<16} {'from':>5} -> {'to':<5} "
+          f"{'d(block)':>9}  which shape")
+
+    flips = []
+    for row in census:
+        call = int(row["call"])
+        if row["why"] == "m < RM":
+            # Not a choice: below RM the blocked kernel is wrong, not slow.
+            print(f"  {call:>4}  {row['m']}x{row['n']}x{row['k']:<10} "
+                  f"     not a choice (m < RM)")
+            continue
+        to_rb = row["kernel"] == "naive"
+        var = "GRXBLAS_SGEMM_RB" if to_rb else "GRXBLAS_SGEMM_NAIVE"
+        doc, rc = run_block(binary, {var: f"#{call}"},
+                            os.path.join(tmp, f"f{call}.json"))
+        if doc is None:
+            print(f"  {call:>4}  flip failed (rc={rc})")
+            return rc or 1
+        t = totals_of(doc)
+        shape = (f'{row["m"]}x{row["n"]}x{row["k"]}'
+                 + (f'b{row["batch"]}' if row["batch"] != "1" else "")
+                 + ("T" if row["transa"] == "1" else ""))
+        flips.append(dict(call=call, shape=shape, frm=row["kernel"],
+                          to="rb" if to_rb else "naive", totals=t))
+        d = [t[i] - baseline[i] for i in range(len(baseline))]
+        worst = max(range(len(d)), key=lambda i: abs(d[i]))
+        which = (f'S={base["shapes"][worst]["seq"]}'
+                 if d[worst] else "no shape moved")
+        print(f"  {call:>4}  {shape:<16} {row['kernel']:>5} -> "
+              f"{('rb' if to_rb else 'naive'):<5} {d[worst]:>+9d}  {which}")
+
+    helped, hurt = score(baseline, flips)
+    print()
+    print(f"  {len(flips)} calls flipped, one at a time.")
+    print(f"  {len(hurt)} flips made the block slower "
+          f"(the rule was right on those).")
+    print(f"  {len(helped)} made it FASTER (the rule picked the slower "
+          f"kernel there).")
+    if helped:
+        for h in helped:
+            print(f"      call {h['call']} {h['shape']}: {h['frm']} -> "
+                  f"{h['to']} saves {-h['delta']} cycles")
+
+    if out_path:
+        with open(out_path, "w") as f:
+            json.dump(dict(baseline=baseline, flips=flips), f, indent=1)
+        print(f"  wrote {out_path}")
+
+    ok = not helped
+    print()
+    print(f"  {'ok  ' if ok else 'FAIL'}  no single call's kernel choice can be "
+          f"improved by flipping it in place")
+    return 0 if ok else 1
+
+
+def self_test():
+    """The scoring, without a device. Planted answers, checked both ways."""
+    fails = 0
+
+    def check(what, got, want):
+        nonlocal fails
+        ok = got == want
+        print(f"  {'ok  ' if ok else 'FAIL'}  {what}")
+        if not ok:
+            print(f"          got {got!r}, wanted {want!r}")
+            fails += 1
+
+    base = [1000, 2000]
+    # A flip that costs on shape 0 and does nothing on shape 1: the rule was
+    # right, and the untouched shape must not dilute it.
+    helped, hurt = score(base, [dict(call=1, shape="a", to="naive",
+                                     totals=[1100, 2000])])
+    check("a flip that costs is scored as the rule being right",
+          (len(helped), len(hurt)), (0, 1))
+    check("and it is priced on the shape it moved", hurt[0]["delta"], 100)
+
+    # A flip that helps must be caught even when another shape moved further
+    # in the other direction -- summing would hide it.
+    helped, _ = score(base, [dict(call=2, shape="b", to="rb",
+                                  totals=[900, 2000])])
+    check("a flip that helps is caught", len(helped), 1)
+    check("and named with the saving", helped[0]["delta"], -100)
+
+    # Ranking: the biggest saving first, not the first one seen.
+    helped, _ = score(base, [
+        dict(call=3, shape="c", to="rb", totals=[990, 2000]),
+        dict(call=4, shape="d", to="rb", totals=[500, 2000]),
+    ])
+    check("savings are ranked by size", [h["call"] for h in helped], [4, 3])
+
+    # A flip that moves nothing at all is not evidence either way.
+    helped, hurt = score(base, [dict(call=5, shape="e", to="rb",
+                                     totals=[1000, 2000])])
+    check("a flip that moves nothing is not counted",
+          (len(helped), len(hurt)), (0, 0))
+    return 1 if fails else 0
+
+
+def main(argv):
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--bin", help="path to the block_cycles bench")
+    ap.add_argument("--json", help="write the measured flips here")
+    ap.add_argument("--self-test", action="store_true",
+                    help="check the scoring without a device")
+    a = ap.parse_args(argv[1:])
+    if a.self_test:
+        return self_test()
+    if not a.bin:
+        print("error: --bin <block_cycles> is required", file=sys.stderr)
+        return 2
+    return sweep(a.bin, a.json)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

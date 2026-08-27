@@ -79,6 +79,11 @@ ABI_HEADERS = [
     # Read by include/grx/device/grx_tex.h, which every sampling kernel
     # includes -- so the host writes this and the device reads it.
     ("grx/grx_texture.h", ROOT / "include/grx/grx_texture.h", True),
+    # grxCycleSlot is written by the DEVICE (include/grx/device/grx_cycles.h
+    # includes this) and read by the host summariser, so its layout has to
+    # agree across the boundary like any other argument block. It was missing
+    # from this list until a field was added to the header beside it.
+    ("grx/grx_cycles.h", ROOT / "include/grx/grx_cycles.h", True),
     ("grxblas/sgemm_abi.h", ROOT / "src/libs/grxblas/sgemm_abi.h", True),
     ("grxblas/blas12_abi.h", ROOT / "src/libs/grxblas/blas12_abi.h", True),
     ("grxblas/hgemm_abi.h", ROOT / "src/libs/grxblas/hgemm_abi.h", True),

@@ -158,6 +158,34 @@ grxdnnStatus_t grxdnnSetCycleProbe(grxdnnHandle_t handle,
 // warps, each going round many times.
 int grxdnnCycleSlotsNeeded(grxdnnHandle_t handle, int rows);
 
+// One launch's slice of the probe buffer, as the last instrumented grxDNN call
+// left it.
+typedef struct {
+  int         offset;   // first slot index in the buffer the caller attached
+  int         slots;    // slots RESERVED for that launch
+  const char* name;     // which launch, for a report; static storage
+} grxdnnCycleRegion_t;
+
+// Where each launch of the last instrumented call wrote.
+//
+// This exists because a grxDNN call is not always one launch and MCYCLE
+// restarts at zero at every launch. A caller holding one probe buffer after an
+// attention forward has four launches' slots in it on four different clocks;
+// summarising the buffer gives a number that looks like a duration and is not
+// one. So the library reports the boundaries rather than leaving the caller to
+// rederive them from grxdnnCycleSlotsNeeded, which is how the two would drift.
+//
+// `slots` is what was RESERVED, not what was written: grxBLAS may pick a kernel
+// with a smaller grid than the reservation assumed, and the unwritten slots stay
+// zero, which grxCycleSummarize already skips. The region still bounds it.
+//
+// Writes at most `max` entries and sets `*count` to how many there ARE, so a
+// caller can size a buffer and ask again. A call made with no probe attached
+// reports zero regions -- not an error, just nothing recorded.
+grxdnnStatus_t grxdnnGetCycleRegions(grxdnnHandle_t handle,
+                                     grxdnnCycleRegion_t* out, int max,
+                                     int* count);
+
 // ---------------------------------------------------------------------------
 // Bias broadcast
 // ---------------------------------------------------------------------------
@@ -261,10 +289,18 @@ grxdnnStatus_t grxdnnAttentionWorkspaceSize(int batch, int heads, int seqLen,
 //
 // More than one launch's worth: attention is four launches -- the scores GEMM,
 // the mask, the softmax, the output GEMM -- and each writes its own region of
-// the probe buffer so none overwrites another's start. Summarising the whole
-// buffer afterwards therefore gives the span of all four, which is attention's
-// cost as a caller experiences it. A probe too small for that is refused rather
-// than silently recording one launch out of four.
+// the probe buffer so none overwrites another's start. A probe too small for
+// that is refused rather than silently recording one launch out of four.
+//
+// SUMMARISE EACH REGION, NOT THE BUFFER. This comment used to end "summarising
+// the whole buffer afterwards therefore gives the span of all four, which is
+// attention's cost as a caller experiences it", and that was wrong. MCYCLE
+// restarts at zero at every launch (grx_cycles.h), so the four regions carry
+// four unrelated clocks and a span across them is a maximum, not a duration --
+// on a 1-SM device the combined buffer reports 64 warps live at once where the
+// machine holds 16. grxdnnGetCycleRegions says where each launch's slots are;
+// summarise them one at a time and add the spans, because the launches are
+// ordered on one stream.
 int grxdnnAttentionCycleSlotsNeeded(grxdnnHandle_t handle, int batch, int heads,
                                     int seqLen, int headDim);
 
