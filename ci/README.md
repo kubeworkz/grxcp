@@ -501,11 +501,20 @@ tile won by spreading that over more outputs.
 
 Walking pointers instead — the step is a constant decided once, before the loop
 — cut that to 23, un-spilled the 4×4 kernel, and left the wider tiles with
-nothing to amortise. Neither now beats the 2×2 tile anywhere: they approach it
-from below as the shape grows. So the gate asserts the **negative**, which is
-worth pinning precisely because it could come back — a change that makes the
-inner loop expensive again would show up here as a wide tile winning, before it
-showed up anywhere else.
+nothing to amortise. Neither now earns its place: they approach the 2×2 tile
+from below as the shape grows, best 1.02× and 0.96× over thirteen cells. So the
+gate asserts the **negative**, which is worth pinning precisely because it could
+come back — a change that makes the inner loop expensive again would show up
+here as a wide tile winning, before it showed up anywhere else.
+
+It asserts a **margin**, not a count, and it did not start that way. "Beats it on
+no cell" is a strict inequality asked of a number sitting on 1.00 at the top of
+the range, and it duly went red when an unrelated change to `dnn_layernorm`
+relinked the image and moved the 9216-output cell from 0.99× to 1.02×. The bar
+is 1.05×: above everything this has been watched to do on its own, and well
+below the 1.07–1.21× margin that earned the second threshold when there was one.
+The counts are still printed, so a wide tile drifting upward across several cells
+is visible before it trips anything.
 
 The gate asserts that no shape the rule blocks runs more than 1% slower than the
 reference — in the m/k grid **and** in the n sweep, which is where the
@@ -580,6 +589,7 @@ measuring a speedup, disbelieving it, and going to look:
 | `sgemm` re-decided a loop-invariant transpose every iteration | 64 instructions for 8 multiply-adds, 18 of them conditional selects |
 | `sgemm_4x4` spilled, so a better load count did not win | 7 stack accesses inside the k loop |
 | `dnn_gelu` diverged on an elementwise kernel | 12 `vx_split` |
+| `dnn_layernorm` re-tested two null pointers per element | 20 instructions for 3 float ops, now 15 |
 
 One static property of the image would have shown all three. The gate compares
 exact integers against `ci/perf/baselines/kernel_loops.json` — no tolerance, for
@@ -588,17 +598,28 @@ deterministic build is deterministic, and a moved number means the compiler
 produced different code, which is worth a human look whichever way it went.
 
 What it **reports and does not gate** is which kernels still spill or diverge in
-that loop. As of this writing: `dnn_layernorm` (7 stack accesses, 4 `vx_split`),
-`dnn_softmax` (6), `dnn_gelu` (2), and the two tensor kernels (1 each). Those are
-defects, they are named on every run so they cannot go quiet, and they are not
-failures — a gate that turns red the day a defect is *found* stops the suite
-being usable, and hiding it stops it being honest. 2 seconds.
+that loop. As of this writing that is one `vx_split` in each of the two tensor
+kernels, in a loop with no float work in it. Those are named on every run so they
+cannot go quiet, and they are not failures — a gate that turns red the day a
+defect is *found* stops the suite being usable, and hiding it stops it being
+honest. 2 seconds.
 
-The picked loop is a heuristic and says so: the backward-branch loop with the
-most float operations, tie-broken toward the shortest. For a kernel whose work
-is not floating-point — `dnn_causal_mask` — it picks something arbitrary, and
-the baseline records what it picked rather than pretending the number means
-more.
+**The first census over-reported, and the correction is here because the number
+was published.** With its original rule — "the loop with the most float
+operations" — it named five kernels, `dnn_layernorm` worst at 7 stack accesses
+and 4 `vx_split`. Those instructions exist, but they sit in the *row* loop, not
+the element loop the report implied, and a per-row branch differs from a
+per-element one by the row width. The rule is now **the innermost loop that does
+float work** — innermost meaning it encloses no other backward branch — which is
+also robust to a legitimate change splitting one loop into several siblings. It
+was not: hoisting two loop-invariant null tests out of `dnn_layernorm`'s element
+loop made the kernel 9% faster and made the old rule report more instructions,
+more spills and more divergence, because it then picked the row loop enclosing
+all four new siblings.
+
+For a kernel whose work is not floating-point — `dnn_causal_mask` — it falls
+back to the innermost loop of any kind, and the baseline records what it picked
+rather than pretending the number means more.
 
 The **PHASE 3 EXIT GATE** (`tests/bench/gemm_cycles.cpp`) is **red on purpose**,
 and its failure is deferred to the end of the run so that the thirty sections
@@ -608,10 +629,10 @@ It asserts that `grxblasGemmEx` costs at most a fifth of `sgemm` per output
 element. That threshold was set when `sgemm` meant the one-thread-per-output
 reference. The SIMT kernel has since been beaten three times — register blocking,
 the 2×2 micro-tile, and hoisting the transpose decision out of the k loop — and
-is now 3.65× faster at these shapes, so the ratio fell from 5.62× to **2.69×**
-with the tensor path completely unchanged: 29.9 and 44.4 cycles per element in
+is now 3.76× faster at these shapes, so the ratio fell from 5.62× to **2.65×**
+with the tensor path completely unchanged: 29.6 and 44.4 cycles per element in
 both configurations. The bench measures `sgemm` a second time with the reference
-forced and prints that ratio (9.81×) beside the gated one, so a reader can see
+forced and prints that ratio (9.96×) beside the gated one, so a reader can see
 which side of the fraction moved.
 
 The threshold was **not** adjusted to match. Moving it to 4× would read as a

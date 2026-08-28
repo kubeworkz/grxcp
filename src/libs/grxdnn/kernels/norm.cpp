@@ -147,12 +147,29 @@ __global__ void dnn_layernorm(grxdnn_layernorm_args* __UNIFORM__ arg) {
     const float var = tile.reduce(v, cg::plus<float>()) * inv_n;
     const float scale = dev_rsqrt(var + eps);
 
-    // Pass 3: write.
-    for (uint32_t j = m.lane; j < cols; j += m.width) {
-      float t = (xr[j] - mean) * scale;
-      if (gamma) t *= gamma[j];
-      if (beta)  t += beta[j];
-      yr[j] = t;
+    // Pass 3: write, with the two null tests HOISTED OUT of the element loop.
+    //
+    // They used to be inside it -- `if (gamma) t *= gamma[j];` -- and gamma and
+    // beta are kernel ARGUMENTS: the same for every element, every lane and
+    // every row. The compiler kept them anyway, and a branch inside a
+    // per-element loop is warp divergence on this machine. ci/check_kernel_loops.py
+    // found it: this kernel's hot loop carried four vx_split and seven stack
+    // accesses, the worst of any kernel in the image.
+    //
+    // Four copies of a two-operation loop is the price, and dnn_gelu already
+    // pays it for its mode argument for the same reason.
+    if (gamma && beta) {
+      for (uint32_t j = m.lane; j < cols; j += m.width)
+        yr[j] = (xr[j] - mean) * scale * gamma[j] + beta[j];
+    } else if (gamma) {
+      for (uint32_t j = m.lane; j < cols; j += m.width)
+        yr[j] = (xr[j] - mean) * scale * gamma[j];
+    } else if (beta) {
+      for (uint32_t j = m.lane; j < cols; j += m.width)
+        yr[j] = (xr[j] - mean) * scale + beta[j];
+    } else {
+      for (uint32_t j = m.lane; j < cols; j += m.width)
+        yr[j] = (xr[j] - mean) * scale;
     }
   }
 }

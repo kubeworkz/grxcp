@@ -424,11 +424,11 @@ What is left before the phase 3 exit gate: WGMMA warp groups (needs
 `pipeline<Stages>` structure, and the blocked grxBLAS kernel that composes
 tensor cores with async staging.
 
-**Phase 3 exit gate: NO LONGER MET — 2.69× against a 5× threshold, and the
+**Phase 3 exit gate: NO LONGER MET — 2.65× against a 5× threshold, and the
 threshold has not been moved.** `grxblasGemmEx` (fp16 in, fp32 accumulate)
 composes the tensor unit with DXA staging and is exact against a CPU reference
 on every shape including ragged ones. What it no longer does is cost less than a
-fifth of sgemm per output element — because **sgemm got 3.65× faster**, three
+fifth of sgemm per output element — because **sgemm got 3.76× faster**, three
 times over, and the gate is a ratio between two things that both move.
 
 | shape | sgemm cyc/elem | GemmEx cyc/elem | vs tuned sgemm | vs reference sgemm |
@@ -436,10 +436,10 @@ times over, and the gate is a ratio between two things that both move.
 | 16 x 16 x 16 | 50.2 | 34.1 | 1.47× (starved) | 4.84× |
 | 16 x 16 x 32 | 80.7 | 41.7 | 1.94× (starved) | 7.16× |
 | 16 x 16 x 64 | 142.5 | 56.8 | 2.51× (starved) | 9.74× |
-| 32 x 32 x 32 | 80.5 | 29.9 | **2.69×** | 9.81× |
+| 32 x 32 x 32 | 78.5 | 29.6 | **2.65×** | 9.96× |
 | 32 x 32 x 64 | 141.2 | 44.4 | 3.18× | 12.41× |
 
-The tensor path did not regress: 29.9 and 44.4 cycles per element are what it
+The tensor path did not regress: 29.6 and 44.4 cycles per element are what it
 read before the SIMT work as well. On three of five shapes the tensor unit is
 now within 2.5× of a SIMT kernel, which is a fact about how little of the core
 the single-CTA workaround lets it use rather than about the unit. The two columns on the right are printed by
@@ -1349,6 +1349,36 @@ has been bitten by twice.
 
 **Whole block: 2.17× at S = 8 and 2.24× at S = 16** against the reference
 kernel — 339812 → 156626 and 729205 → 325710.
+
+**And then the same lesson a third time, in layer norm.** Its pass-3 element
+loop re-tested two null pointers on every element:
+
+```
+if (gamma) t *= gamma[j];
+if (beta)  t += beta[j];
+```
+
+`gamma` and `beta` are kernel arguments — the same for every element, every lane
+and every row — and hoisting the tests into four sibling loops made the stage
+**9% faster** (7783 → 7049 and 7812 → 7320 at S = 8). Whole block 156626 →
+155435, and 329410 → 320073 at S = 16.
+
+**The gate that found it also over-reported, and that is on the record.**
+`ci/check_kernel_loops.py` originally picked "the loop with the most float
+operations" as the hot one. On that rule it named five kernels as spilling or
+diverging, `dnn_layernorm` worst at 7 stack accesses and 4 `vx_split` — and
+those instructions exist, but in the *row* loop rather than the element loop the
+report implied. A per-row branch and a per-element branch differ by the row
+width; saying so is the difference between a census and a scare.
+
+The rule is now the **innermost** loop that does float work. It had to change
+anyway: splitting one element loop into four siblings made the old rule pick the
+row loop enclosing all four, so it reported more instructions, more spills and
+more divergence for a change that made the kernel 9% faster. A heuristic that
+reads a genuine improvement as a regression is not measuring what it names.
+
+Corrected, the only divergence left anywhere in the image is one `vx_split` in
+each of the two tensor kernels, in a loop with no float work in it.
 
 **Fusing the bias into the GEMM epilogue would save about 2%.** That was the
 obvious next optimisation before anyone measured, and the measurement says not

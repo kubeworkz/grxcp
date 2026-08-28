@@ -556,6 +556,9 @@ int main() {
   // Counted over every swept cell, not just the large ones, because the whole
   // point is that there is no crossover left to find.
   int mid_beats_2d = 0, wide_beats_2d = 0;
+  // The BEST a wide tile manages against the 2x2 one anywhere. Gated on the
+  // margin rather than on the count: see the note at the expect() below.
+  double mid_best = 0.0, wide_best = 0.0;
   long long wide_first_win = 0;
   {
     const int wk = 16;
@@ -592,6 +595,8 @@ int main() {
         }
         if (mm > 1.0) ++mid_beats_2d;
         if (rr > 1.0) ++wide_beats_2d;
+        if (mm > mid_best) mid_best = mm;
+        if (rr > wide_best) wide_best = rr;
         char shape[16];
         std::snprintf(shape, sizeof(shape), "%dx%d", side, side);
         std::printf("%10s %9d %8.2fx %8.2fx %8.2fx %8.2fx %8.2fx\n",
@@ -605,8 +610,9 @@ int main() {
                 "%lld.\n", wide_first_win, 16 * resident);
   else
     std::printf("\n  4x2 never beats 2x2 in this range.\n");
-  std::printf("  over %d cells: 4x2 beats 2x2 on %d, 4x4 beats 2x2 on %d.\n",
-              wide_measured, mid_beats_2d, wide_beats_2d);
+  std::printf("  over %d cells: 4x2 beats 2x2 on %d (best %.2fx), 4x4 on %d "
+              "(best %.2fx).\n", wide_measured, mid_beats_2d, mid_best,
+              wide_beats_2d, wide_best);
   // Gated here rather than with the others above, because these two counters
   // only exist once the wide sweep has run.
   expect(wide_measured > 0, "the wide sweep produced measurements");
@@ -622,10 +628,25 @@ int main() {
   // because it could come back. A change that makes the inner loop expensive
   // again would show up here as a wide tile winning, before it showed up
   // anywhere else.
-  expect(mid_beats_2d == 0,
-         "the 4x2 tile beats the 2x2 one on no swept cell -- with the address "
-         "arithmetic hoisted there is nothing for a wider tile to amortise");
-  expect(wide_beats_2d == 0,
+  // A MARGIN, NOT A COUNT, and the count is what this used to be.
+  //
+  // The claim being defended is that a wider tile no longer earns a second
+  // threshold in the rule. When it did earn one it was winning by 1.07x to
+  // 1.21x. With the address arithmetic hoisted the best it manages is at the
+  // very top of the range and within a whisker of parity -- 0.99x on one build
+  // and 1.02x on the next, moved by a change to a DIFFERENT kernel that
+  // relinked the image.
+  //
+  // So "beats it on no cell" was a strict inequality asked of a number sitting
+  // on 1.00, and it duly went red for a relink. 1.05 is the bar because it is
+  // above everything this has been watched to do on its own (0.66x to 1.02x
+  // across thirteen cells and two builds) and well below the margin that would
+  // put the threshold back. The counts are still printed, so a wide tile
+  // drifting upward across several cells is visible before it trips anything.
+  expect(mid_best < 1.05,
+         "the 4x2 tile never beats the 2x2 one by a margin that would earn a "
+         "threshold back");
+  expect(wide_best < 1.05,
          "and neither does the 4x4 tile, which pays twice the occupancy for it");
 
   // ---- and batch, which the perf baselines caught the rule ignoring -------

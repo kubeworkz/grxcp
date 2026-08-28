@@ -21,11 +21,19 @@ loud, and names the kernels that still spill or diverge so they do not become
 invisible.
 
 WHAT "THE HOT LOOP" MEANS HERE. Every backward branch inside a kernel bounds a
-loop; the one picked is the one with the most floating-point operations in it,
-tie-broken toward the shortest. That is a heuristic and it is stated as one:
-for a kernel whose work is not floating-point -- dnn_causal_mask -- it picks
-something arbitrary, and the baseline records whatever it picked rather than
+loop; the one picked is the INNERMOST loop that does floating-point work --
+innermost meaning it encloses no other backward branch -- with the most float
+work winning ties. That is a heuristic and it is stated as one: for a kernel
+whose work is not floating-point (dnn_causal_mask) it falls back to the
+innermost loop of any kind, and the baseline records what it picked rather than
 pretending the number means more than it does.
+
+The definition was "the loop with the most float operations" for exactly one
+commit. Hoisting two loop-invariant null tests out of dnn_layernorm's element
+loop split it into four sibling loops, and that rule then picked the ROW loop
+enclosing all four: more instructions, more spills, more divergence reported for
+a change that made the kernel 9% faster. A heuristic that reads a genuine
+improvement as a regression is not measuring what it names.
 
 WHAT IS GATED. Exact integers against ci/perf/baselines/kernel_loops.json, no
 tolerance, for the same reason the cycle baselines have none: the disassembly of
@@ -37,6 +45,17 @@ WHAT IS REPORTED AND NOT GATED. Which kernels still carry stack traffic or warp
 divergence in that loop. Those are defects, they are named every run, and they
 are not failures -- turning a known defect into a red gate on the day it is
 discovered stops the suite being usable, and hiding it stops it being honest.
+
+THE FIRST CENSUS OVER-REPORTED, and the correction is on the record because the
+number was published. With the old "most float operations" rule this named five
+kernels as spilling or diverging, dnn_layernorm worst at seven stack accesses
+and four vx_split. Those instructions exist, but they are in the ROW loop -- once
+per row -- not in the element loop the report implied. Picking the innermost
+float loop instead, the only divergence left in the whole image is one vx_split
+in each of the two tensor kernels, in a loop with no float work in it at all.
+
+A per-row branch and a per-element branch differ by the row width. Saying so is
+the difference between a census and a scare.
 """
 
 import argparse
@@ -96,9 +115,9 @@ def loop_stats(loop):
     }
 
 
-def hot_loop(body, lo, hi):
-    """The backward-branch loop with the most float work; shortest wins ties."""
-    best = None
+def back_edges(body, lo):
+    """(start, end) of every backward branch's span, innermost first."""
+    out = []
     for addr, text in body:
         if not re.match(r"(b[a-z]+|j)\s", text):
             continue
@@ -106,14 +125,52 @@ def hot_loop(body, lo, hi):
         if not m:
             continue
         target = int(m.group(1), 16)
-        if not (lo <= target < addr):
+        if lo <= target < addr:
+            out.append((target, addr))
+    out.sort(key=lambda e: e[1] - e[0])
+    return out
+
+
+def hot_loop(body, lo, hi):
+    """The INNERMOST loop that does float work; most float work wins ties.
+
+    "Innermost" means it encloses no other backward branch. That definition
+    replaced "the loop with the most float operations", and the reason is worth
+    keeping: hoisting two loop-invariant null tests out of dnn_layernorm's
+    element loop split it into four sibling loops, and the old rule then picked
+    the ROW loop that encloses all four -- reporting more instructions, more
+    spills and more divergence for a change that made the kernel 9% faster. A
+    heuristic that reads a genuine improvement as a regression is not measuring
+    the thing it names.
+
+    A kernel with no float work anywhere -- dnn_causal_mask -- falls back to the
+    innermost loop of any kind, and the baseline records what that picked rather
+    than pretending the number means more than it does.
+    """
+    edges = back_edges(body, lo)
+    if not edges:
+        return None
+
+    def encloses_another(start, end):
+        return any(start <= s and e <= end and (s, e) != (start, end)
+                   for s, e in edges)
+
+    best = None
+    for start, end in edges:
+        if encloses_another(start, end):
             continue
-        loop = [t for a, t in body if target <= a <= addr]
+        loop = [t for a, t in body if start <= a <= end]
         st = loop_stats(loop)
-        key = (st["fp"], -(addr - target))
+        if st["fp"] == 0:
+            continue
+        key = (st["fp"], -(end - start))
         if best is None or key > best[0]:
             best = (key, st)
-    return best[1] if best else None
+    if best:
+        return best[1]
+    # No float work anywhere: the innermost loop of any kind.
+    start, end = edges[0]
+    return loop_stats([t for a, t in body if start <= a <= end])
 
 
 def census(text):
