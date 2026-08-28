@@ -567,6 +567,39 @@ attention's two GEMMs are both 8×8×8. `GRXBLAS_SGEMM_TRACE=<path>` writes what
 the library actually did, one line per call, which is what the block bench could
 not previously tell.
 
+The **KERNEL LOOP GATE** (`ci/check_kernel_loops.py`) pins the shape of what
+actually shipped: for each kernel in the device image, the innermost loop that
+does the float work, and what that loop is made of.
+
+It exists because every large finding in the tuning work was visible in this
+disassembly first, and none of them was found by looking — each was found by
+measuring a speedup, disbelieving it, and going to look:
+
+| what was wrong | what the census showed |
+|---|---|
+| `sgemm` re-decided a loop-invariant transpose every iteration | 64 instructions for 8 multiply-adds, 18 of them conditional selects |
+| `sgemm_4x4` spilled, so a better load count did not win | 7 stack accesses inside the k loop |
+| `dnn_gelu` diverged on an elementwise kernel | 12 `vx_split` |
+
+One static property of the image would have shown all three. The gate compares
+exact integers against `ci/perf/baselines/kernel_loops.json` — no tolerance, for
+the same reason the cycle baselines have none: the disassembly of a
+deterministic build is deterministic, and a moved number means the compiler
+produced different code, which is worth a human look whichever way it went.
+
+What it **reports and does not gate** is which kernels still spill or diverge in
+that loop. As of this writing: `dnn_layernorm` (7 stack accesses, 4 `vx_split`),
+`dnn_softmax` (6), `dnn_gelu` (2), and the two tensor kernels (1 each). Those are
+defects, they are named on every run so they cannot go quiet, and they are not
+failures — a gate that turns red the day a defect is *found* stops the suite
+being usable, and hiding it stops it being honest. 2 seconds.
+
+The picked loop is a heuristic and says so: the backward-branch loop with the
+most float operations, tie-broken toward the shortest. For a kernel whose work
+is not floating-point — `dnn_causal_mask` — it picks something arbitrary, and
+the baseline records what it picked rather than pretending the number means
+more.
+
 The **PHASE 3 EXIT GATE** (`tests/bench/gemm_cycles.cpp`) is **red on purpose**,
 and its failure is deferred to the end of the run so that the thirty sections
 after it still execute.

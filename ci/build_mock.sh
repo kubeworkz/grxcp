@@ -128,6 +128,16 @@ echo "==> IN-SITU SWEEP SCORING: the block sgemm gate's logic, without a device"
 # summing across shapes instead of scoring the shape the call belongs to.
 python3 "$ROOT/ci/sweep_block_sgemm.py" --self-test
 
+echo
+echo "==> KERNEL LOOP CENSUS: the checker's own logic, without a toolchain"
+# ci/check_kernel_loops.py reads the disassembly of the shipped kernel image, so
+# it needs a device toolchain and runs in tier 2. What it DECIDES -- which loop
+# is the hot one, what counts as float work, whether a field moved -- is
+# arithmetic over text, and arithmetic that only ever runs on the one machine
+# with a toolchain is arithmetic nobody has watched fail. The self-test feeds it
+# a planted disassembly with a known spill and a known divergence.
+python3 "$ROOT/ci/check_kernel_loops.py" --self-test
+
 # Also before the build, and it compiles for four targets of its own. The kernel
 # argument structs are WRITTEN by the host and READ by the device; a disagreement
 # about one offset is not an error anywhere, the kernel just reads the blob where

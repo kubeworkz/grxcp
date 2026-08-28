@@ -1,0 +1,185 @@
+{
+ "kernels": {
+  "dnn_add_bias": {
+   "fp": 1,
+   "frame": 64,
+   "ins": 13,
+   "join": 0,
+   "loads": 2,
+   "size": 100,
+   "split": 0,
+   "stack": 0
+  },
+  "dnn_causal_mask": {
+   "fp": 0,
+   "frame": 64,
+   "ins": 8,
+   "join": 0,
+   "loads": 0,
+   "size": 93,
+   "split": 0,
+   "stack": 0
+  },
+  "dnn_gelu": {
+   "fp": 60,
+   "frame": 64,
+   "ins": 117,
+   "join": 1,
+   "loads": 4,
+   "size": 229,
+   "split": 2,
+   "stack": 0
+  },
+  "dnn_layernorm": {
+   "fp": 13,
+   "frame": 176,
+   "ins": 103,
+   "join": 4,
+   "loads": 2,
+   "size": 219,
+   "split": 4,
+   "stack": 7
+  },
+  "dnn_softmax": {
+   "fp": 41,
+   "frame": 112,
+   "ins": 157,
+   "join": 6,
+   "loads": 13,
+   "size": 259,
+   "split": 6,
+   "stack": 0
+  },
+  "hgemm_tcu": {
+   "fp": 3,
+   "frame": 128,
+   "ins": 31,
+   "join": 1,
+   "loads": 2,
+   "size": 278,
+   "split": 1,
+   "stack": 0
+  },
+  "hgemm_tcu_shape": {
+   "fp": 0,
+   "frame": 0,
+   "ins": 0,
+   "join": 0,
+   "loads": 0,
+   "size": 25,
+   "split": 0,
+   "stack": 0
+  },
+  "igemm_tcu": {
+   "fp": 0,
+   "frame": 144,
+   "ins": 10,
+   "join": 1,
+   "loads": 0,
+   "size": 279,
+   "split": 1,
+   "stack": 0
+  },
+  "igemm_tcu_shape": {
+   "fp": 0,
+   "frame": 0,
+   "ins": 0,
+   "join": 0,
+   "loads": 0,
+   "size": 26,
+   "split": 0,
+   "stack": 0
+  },
+  "saxpy": {
+   "fp": 0,
+   "frame": 48,
+   "ins": 0,
+   "join": 0,
+   "loads": 0,
+   "size": 80,
+   "split": 0,
+   "stack": 0
+  },
+  "sgemm": {
+   "fp": 1,
+   "frame": 64,
+   "ins": 24,
+   "join": 0,
+   "loads": 2,
+   "size": 136,
+   "split": 0,
+   "stack": 0
+  },
+  "sgemm_2d": {
+   "fp": 4,
+   "frame": 96,
+   "ins": 14,
+   "join": 0,
+   "loads": 4,
+   "size": 274,
+   "split": 0,
+   "stack": 0
+  },
+  "sgemm_4x2": {
+   "fp": 8,
+   "frame": 192,
+   "ins": 23,
+   "join": 0,
+   "loads": 6,
+   "size": 414,
+   "split": 0,
+   "stack": 0
+  },
+  "sgemm_4x4": {
+   "fp": 16,
+   "frame": 288,
+   "ins": 35,
+   "join": 0,
+   "loads": 8,
+   "size": 625,
+   "split": 0,
+   "stack": 0
+  },
+  "sgemm_rb": {
+   "fp": 4,
+   "frame": 176,
+   "ins": 53,
+   "join": 0,
+   "loads": 5,
+   "size": 276,
+   "split": 0,
+   "stack": 0
+  },
+  "sgemm_shape": {
+   "fp": 0,
+   "frame": 0,
+   "ins": 0,
+   "join": 0,
+   "loads": 0,
+   "size": 22,
+   "split": 0,
+   "stack": 0
+  },
+  "sgemv": {
+   "fp": 1,
+   "frame": 64,
+   "ins": 15,
+   "join": 0,
+   "loads": 2,
+   "size": 209,
+   "split": 0,
+   "stack": 0
+  },
+  "sscal": {
+   "fp": 0,
+   "frame": 48,
+   "ins": 0,
+   "join": 0,
+   "loads": 0,
+   "size": 69,
+   "split": 0,
+   "stack": 0
+  }
+ },
+ "note": "hot-loop census of the shipped kernel image; see ci/check_kernel_loops.py"
+}

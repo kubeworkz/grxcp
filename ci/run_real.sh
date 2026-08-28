@@ -815,6 +815,33 @@ else
 fi
 
 echo
+echo "==> KERNEL LOOP GATE: the shape of what actually shipped"
+# Every large finding in the tuning work was visible in this disassembly first,
+# and none of them was found by looking -- they were found by measuring a
+# speedup, disbelieving it, and going to look. sgemm's k loop re-deciding a
+# loop-invariant transpose (64 instructions for 8 multiply-adds, 18 of them
+# conditional selects); sgemm_4x4 spilling seven slots; dnn_gelu carrying twelve
+# vx_split on an elementwise kernel. One static property of the image would have
+# shown all three.
+#
+# Exact integers against a baseline, no tolerance: the disassembly of a
+# deterministic build is deterministic, and a moved number means the compiler
+# produced different code -- worth a human look whichever way it went.
+#
+# The kernels that still spill or diverge are REPORTED and not gated. They are
+# defects, they are named every run so they cannot go quiet, and a gate that
+# turns red the day a defect is found stops the suite being usable.
+#
+# 2 seconds.
+if [[ -n "$GRXGPU" && -d "$TOOLDIR/llvm-vortex" ]]; then
+  python3 "$ROOT/ci/check_kernel_loops.py" \
+    --vxbin "$BUILD/grxlibs_kernels.vxbin" \
+    --objdump "$TOOLDIR/llvm-vortex/bin/llvm-objdump" || exit $?
+else
+  echo "SKIPPED: needs --grxgpu <path> and a device toolchain in $TOOLDIR."
+fi
+
+echo
 echo "==> PHASE 3 EXIT GATE: scalar against tensor, in device cycles"
 # THIS GATE IS CURRENTLY RED, ON PURPOSE, and its failure is DEFERRED to the end
 # of the run rather than stopping here.
