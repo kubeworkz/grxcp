@@ -8,7 +8,8 @@
    "loads": 2,
    "size": 100,
    "split": 0,
-   "stack": 0
+   "stack": 0,
+   "stores": 1
   },
   "dnn_causal_mask": {
    "fp": 0,
@@ -18,7 +19,8 @@
    "loads": 0,
    "size": 93,
    "split": 0,
-   "stack": 0
+   "stack": 0,
+   "stores": 0
   },
   "dnn_gelu": {
    "fp": 32,
@@ -28,7 +30,8 @@
    "loads": 1,
    "size": 229,
    "split": 0,
-   "stack": 0
+   "stack": 0,
+   "stores": 1
   },
   "dnn_layernorm": {
    "fp": 3,
@@ -38,7 +41,8 @@
    "loads": 2,
    "size": 282,
    "split": 0,
-   "stack": 0
+   "stack": 0,
+   "stores": 1
   },
   "dnn_softmax": {
    "fp": 17,
@@ -48,7 +52,8 @@
    "loads": 6,
    "size": 259,
    "split": 0,
-   "stack": 0
+   "stack": 0,
+   "stores": 0
   },
   "hgemm_tcu": {
    "fp": 0,
@@ -58,7 +63,8 @@
    "loads": 0,
    "size": 278,
    "split": 1,
-   "stack": 0
+   "stack": 0,
+   "stores": 0
   },
   "hgemm_tcu_shape": {
    "fp": 0,
@@ -68,7 +74,8 @@
    "loads": 0,
    "size": 25,
    "split": 0,
-   "stack": 0
+   "stack": 0,
+   "stores": 0
   },
   "igemm_tcu": {
    "fp": 0,
@@ -78,7 +85,8 @@
    "loads": 0,
    "size": 279,
    "split": 1,
-   "stack": 0
+   "stack": 0,
+   "stores": 0
   },
   "igemm_tcu_shape": {
    "fp": 0,
@@ -88,7 +96,8 @@
    "loads": 0,
    "size": 26,
    "split": 0,
-   "stack": 0
+   "stack": 0,
+   "stores": 0
   },
   "saxpy": {
    "fp": 0,
@@ -98,7 +107,8 @@
    "loads": 0,
    "size": 80,
    "split": 0,
-   "stack": 0
+   "stack": 0,
+   "stores": 0
   },
   "sgemm": {
    "fp": 1,
@@ -108,7 +118,8 @@
    "loads": 2,
    "size": 136,
    "split": 0,
-   "stack": 0
+   "stack": 0,
+   "stores": 0
   },
   "sgemm_2d": {
    "fp": 4,
@@ -118,7 +129,8 @@
    "loads": 4,
    "size": 274,
    "split": 0,
-   "stack": 0
+   "stack": 0,
+   "stores": 0
   },
   "sgemm_4x2": {
    "fp": 8,
@@ -128,7 +140,8 @@
    "loads": 6,
    "size": 414,
    "split": 0,
-   "stack": 0
+   "stack": 0,
+   "stores": 0
   },
   "sgemm_4x4": {
    "fp": 16,
@@ -138,7 +151,8 @@
    "loads": 8,
    "size": 625,
    "split": 0,
-   "stack": 0
+   "stack": 0,
+   "stores": 0
   },
   "sgemm_rb": {
    "fp": 4,
@@ -148,7 +162,8 @@
    "loads": 5,
    "size": 276,
    "split": 0,
-   "stack": 0
+   "stack": 0,
+   "stores": 0
   },
   "sgemm_shape": {
    "fp": 0,
@@ -158,7 +173,8 @@
    "loads": 0,
    "size": 22,
    "split": 0,
-   "stack": 0
+   "stack": 0,
+   "stores": 0
   },
   "sgemv": {
    "fp": 1,
@@ -168,7 +184,8 @@
    "loads": 2,
    "size": 204,
    "split": 0,
-   "stack": 0
+   "stack": 0,
+   "stores": 0
   },
   "sscal": {
    "fp": 0,
@@ -178,7 +195,8 @@
    "loads": 0,
    "size": 69,
    "split": 0,
-   "stack": 0
+   "stack": 0,
+   "stores": 0
   }
  },
  "note": "hot-loop census of the shipped kernel image; see ci/check_kernel_loops.py"

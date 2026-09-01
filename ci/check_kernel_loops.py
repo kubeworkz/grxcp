@@ -56,6 +56,33 @@ in each of the two tensor kernels, in a loop with no float work in it at all.
 
 A per-row branch and a per-element branch differ by the row width. Saying so is
 the difference between a census and a scare.
+
+WHAT ins/fp DOES NOT TELL YOU, MEASURED. It is a rate, and it was read as a
+worklist twice.
+
+  * It does not say where the time is. dnn_add_bias headed this ranking at
+    13.00 and is 3.4% of a transformer block; dnn_gelu sits at the BOTTOM at
+    1.44 and is 16%. sgemv was second at 15.00 and does not appear in the block
+    at all.
+  * It does not say what the loop is waiting for. dnn_add_bias moves three
+    words per fadd.s -- two loads and a store -- and its address arithmetic
+    hides underneath them. Hoisting it took the loop from 13 instructions to
+    11, exactly as predicted, and the block did not move: 155347 -> 155134 at
+    S=8 and 323119 -> 323232 at S=16, the second of those slightly WORSE. In
+    the same build the two bias stages moved in OPPOSITE directions, +3.5% and
+    -9.3%, while untouched kernels moved +4.1% and +3.1%. That is the relink,
+    not the change. It was reverted.
+
+So the ranking below is printed with memory traffic beside it. A loop moving two
+or more words per float op has somewhere for its arithmetic to hide, and the
+only thing that settles whether a saving is real is a cycle count.
+
+THE FLAG IS NOT A VERDICT, and sgemv is why. It carries the same marker at 2.0
+words per float op, and hoisting ITS address arithmetic was worth 1.12x to 1.94x
+on the span -- because it removed eight instructions of fifteen, not two of
+thirteen. Memory traffic says the arithmetic CAN hide, not that it does. What
+separated the two cases was the size of the saving, and neither the rate nor the
+flag predicted it; the bench did.
 """
 
 import argparse
@@ -140,6 +167,7 @@ def loop_stats(loop):
         "ins": len(loop),
         "fp": fp,
         "loads": ops.count("flw"),
+        "stores": ops.count("fsw"),
         "stack": sum(1 for t in loop if "(sp)" in t),
         "split": ops.count("vx_split") + ops.count("vx_split_n"),
         "join": ops.count("vx_join"),
@@ -222,7 +250,8 @@ def census(text):
         st = hot_loop(body, addr, end)
         entry = {"size": len(body), "frame": frame}
         entry.update(st if st else {"ins": 0, "fp": 0, "loads": 0,
-                                    "stack": 0, "split": 0, "join": 0})
+                                    "stores": 0, "stack": 0, "split": 0,
+                                    "join": 0})
         out[name] = entry
     return out
 
@@ -238,8 +267,8 @@ def report(measured, baseline, quiet=False, roles=None):
     if roles is None:
         roles = ROLES
     if not quiet:
-        print(f"  {'kernel':18s} {'ins':>5s} {'fp':>4s} {'ld':>4s} {'stk':>4s} "
-              f"{'spl':>4s} {'join':>5s}   ins/fp")
+        print(f"  {'kernel':18s} {'ins':>5s} {'fp':>4s} {'ld':>4s} {'st':>4s} "
+              f"{'stk':>4s} {'spl':>4s} {'join':>5s}   ins/fp")
     concerns = []
     for name in sorted(measured):
         m = measured[name]
@@ -252,7 +281,8 @@ def report(measured, baseline, quiet=False, roles=None):
             note += "  DIVERGES"
         if not quiet:
             print(f"  {name:18s} {m['ins']:5d} {m['fp']:4d} {m['loads']:4d} "
-                  f"{m['stack']:4d} {m['split']:4d} {m['join']:5d} {ratio}"
+                  f"{m.get('stores', 0):4d} {m['stack']:4d} {m['split']:4d} "
+                  f"{m['join']:5d} {ratio}"
                   f"  {'' if role == SHIPS else role}{note}")
         if note:
             concerns.append((name, m["stack"], m["split"]))
@@ -272,7 +302,17 @@ def report(measured, baseline, quiet=False, roles=None):
             print("  cost per float op, SHIPPING kernels only"
                   " (the instruments are excluded and named above):")
             for r, n in ranked:
-                print(f"      {n:18s} {r:6.2f}")
+                m = measured[n]
+                mem = (m["loads"] + m.get("stores", 0)) / m["fp"]
+                # Two or more words moved per float op: the arithmetic has
+                # somewhere to hide, so a small instruction saving may buy
+                # nothing and only cycles can say. NOT "instructions do not
+                # matter here" -- sgemv carries the same flag and its hoist was
+                # worth 1.9x, because it removed EIGHT instructions of thirteen
+                # rather than two. See the header for both results.
+                flag = "   memory traffic dominates: price it in cycles" \
+                       if mem >= 2.0 else ""
+                print(f"      {n:18s} {r:6.2f}   {mem:4.1f} words/fp{flag}")
 
     if baseline is None:
         return True, concerns
@@ -283,8 +323,8 @@ def report(measured, baseline, quiet=False, roles=None):
         if b is None:
             added.append(name)
             continue
-        for field in ("size", "frame", "ins", "fp", "loads", "stack", "split",
-                      "join"):
+        for field in ("size", "frame", "ins", "fp", "loads", "stores",
+                      "stack", "split", "join"):
             if m[field] != b.get(field):
                 moved.append((name, field, b.get(field), m[field]))
     for name in sorted(baseline):

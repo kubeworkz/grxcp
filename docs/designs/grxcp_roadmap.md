@@ -570,6 +570,43 @@ a variant of the untransposed one; it is a different traversal that happens to
 compute a transposed product. It is also the first use of `grx_cg.h` inside the
 library rather than in a test.
 
+**`dnn_add_bias` was the worst kernel in the census and the change was
+reverted.** It headed the cost ranking at 13.00 instructions per float op, and
+its loop was five instructions of address arithmetic around one `fadd.s` -- an
+index widening pair, because `j` is 32-bit and the offset is 64, and one add per
+operand to form each of three addresses. The same hoist that took the GEMM
+k-loop and `sgemv` apart applies, and it worked exactly as predicted: 13
+instructions to **11**, the number written into the baseline before the change
+and watched failing at 13.
+
+**And the block did not move.** 155347 -> 155134 at S=8, 323119 -> 323232 at
+S=16 -- the second slightly worse. Inside one build the two bias stages moved in
+OPPOSITE directions, +3.5% and -9.3%, while kernels whose source was untouched
+moved +4.1% and +3.1%. That is the relink, which `ci/check_perf.py` already
+documents at up to 8.7%, and it swamps a 15% instruction saving on a stage worth
+3.4% of the block. The kernel does two loads and a store per float op; the
+arithmetic was hiding underneath the memory traffic the whole time.
+
+Reverted rather than kept. It is bit-identical and strictly less work, and that
+is not the standard: the GEMM and `sgemv` hoists shipped because they were
+*measured* at 2.10x and 1.9x, and shipping this one would be shipping on the
+argument "address arithmetic is bad" -- which is the reasoning this project has
+now falsified twice.
+
+**Two things the cost ranking does not know, and it has now misled once each.**
+It is a rate. It does not say where the time is: `dnn_add_bias` headed it at
+13.00 and is 3.4% of the block, while `dnn_gelu` sits at the BOTTOM at 1.44 and
+is 16%, and `sgemv` was second and is not in the block at all. And it does not
+say what the loop is waiting for. The census prints memory traffic beside the
+rate now, and flags any loop moving two or more words per float op.
+
+The flag is not a verdict either, and `sgemv` is the reason it says "price it in
+cycles" rather than "instructions do not matter here": `sgemv` carries the same
+marker and its hoist WAS worth 1.9x, because it removed eight instructions of
+fifteen rather than two of thirteen. Memory traffic says the arithmetic can
+hide, not that it does. Neither the rate nor the flag separated the two cases.
+The bench did.
+
 **The data-type line was wrong about the hardware, in two different ways.**
 bf16 does not exist on this tensor unit in any configuration — there is no knob
 to enable — so it is struck rather than deferred, and `grxblasTensorType_t` has
