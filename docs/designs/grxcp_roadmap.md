@@ -570,6 +570,52 @@ a variant of the untransposed one; it is a different traversal that happens to
 compute a transposed product. It is also the first use of `grx_cg.h` inside the
 library rather than in a test.
 
+**A LAUNCH COSTS 2776 CYCLES BEFORE IT TOUCHES AN ELEMENT, and that is what the
+fusion question was really about.** Measured directly by sweeping
+`grxdnnAddBiasForward` over column counts at the block's own row count:
+
+    elements     cycles      elements     cycles
+          16       2958           512       4919
+          32       2956          1024       7349
+          64       2902          2048      11853
+         128       3216          4096      20405
+         256       3854
+
+    least squares over nine points:  cycles = 2776 + 4.33 * elements
+
+The first sixteen elements cost 2958 cycles. The next four thousand cost 17447.
+An independent two-point fit from the block's own bias stages gave 2716 + 4.25
+and predicted a held-out third shape to 1.5%, so the two agree.
+
+**The first version of this experiment was wrong and is worth recording.** It
+swept element count with `rows = 1`, which puts every element on ONE warp, and
+reported `cycles = 971 + 37.66 * elements` -- a per-element cost nine times too
+high, because varying cols at one row removes the parallelism instead of
+isolating it. The block's stages all run `rows = S`. Sweeping cols at `rows = 16`
+is the comparison that matches them.
+
+**What it means.** 86% of the qkv bias stage is launch overhead: six launches at
+2776 each is 16656 of its 19272 cycles. More broadly the block runs about
+fourteen elementwise launches, so roughly **12% of it is spent before any
+element is touched**. Fusion's prize here is not memory traffic -- it is
+launches. That is why "one launch stops existing" was the only fusion estimate
+that did not rest on a per-word rate, and why the per-word model disagreed with
+itself across shapes.
+
+**Two routes for the qkv bias, with measured values rather than preferences:**
+
+  * **Bias in the GEMM epilogue** -- `grxblasSgemmStridedBatched` already runs
+    all H heads in one launch, so a fused bias adds no launch at all and one add
+    per output. Worth the whole stage: **5.9% at S=16, 6.8% at S=8**. Costs an
+    ABI field, an epilogue in five kernels (the three tiled ones share a
+    template), a host entry point, and a re-run of the bit-exact oracle -- it
+    touches the kernel family that is 46% of the block.
+  * **A batched add-bias** in grxDNN, mirroring `SgemmStridedBatched`: six
+    launches become three. Worth **~2.5%**, self-contained, no GEMM change.
+
+The first is worth roughly twice the second and carries the risk of touching the
+hottest kernel family in the image. Neither is done.
+
 **The block profiler was throwing away six launches, and they were the largest
 fusion target in the block.** `tests/bench/block_cycles.cpp` ran the qkv
 projections' per-head biases -- 3 projections x H heads -- and then called
