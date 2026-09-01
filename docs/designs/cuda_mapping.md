@@ -1017,6 +1017,39 @@ GRX930 checkout now ships a standalone NPU DPI model and a C++ DPI harness,
 which is what could settle it. Until something runs, this entry says what the
 source says and no more.
 
+**ANSWERED, and the reading was right.** The GRX930 team's architecture document
+now opens its limits section with "MAX_M, MAX_N, MAX_K are buffer sizes, not
+hard computational limits" -- they size the on-chip A/B/C SRAM, and a runtime
+dimension must be no larger only because the buffer is statically allocated. The
+note claiming N was capped at one column tile unless N-tiling was used is gone.
+They added BRAM cost formulas per buffer and an external tiling guide for
+dimensions that exceed the parameters.
+
+Two things follow for this backend, and they are bigger than the doc fix:
+
+  * `NPU_C930_MAX_M/N/K` in `src/backends/npu_c930/npu_c930.h` are hardcoded to
+    one SoC's synthesis defaults, 8 / 12 / 16. If they are buffer sizes chosen
+    per FPGA, then a build against a different SoC has different limits and this
+    header is wrong by construction rather than by drift. They should come from
+    the device, and they are not reported through a device property at all
+    today -- `populate_npu_properties` publishes no GEMM dimension limits, which
+    AGENTS.md section 3 does not allow for a limit a caller can hit.
+  * `npu_c930_gemm` REFUSES a GEMM that exceeds them. With the semantics settled
+    that refusal is a missing feature rather than a correct guard: the caller's
+    matrix is not too big for the hardware, it is too big for one invocation.
+    Tiling it is the backend's job and the guide is now written.
+
+Neither is done. Both are on the phase 7 list, and this entry is the record of
+why they are not a doc fix.
+
+STILL INCONSISTENT IN THE SAME TABLE, and worth one message rather than a gap:
+the column is still headed "NPU core max" with MAX_N = 8 on a row whose SoC
+column says 12. The paragraph above it now explains the semantics, so a careful
+reader is no longer misled -- but the row still asserts a maximum smaller than a
+shipped instantiation. The build-commands block a section later still carries
+`# Full SoC Verilator model (needs DDR init fix)` in a section whose own status
+table was updated to Complete.
+
 Stale in the same guide, and noted here because it is the piece that would let
 us run the check above: its RTLSIM table lists the Verilator DDR init issue as
 open and prescribes replacing the 2-D banked array with a flat 1-D one. The
