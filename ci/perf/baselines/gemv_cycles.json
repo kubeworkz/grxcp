@@ -1,0 +1,59 @@
+{
+  "bench": "gemv_cycles",
+  "device": {
+    "name": "GRX-G100 (simx)",
+    "sms": 1,
+    "warp": 4,
+    "warp_slots": 16
+  },
+  "points": [
+    {
+      "trans": "N",
+      "m": 64,
+      "n": 64,
+      "span": 11229,
+      "busy_median": 8731,
+      "warps": 16
+    },
+    {
+      "trans": "N",
+      "m": 256,
+      "n": 16,
+      "span": 17538,
+      "busy_median": 2808,
+      "warps": 64
+    },
+    {
+      "trans": "N",
+      "m": 16,
+      "n": 256,
+      "span": 19901,
+      "busy_median": 19895,
+      "warps": 4
+    },
+    {
+      "trans": "T",
+      "m": 64,
+      "n": 64,
+      "span": 22791,
+      "busy_median": 3905,
+      "warps": 64
+    },
+    {
+      "trans": "T",
+      "m": 256,
+      "n": 16,
+      "span": 14723,
+      "busy_median": 10913,
+      "warps": 16
+    },
+    {
+      "trans": "T",
+      "m": 16,
+      "n": 256,
+      "span": 53781,
+      "busy_median": 2142,
+      "warps": 256
+    }
+  ]
+}

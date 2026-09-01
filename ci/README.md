@@ -357,6 +357,30 @@ one because the device accumulates in a different order. It has been watched
 failing: reverting sgemv's transposed load to the classic wrong index makes all
 five transposed cases fail and leaves the untransposed ones passing.
 
+It said it covered negative increments and, for sgemv, it did not: every sgemv
+case used `incx` of 1 or 2, and the one reversed vector was y. Five cases now
+reverse x across both traversals, including one whose reduction is shorter than
+a warp so that lanes with no element are exercised. Watched failing the same
+way: a start offset that always begins at the near end takes exactly those five
+red.
+
+THE MODULE THE LIBRARY LOADS IS NOT THE ONE YOU JUST BUILT, unless you built
+the right name. grxblas tries `grxlibs_kernels.vxbin` first, then
+`grxblas_kernels.vxbin`, then `grxblas_sgemm.vxbin` (kModules in
+`src/libs/grxblas/grxblas.cpp`). A rebuild of the second while the first is
+present on disk changes nothing the test can see. This cost a wasted
+sabotage — a kernel was deliberately broken and every case still passed —
+which is the good outcome only because the sabotage was there to notice it.
+
+`tests/bench/gemv_cycles.cpp` prices sgemv on the device, both traversals, three
+shapes each, and feeds the perf baseline gate. It exists because the hot-loop
+census ranks kernels by instructions per float op, and an instruction count is a
+prediction: it named sgemv the most expensive shipping kernel, and the cycles
+are what say by how much. Every span is refused if `maxLive` exceeds device
+occupancy, for the reason `block_cycles` refuses one — MCYCLE restarts at zero
+at every launch, so a span across two of them is a maximum over unrelated
+clocks.
+
 `tests/libs/test_grxdnn.cpp` is the grxDNN gate: softmax and layer norm against
 a host reference on five shapes — rows shorter than a warp, rows longer than
 one, a padded leading dimension, in place, and the argument checks that must

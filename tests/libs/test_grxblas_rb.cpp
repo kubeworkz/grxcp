@@ -292,6 +292,136 @@ int main() {
           "kernels ran");
   }
 
+  section("what the RULE can reach, measured rather than read");
+  {
+    // The section above establishes that five kernels EXIST. This one asks the
+    // different question it explicitly deferred: which of them a caller who
+    // asks for nothing can actually get.
+    //
+    // WHY IT MATTERS OUTSIDE THIS FILE. ci/check_kernel_loops.py ranks kernels
+    // by instructions per float op, and its top two entries are sgemm at 24.00
+    // and sgemm_rb at 13.25 -- ahead of everything a program reaches. Both
+    // numbers are right and neither is a defect: one is the oracle, the other
+    // is the 4x1 rung of the tile ladder, and both must stay slow. That census
+    // now LABELS them so its ranking cannot be read as a worklist, and a label
+    // is a claim. This is where the claim is checked, because reachability
+    // lives in decide_sgemm_kernel and a disassembly cannot see it.
+    //
+    // HOW. The rule is asked at shapes spanning its threshold, and the answer
+    // is identified by WARP COUNT -- the same evidence the section above uses,
+    // and the only thing visible from out here that distinguishes kernels whose
+    // results are deliberately identical.
+    //
+    // THE YARDSTICK IS ARITHMETIC, NOT A FORCED RUN, and that took a second go.
+    // The first version compared the rule's warp count against the count from
+    // each kernel forced through its environment hook. That is circular: a hook
+    // whose kernel is unavailable falls back to THE RULE, so "forced 2d" can
+    // quietly be the rule's own answer wearing 2d's label -- the same mistake
+    // the section above records making. Making the rule blind to sgemm_2d as a
+    // test of this check produced three columns reading 10, 10 and 10, and the
+    // check dutifully reported that the rule had picked 2d when it had picked
+    // rb.
+    //
+    // So the expected counts are COMPUTED from the shape and the tiling, and
+    // the forced runs are checked against that arithmetic rather than trusted
+    // as it. A force path that silently falls back now fails as itself.
+    struct RuleCase {
+      int m, n, k;
+      const char* what;
+    };
+    // resident = warpSize * maxWarpsPerMultiProcessor * multiProcessorCount.
+    // On the 4-lane, 16-slot, 1-SM configuration that is 64 outputs.
+    const RuleCase rcases[] = {
+      { 6,  8, 5, "48 outputs, below resident"},
+      {10,  7, 5, "70 outputs, above resident"},
+      {14, 10, 5, "140 outputs, above TWICE resident -- where rb's branch is"},
+    };
+    const char* names[5] = {"naive", "rb", "2d", "4x2", "4x4"};
+    const Pick  picks[5] = {Pick::kNaive, Pick::kRb, Pick::kTwoD, Pick::kMid,
+                            Pick::kWide};
+    // Everything the rule is allowed to return. sgemm_rb is NOT here: its
+    // branch in decide_sgemm_kernel is an `else if` behind the 2D tile, so a
+    // module that has sgemm_2d can never reach it. That is the whole claim.
+    const bool reachable[5] = {true, false, true, false, false};
+
+    // The tile of each kernel, which must match kernels/sgemm.cpp. Duplicated
+    // knowledge, and deliberately so: the forced runs below are checked against
+    // the counts these produce, so a tile that drifts from the kernel fails
+    // here rather than being silently absorbed.
+    const int tile_m[5] = {1, 4, 2, 4, 4};
+    const int tile_n[5] = {1, 1, 2, 2, 4};
+
+    grxDeviceProp_t prop{};
+    if (grxGetDeviceProperties(&prop, 0) != grxSuccess) {
+      check(false, "device properties");
+    } else {
+      const int warp = prop.warpSize;
+      for (const RuleCase& rc : rcases) {
+        std::vector<float> A((size_t)rc.m * rc.k + 64), B((size_t)rc.k * rc.n + 64);
+        std::vector<float> out;
+        fill(A, 3u); fill(B, 17u);
+
+        // What each tiling WOULD launch, from the shape alone.
+        int want[5];
+        for (int i = 0; i < 5; ++i) {
+          const int threads = ((rc.m + tile_m[i] - 1) / tile_m[i]) *
+                              ((rc.n + tile_n[i] - 1) / tile_n[i]);
+          want[i] = (threads + warp - 1) / warp;
+        }
+
+        int w[5] = {-1, -1, -1, -1, -1}, wrule = -1;
+        bool ok = run(Pick::kRule, false, false, rc.m, rc.n, rc.k, A, B, &out,
+                      &wrule);
+        for (int i = 0; i < 5; ++i)
+          ok = ok && run(picks[i], false, false, rc.m, rc.n, rc.k, A, B, &out,
+                         &w[i]);
+        if (!ok) { check(false, rc.what); continue; }
+
+        std::printf("        %s\n", rc.what);
+        std::printf("          rule %3d | expected  naive %3d rb %3d 2d %3d"
+                    " 4x2 %3d 4x4 %3d\n", wrule, want[0], want[1], want[2],
+                    want[3], want[4]);
+        std::printf("                   | forced    naive %3d rb %3d 2d %3d"
+                    " 4x2 %3d 4x4 %3d\n", w[0], w[1], w[2], w[3], w[4]);
+
+        // The shapes are chosen so the five tilings are told apart. If one
+        // stops being so the identification below is worthless, and this is
+        // what says so -- checked on the ARITHMETIC, which is a property of
+        // the shape and holds whatever the kernels do.
+        bool distinct = true;
+        for (int i = 0; i < 5; ++i)
+          for (int j = i + 1; j < 5; ++j)
+            if (want[i] == want[j]) distinct = false;
+        check(distinct, "the five tilings are distinguishable at this shape");
+
+        // Each force path reached its own kernel. This is what catches a hook
+        // that fell back to the rule and wore the label anyway.
+        for (int i = 0; i < 5; ++i) {
+          if (w[i] == want[i]) continue;
+          char msg[192];
+          std::snprintf(msg, sizeof(msg),
+                        "forcing %s launched %d warps, not the %d its tile"
+                        " needs -- the hook did not reach it",
+                        names[i], w[i], want[i]);
+          check(false, msg);
+        }
+
+        // And the rule's own answer, identified against the arithmetic.
+        int matched = -1, matches = 0;
+        for (int i = 0; i < 5; ++i)
+          if (want[i] == wrule) { matched = i; ++matches; }
+        check(matches == 1, "the rule's launch matches exactly one tiling");
+        if (matches == 1) {
+          char msg[192];
+          std::snprintf(msg, sizeof(msg),
+                        "the rule picked %s, which it is allowed to",
+                        names[matched]);
+          check(reachable[matched], msg);
+        }
+      }
+    }
+  }
+
   section("the comparison can actually fail");
   {
     // And the pipeline is live: perturbing one operand must move the output.

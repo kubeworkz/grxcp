@@ -274,6 +274,14 @@ int main() {
   test_gemv(h, GRXBLAS_OP_N, 13, 7, 19, 1, 1, 1.0f, 0.0f, "beta = 0 must not read y");
   test_gemv(h, GRXBLAS_OP_N,  1, 9, 1,  1, 1, 2.0f, 3.0f, "one row");
   test_gemv(h, GRXBLAS_OP_N,  9, 1, 9,  1, 1, 2.0f, 3.0f, "one column");
+  // A NEGATIVE incx WAS NOT COVERED HERE, and it is the case the kernel treats
+  // least like the others: BLAS reads such a vector backwards from its far end,
+  // so the walk starts at (depth-1)*|incx| and steps DOWN. saxpy has had the
+  // equivalent case since it was written; sgemv had incx of 1 and 2 only, and
+  // a reversed y but never a reversed x. The gaps between used elements are
+  // poisoned, so a walk that starts at the wrong end reads -12345 and says so.
+  test_gemv(h, GRXBLAS_OP_N, 13, 7, 19, -1, 1, 2.0f, 3.0f, "reversed x");
+  test_gemv(h, GRXBLAS_OP_N, 13, 7, 19, -3, -2, 2.0f, 3.0f, "reversed x and y, both strided");
 
   section("sgemv, transposed -- a different traversal, not a variant");
   test_gemv(h, GRXBLAS_OP_T, 13, 7, 13, 1, 1, 2.0f, 3.0f, "square-ish, ld = m");
@@ -284,6 +292,17 @@ int main() {
   // has to loop and then reduce across lanes -- which is the case a
   // single-pass reduction gets wrong.
   test_gemv(h, GRXBLAS_OP_T, 37, 5, 37, 1, 1, 2.0f, 3.0f, "reduction longer than a warp");
+  // The transposed path is where a reversed x is hardest: each LANE starts at
+  // its own offset into x and steps by incx * warp_width, so the sign decides
+  // both where the lane begins and which way it travels. Two shapes, because
+  // they fail differently -- the long one gets the stride wrong, the short one
+  // gets the lanes that have no element at all wrong.
+  test_gemv(h, GRXBLAS_OP_T, 37, 5, 37, -1, 1, 2.0f, 3.0f, "reversed x, reduction longer than a warp");
+  test_gemv(h, GRXBLAS_OP_T, 37, 5, 37, -2, 3, 2.0f, 3.0f, "reversed x, strided both ways");
+  // depth = 3 is shorter than the warp, so lane 3 has no element. Its start
+  // offset is the one that underflows if it is computed before the bound is
+  // tested -- which is exactly what hoisting the index out of the loop moved.
+  test_gemv(h, GRXBLAS_OP_T,  3, 5,  3, -1, 1, 2.0f, 3.0f, "reversed x, reduction shorter than a warp");
 
   section("sgemv argument checking");
   {

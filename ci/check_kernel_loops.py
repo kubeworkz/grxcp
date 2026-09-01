@@ -77,6 +77,37 @@ NOT_KERNELS = {"_start", "__init_tls", "__libc_init_array", "memcpy", "memset",
 # forms are excluded: moving a float is not work on it.
 NOT_REALLY_FP = {"flw", "fsw", "fmv.s", "fmv.w.x", "fmv.x.w"}
 
+# WHAT EACH KERNEL IS FOR, because ins/fp is a cost and this census was read as
+# a worklist.
+#
+# The ranking put sgemm at 24.00 instructions per float op and sgemm_rb at
+# 13.25, ahead of every kernel a program actually reaches. Both numbers are
+# correct and neither is a defect: sgemm is the ORACLE that every tuned kernel
+# is checked against bit for bit, and sgemm_rb is the 4x1 rung of the tile
+# ladder that the sweeps price the others against. Making either of them faster
+# would destroy the instrument. sgemm_4x2 and sgemm_4x4 are staged: they exist,
+# they are reachable by asking, and nothing has measured them into the rule.
+#
+# THE CENSUS CANNOT SEE THIS. Reachability is a property of the host library's
+# decision function (decide_sgemm_kernel in src/libs/grxblas/grxblas.cpp), and
+# this script reads a disassembly. So the roles are DECLARED here and PROVED
+# elsewhere: tests/libs/test_grxblas_rb.cpp runs the shipping rule across the
+# threshold and asserts the set of kernels it can pick. A label here that the
+# rule contradicts is a failure there, which is the only arrangement in which
+# writing it down is honest.
+SHIPS, ORACLE, CONTROL, STAGED = "ships", "oracle", "control", "staged"
+ROLES = {
+    "sgemm":     (ORACLE,  "the reference; every tuned kernel is checked against it"),
+    "sgemm_rb":  (CONTROL, "the 4x1 rung; the rule reaches it only if sgemm_2d is absent"),
+    "sgemm_4x2": (STAGED,  "reachable by asking; not measured into the rule"),
+    "sgemm_4x4": (STAGED,  "reachable by asking; spills, and the ladder says why"),
+}
+
+
+def role_of(name, roles=None):
+    """(role, why). Anything not named in the table is on the shipping path."""
+    return (ROLES if roles is None else roles).get(name, (SHIPS, ""))
+
 
 def disassemble(elf, objdump):
     r = subprocess.run([objdump, "-d", elf], capture_output=True, text=True)
@@ -196,8 +227,16 @@ def census(text):
     return out
 
 
-def report(measured, baseline, quiet=False):
-    """Print the census, compare, and return (ok, lines_of_concern)."""
+def report(measured, baseline, quiet=False, roles=None):
+    """Print the census, compare, and return (ok, lines_of_concern).
+
+    `roles` is the reachability table to apply, ROLES by default. It is a
+    parameter so the self-test can run against its two-kernel sample image
+    without the real table -- which names four kernels that image does not
+    contain -- failing every unrelated check.
+    """
+    if roles is None:
+        roles = ROLES
     if not quiet:
         print(f"  {'kernel':18s} {'ins':>5s} {'fp':>4s} {'ld':>4s} {'stk':>4s} "
               f"{'spl':>4s} {'join':>5s}   ins/fp")
@@ -205,6 +244,7 @@ def report(measured, baseline, quiet=False):
     for name in sorted(measured):
         m = measured[name]
         ratio = f"{m['ins'] / m['fp']:6.2f}" if m["fp"] else "     -"
+        role, _ = role_of(name, roles)
         note = ""
         if m["stack"]:
             note += "  SPILLS"
@@ -212,9 +252,27 @@ def report(measured, baseline, quiet=False):
             note += "  DIVERGES"
         if not quiet:
             print(f"  {name:18s} {m['ins']:5d} {m['fp']:4d} {m['loads']:4d} "
-                  f"{m['stack']:4d} {m['split']:4d} {m['join']:5d} {ratio}{note}")
+                  f"{m['stack']:4d} {m['split']:4d} {m['join']:5d} {ratio}"
+                  f"  {'' if role == SHIPS else role}{note}")
         if note:
             concerns.append((name, m["stack"], m["split"]))
+
+    # The cost ranking, over the kernels a program can actually reach. Printed
+    # separately from the table because the table is sorted by name and this is
+    # the line someone reads to decide what to work on next -- and reading it
+    # off the full table is how sgemm's 24.00 and sgemm_rb's 13.25 came to head
+    # a list of things to fix. Both are instruments. Neither is a defect.
+    if not quiet:
+        ranked = sorted(
+            ((m["ins"] / m["fp"], n) for n, m in measured.items()
+             if m["fp"] and role_of(n, roles)[0] == SHIPS),
+            reverse=True)
+        if ranked:
+            print()
+            print("  cost per float op, SHIPPING kernels only"
+                  " (the instruments are excluded and named above):")
+            for r, n in ranked:
+                print(f"      {n:18s} {r:6.2f}")
 
     if baseline is None:
         return True, concerns
@@ -233,12 +291,21 @@ def report(measured, baseline, quiet=False):
         if name not in measured:
             gone.append(name)
 
-    ok = not (moved or added or gone)
+    # A role for a kernel that is not in the image is a claim about something
+    # that no longer exists, and it is the way this table goes stale: the
+    # kernel is deleted, the label survives, and the ranking silently starts
+    # excluding a name nothing produces.
+    stale_roles = sorted(n for n in roles if n not in measured)
+
+    ok = not (moved or added or gone or stale_roles)
     if not quiet:
         if added:
             print(f"\n  new in this build: {', '.join(added)}")
         if gone:
             print(f"  gone from this build: {', '.join(gone)}")
+        if stale_roles:
+            print(f"  ROLES names kernels this image does not contain: "
+                  f"{', '.join(stale_roles)}")
         for name, field, was, now in moved:
             print(f"  {name}.{field}: {was} -> {now}")
     return ok, concerns
@@ -343,14 +410,28 @@ def self_test():
     # The comparison has to be able to FAIL, and to say which field moved.
     base = json.loads(json.dumps(c))
     base["kernel_a"]["ins"] += 1
-    ok, _ = report(c, base, quiet=True)
+    ok, _ = report(c, base, quiet=True, roles={})
     check("a moved number is caught", ok, False)
-    ok, _ = report(c, json.loads(json.dumps(c)), quiet=True)
+    ok, _ = report(c, json.loads(json.dumps(c)), quiet=True, roles={})
     check("and an unmoved one is not", ok, True)
-    ok, _ = report(c, {"kernel_a": base["kernel_a"]}, quiet=True)
+    ok, _ = report(c, {"kernel_a": base["kernel_a"]}, quiet=True, roles={})
     check("a kernel the baseline does not know is caught", ok, False)
 
-    _, concerns = report(c, None, quiet=True)
+    # A role naming a kernel that is not in the image has to be a failure, or
+    # the table rots quietly. The sample image contains neither of the real
+    # ones, so ROLES is temporarily pointed at a name it does have and then at
+    # one it does not.
+    ok, _ = report(c, json.loads(json.dumps(c)), quiet=True,
+                   roles={"kernel_a": (CONTROL, "present")})
+    check("a role for a kernel that IS in the image is fine", ok, True)
+    ok, _ = report(c, json.loads(json.dumps(c)), quiet=True,
+                   roles={"gone_kernel": (CONTROL, "not in this image")})
+    check("a role for a kernel that is NOT is caught", ok, False)
+
+    check("a kernel with no declared role ships", role_of("kernel_a")[0], SHIPS)
+    check("and a declared one does not", role_of("sgemm_rb")[0], CONTROL)
+
+    _, concerns = report(c, None, quiet=True, roles={})
     check("the spilling kernel is named as a concern",
           [n for n, _, _ in concerns], ["kernel_b"])
     return 1 if fails else 0

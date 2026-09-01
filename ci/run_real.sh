@@ -873,6 +873,31 @@ else
 fi
 
 echo
+echo "==> SGEMV COST: both traversals, in device cycles"
+# The hot-loop census named sgemv the most expensive SHIPPING kernel per unit of
+# float work in the image -- fifteen instructions and two loads for one
+# multiply-add. That is a prediction. This is the measurement, and it is here so
+# that the next person to change sgemv finds out in cycles rather than in
+# instruction counts.
+#
+# Both traversals, never one: OP_N is one thread per output row and OP_T is one
+# warp per output column with a cross-lane reduction. They cost differently and
+# a change can help one and hurt the other.
+#
+# ~1 minute. Feeds the perf baseline gate below.
+if [[ -n "$GRXGPU" && -d "$TOOLDIR/llvm-vortex" ]]; then
+  $CXX $CXXFLAGS -c "$ROOT/tests/bench/gemv_cycles.cpp" -o "$BUILD/gemv_cycles.o"
+  $CXX "${OBJS[@]}" "$BUILD/grxblas.o" "$BUILD/gemv_cycles.o" $LIBS \
+    -o "$BUILD/sgemv_bench"
+  if ! "$BUILD/sgemv_bench" --out "$BUILD/perf_gemv.json"; then
+    rc=$?
+    [[ $rc -eq 77 ]] || exit $rc
+  fi
+else
+  echo "SKIPPED: needs --grxgpu <path> and a device toolchain in $TOOLDIR."
+fi
+
+echo
 echo "==> PERF BASELINE GATE: measured cycles against ci/perf/baselines/"
 # AGENTS.md section 4 has always said a moved number means real cycles moved.
 # Until now nothing compared any number to anything: the benches printed and a

@@ -163,10 +163,10 @@
   "sgemv": {
    "fp": 1,
    "frame": 64,
-   "ins": 15,
+   "ins": 7,
    "join": 0,
    "loads": 2,
-   "size": 209,
+   "size": 204,
    "split": 0,
    "stack": 0
   },

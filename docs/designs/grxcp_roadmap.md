@@ -527,6 +527,39 @@ The gate was watched failing before it was believed: reverting `sgemv`'s
 transposed load to the classic wrong index makes all five transposed cases fail
 and leaves every untransposed one passing.
 
+**"Negative increments" was true of saxpy and not of `sgemv`.** Every `sgemv`
+case ran with `incx` of 1 or 2. One case reversed *y*, none reversed *x*, and
+the sentence above did not distinguish them — so the branch BLAS is most likely
+to get wrong had no test at all. Found while hoisting that branch out of the
+inner loop, which is the change that had to be safe. Five cases now reverse
+`x`: untransposed, untransposed with both vectors reversed and strided,
+transposed with the reduction longer than a warp, transposed and strided both
+ways, and transposed with the reduction SHORTER than a warp — the last because
+lanes with no element are where a start offset computed before its bound test
+underflows. Watched failing: a `vec_start` that always begins at the near end
+takes exactly those five red and leaves all eleven pre-existing cases green.
+
+**`sgemv` was the most expensive shipping kernel in the image, and it was
+address arithmetic again.** The hot-loop census priced its inner loop at
+fifteen instructions and two loads for one multiply-add. Almost none of that
+was the product: `vec_index` re-decided the sign of the increment on every
+iteration and did two multiplies to place one element. But the increment is
+**affine** — for `inc > 0` the index is `i*inc` and for `inc < 0` it is
+`(n-1-i)*(-inc)`, and *both* advance by exactly `inc` per step. The sign
+chooses a starting offset and nothing else. Walking a pointer from that start
+takes the loop to **seven** instructions, and it is the same finding as the
+GEMM k-loop one commit earlier: the loop-invariant part of an address does not
+belong inside the loop.
+
+Measured, not counted — instructions are the prediction and cycles are the
+claim. `tests/bench/gemv_cycles.cpp` prices both traversals on the device:
+**1.12× to 1.94× on the span** and **1.25× to 2.25× on the per-warp busy
+window**, over three shapes each way. The spread is the point. The long
+reductions win about twice; the shape whose reduction is four steps per lane
+wins least, because there is almost no loop there to amortise. A single
+headline number would have hidden that, so the bench reports every shape and
+the baseline pins every one of them.
+
 `sgemv` has two traversals rather than one shape with a flag, and the reason is
 the memory system. Untransposed, one thread per output row means consecutive
 lanes read consecutive rows of the same column — adjacent addresses.

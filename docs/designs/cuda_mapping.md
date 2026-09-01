@@ -979,6 +979,51 @@ that — but the variable is now reachable from the host, which is what made
 
 ---
 
+### 7.26 The c930 NPU's `MAX_N` is a buffer size, not a hardware maximum — **HW / DOC, sharp edge**
+
+The GRX930 team's architecture document now carries a grxcp integration guide,
+and it tabulates the NPU's limits for this backend to build against. One row is
+mislabelled, and it is the row that would have made us report a hardware limit
+that does not exist:
+
+| Parameter | SoC instantiates | the table's "NPU core max" | what the RTL does with it |
+|---|---|---|---|
+| MAX_M | 8 | 64 | sizes `c_mem[0:MAX_M*MAX_N-1]` |
+| MAX_K | 16 | 256 | sizes `b_mem[0:MAX_K*MAX_N-1]` |
+| **MAX_N** | **12** | **8** | sizes both — and 12 > 8 on its own row |
+
+`MAX_N` appears three times in the NPU core: it sizes `b_mem`, it sizes `c_mem`,
+and it is the bound in the legality check `(i_dim_n >= 1) && (i_dim_n <= MAX_N)`.
+It is not a structural cap. The note beside it — that N is limited to one column
+tile unless N-tiling is used — is wrong in both halves. N-tiling is not optional
+in that core, it is unconditional (`num_n_tiles = (i_dim_n + NUM_COLS - 1) /
+NUM_COLS`, `n_base = nt_reg * NUM_COLS`), and the SoC already instantiates
+`MAX_N = 12` against `NUM_COLS = 4`, which is three column tiles and is exactly
+the case the note says needs something extra.
+
+So 8 is the core's DEFAULT, sitting in a column headed "max".
+
+WHY IT IS IN THIS REGISTER AND NOT A BUG REPORT. AGENTS.md forbids fabricated
+capability and requires every limit we publish to be one the hardware has. The
+same guide asks — correctly — that this backend's decision logic be gated
+against the register map rather than against a green simx run. A backend that
+took that row at face value would cap N at 8 and report the cap through a device
+property. That property would be fiction, and fiction sourced from a document is
+the hardest kind to catch later.
+
+NOT CONFIRMED ON HARDWARE. This is read off the RTL, not run: Verilator is not
+installed here, so "N = 12 computes correctly" is unverified on this side. The
+GRX930 checkout now ships a standalone NPU DPI model and a C++ DPI harness,
+which is what could settle it. Until something runs, this entry says what the
+source says and no more.
+
+Stale in the same guide, and noted here because it is the piece that would let
+us run the check above: its RTLSIM table lists the Verilator DDR init issue as
+open and prescribes replacing the 2-D banked array with a flat 1-D one. The
+Verilator DDR stub already declares `logic [7:0] mem [0:MEM_BYTES-1]`, in a
+commit made after the one that wrote the guide.
+
+
 ## 8. Where GRX-G100 is *ahead* of the reference
 
 Worth recording, because the platform should expose these rather than

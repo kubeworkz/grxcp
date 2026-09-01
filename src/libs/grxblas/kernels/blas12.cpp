@@ -35,6 +35,30 @@ __forceinline__ uint32_t vec_index(uint32_t i, uint32_t n, int32_t inc) {
                    : ((n - 1u - i) * (uint32_t)(-inc));
 }
 
+// THE INCREMENT IS AFFINE, WHICH IS WHY IT DOES NOT BELONG IN A LOOP.
+//
+// vec_index looks like two different traversals and it is one. Step i to i+1:
+//
+//   inc > 0    i*inc            -> (i+1)*inc          : +inc
+//   inc < 0    (n-1-i)*(-inc)   -> (n-2-i)*(-inc)     : -(-inc) = +inc
+//
+// Both advance by exactly `inc` elements. The sign test picks the STARTING
+// offset and nothing else, so a walk over a vector with a BLAS increment is a
+// start plus a constant signed stride -- computed once, outside the loop,
+// rather than re-deciding a loop-invariant branch and two multiplies on every
+// iteration.
+//
+// The start is only well defined when the walk has a first element: for inc < 0
+// vec_index(i, n, inc) underflows when i >= n. The old code never met that
+// because it only ever called vec_index from inside a loop that had already
+// tested the bound. Hoisting the call moves it in front of that test, so the
+// bound is tested here instead. This is the one place the transform is not a
+// pure motion of existing work, and it is a guard, not a change of result.
+__forceinline__ const float* vec_start(const float* v, uint32_t i, uint32_t n,
+                                       int32_t inc) {
+  return (i < n) ? (v + vec_index(i, n, inc)) : v;
+}
+
 }  // namespace
 
 // y = alpha * x + y, one element per thread.
@@ -94,12 +118,24 @@ __global__ void sgemv(grxblas_gemv_args* __UNIFORM__ arg) {
   const float    alpha = arg->alpha;
   const float    beta  = arg->beta;
 
+  const int32_t incx = arg->incx;
+
   if (arg->trans == GRXBLAS_ABI_OP_N) {
     const uint32_t row = blockIdx.x * blockDim.x + threadIdx.x;
     if (row < rows) {
+      // Both address streams are affine in j, so neither is computed in the
+      // loop. A[row + j*lda] advances by lda; x advances by incx (see
+      // vec_start above). What is left per step is two loads, a multiply-add
+      // and two pointer bumps.
+      const float* ap = A + row;
+      const float* xp = vec_start(x, 0u, depth, incx);
+
       float acc = 0.0f;
-      for (uint32_t j = 0; j < depth; ++j)
-        acc += A[row + j * lda] * x[vec_index(j, depth, arg->incx)];
+      for (uint32_t j = 0; j < depth; ++j) {
+        acc += *ap * *xp;
+        ap += lda;
+        xp += incx;
+      }
 
       const uint32_t yi = vec_index(row, rows, arg->incy);
       // Reading y when beta is zero would be wrong as well as wasteful: the
@@ -115,9 +151,19 @@ __global__ void sgemv(grxblas_gemv_args* __UNIFORM__ arg) {
       const uint32_t lane = tile.thread_rank();
       const uint32_t W    = tile.num_threads();
 
+      // Same hoist, one stride wider: this lane visits every W'th element, so
+      // A advances by W and x by incx*W. The starting offsets are the lane's,
+      // not element zero's.
+      const float*    ap     = A + (col * lda + lane);
+      const float*    xp     = vec_start(x, lane, depth, incx);
+      const ptrdiff_t x_step = (ptrdiff_t)incx * (ptrdiff_t)W;
+
       float part = 0.0f;
-      for (uint32_t i = lane; i < depth; i += W)
-        part += A[i + col * lda] * x[vec_index(i, depth, arg->incx)];
+      for (uint32_t i = lane; i < depth; i += W) {
+        part += *ap * *xp;
+        ap += W;
+        xp += x_step;
+      }
 
       // Every lane ends with the total; only one of them stores.
       const float acc = tile.reduce(part, cg::plus<float>());

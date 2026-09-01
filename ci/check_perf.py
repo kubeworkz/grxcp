@@ -65,6 +65,7 @@ EXPECTED = [
     ("perf_block_rb.json", "block_cycles.register-blocked.json"),
     ("perf_block_naive.json", "block_cycles.naive.json"),
     ("perf_gemm.json", "gemm_cycles.json"),
+    ("perf_gemv.json", "gemv_cycles.json"),
 ]
 
 
@@ -97,6 +98,15 @@ def flatten(doc):
             tag = f"{sh['m']}x{sh['n']}x{sh['k']}"
             for field in ("sgemm_span", "tensor_span", "nslots", "busy_median"):
                 out[f"{tag} .{field}"] = sh[field]
+    elif doc.get("bench") == "gemv_cycles":
+        # The transpose is part of the key because sgemv is two traversals
+        # wearing one name: OP_N is one thread per output row, OP_T is one warp
+        # per output column. A change can help one and hurt the other, and a
+        # key that dropped the letter would average them.
+        for p in doc["points"]:
+            tag = f"{p['trans']} {p['m']}x{p['n']}"
+            for field in ("span", "busy_median", "warps"):
+                out[f"{tag} .{field}"] = p[field]
     else:
         raise ValueError(f"unknown bench: {doc.get('bench')!r}")
     return out

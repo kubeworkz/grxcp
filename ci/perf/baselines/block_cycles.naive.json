@@ -18,77 +18,77 @@
       "stages": [
         {
           "name": "layernorm 1",
-          "span": 7049,
+          "span": 7388,
           "warps": 8,
           "maxLive": 8,
           "valid": true
         },
         {
           "name": "qkv proj (3 GEMMs)",
-          "span": 62987,
+          "span": 63212,
           "warps": 32,
           "maxLive": 16,
           "valid": true
         },
         {
           "name": "attention (2 GEMMs+mask+softmax)",
-          "span": 43027,
+          "span": 41961,
           "warps": 96,
           "maxLive": 16,
           "valid": true
         },
         {
           "name": "out proj (H GEMMs)",
-          "span": 26280,
+          "span": 26515,
           "warps": 32,
           "maxLive": 16,
           "valid": true
         },
         {
           "name": "bias",
-          "span": 1958,
+          "span": 2143,
           "warps": 8,
           "maxLive": 8,
           "valid": true
         },
         {
           "name": "residual (saxpy)",
-          "span": 3283,
+          "span": 3223,
           "warps": 32,
           "maxLive": 16,
           "valid": true
         },
         {
           "name": "layernorm 2",
-          "span": 7222,
+          "span": 7586,
           "warps": 8,
           "maxLive": 8,
           "valid": true
         },
         {
           "name": "mlp GEMM 1 (D->F)",
-          "span": 85077,
+          "span": 84996,
           "warps": 128,
           "maxLive": 16,
           "valid": true
         },
         {
           "name": "bias",
-          "span": 3836,
+          "span": 4054,
           "warps": 8,
           "maxLive": 8,
           "valid": true
         },
         {
           "name": "gelu",
-          "span": 26480,
+          "span": 26511,
           "warps": 8,
           "maxLive": 8,
           "valid": true
         },
         {
           "name": "mlp GEMM 2 (F->D)",
-          "span": 70238,
+          "span": 69930,
           "warps": 32,
           "maxLive": 16,
           "valid": true
@@ -103,77 +103,77 @@
       "stages": [
         {
           "name": "layernorm 1",
-          "span": 13201,
+          "span": 13783,
           "warps": 16,
           "maxLive": 16,
           "valid": true
         },
         {
           "name": "qkv proj (3 GEMMs)",
-          "span": 128558,
+          "span": 127124,
           "warps": 64,
           "maxLive": 16,
           "valid": true
         },
         {
           "name": "attention (2 GEMMs+mask+softmax)",
-          "span": 142396,
+          "span": 141237,
           "warps": 256,
           "maxLive": 16,
           "valid": true
         },
         {
           "name": "out proj (H GEMMs)",
-          "span": 52329,
+          "span": 52316,
           "warps": 64,
           "maxLive": 16,
           "valid": true
         },
         {
           "name": "bias",
-          "span": 3711,
+          "span": 3806,
           "warps": 16,
           "maxLive": 16,
           "valid": true
         },
         {
           "name": "residual (saxpy)",
-          "span": 7309,
+          "span": 7164,
           "warps": 64,
           "maxLive": 16,
           "valid": true
         },
         {
           "name": "layernorm 2",
-          "span": 13320,
+          "span": 14012,
           "warps": 16,
           "maxLive": 16,
           "valid": true
         },
         {
           "name": "mlp GEMM 1 (D->F)",
-          "span": 170332,
+          "span": 168260,
           "warps": 256,
           "maxLive": 16,
           "valid": true
         },
         {
           "name": "bias",
-          "span": 7096,
+          "span": 7245,
           "warps": 16,
           "maxLive": 16,
           "valid": true
         },
         {
           "name": "gelu",
-          "span": 51648,
+          "span": 51787,
           "warps": 16,
           "maxLive": 16,
           "valid": true
         },
         {
           "name": "mlp GEMM 2 (F->D)",
-          "span": 140642,
+          "span": 140089,
           "warps": 64,
           "maxLive": 16,
           "valid": true
