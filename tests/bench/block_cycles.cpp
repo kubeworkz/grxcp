@@ -274,9 +274,9 @@ bool profile(grxblasHandle_t bh, grxdnnHandle_t dh, const Shape& sh,
   {
     struct P { Buf* w; Buf* b; Buf* o; };
     const P ps[3] = {{Wq, bq, &q}, {Wk, bk, &k}, {Wv, bv, &v}};
-    uint64_t total = 0;
-    bool valid = true;
-    int warps = 0, qkv_live = 0;
+    uint64_t total = 0, bias_total = 0;
+    bool valid = true, bias_valid = true;
+    int warps = 0, qkv_live = 0, bias_warps = 0, bias_live = 0;
     for (const P& pr : ps) {
       grxblasSgemmStridedBatched(bh, GRXBLAS_OP_N, GRXBLAS_OP_N, Dh, S, D, &one,
                                  pr.w->f(), D, (long long)Dh, h1.f(), D, 0,
@@ -284,15 +284,45 @@ bool profile(grxblasHandle_t bh, grxdnnHandle_t dh, const Shape& sh,
       const StageCost c = probe.take("qkv");
       total += c.span; valid = valid && c.valid; warps = c.warps;
       if (c.maxLive > qkv_live) qkv_live = c.maxLive;
-      for (int hh = 0; hh < H; ++hh)
+
+      // THESE SIX LAUNCHES WERE THROWN AWAY, and the comment that threw them
+      // away said they were "counted with the other biases". They were not.
+      // probe.clear() discarded the slots and no stage absorbed them, so the
+      // block total omitted 3 x H real launches -- an estimated 4.2% at S=16
+      // and 5.5% at S=8. Every SHARE reported by this bench was therefore a
+      // fraction of a denominator that was too small, including the attention
+      // share that has been published.
+      //
+      // The blocking RATIO was unharmed: it is naive over blocked and both
+      // totals omitted the same six launches. A ratio survives a wrong
+      // denominator when both sides carry it. A share does not.
+      //
+      // Read after each head and SUMMED, for the reason the out projection is:
+      // MCYCLE restarts at zero at every launch, so one read after the loop
+      // would be a maximum over H unrelated clocks with the smaller head
+      // vanishing into the larger.
+      for (int hh = 0; hh < H; ++hh) {
         grxdnnAddBiasForward(dh, S, Dh, pr.o->f() + (size_t)hh * S * Dh, Dh,
                              pr.b->f() + (size_t)hh * Dh,
                              pr.o->f() + (size_t)hh * S * Dh, Dh);
-      probe.clear();   // the per-head bias is counted with the other biases
+        const StageCost bc = probe.take("qkv bias");
+        bias_total += bc.span;
+        bias_valid = bias_valid && bc.valid;
+        bias_warps = bc.warps;
+        if (bc.maxLive > bias_live) bias_live = bc.maxLive;
+      }
     }
     StageCost c; c.name = "qkv proj (3 GEMMs)"; c.span = total;
     c.valid = valid; c.warps = warps; c.maxLive = qkv_live;
     out->push_back(c);
+
+    // Its own stage rather than folded into the GEMM it follows: it is a
+    // different kernel doing a different amount of work, and it is the
+    // bias-into-GEMM-epilogue fusion candidate. A fusion cannot be priced
+    // against a cost nobody records.
+    StageCost b; b.name = "qkv bias (3 x H)"; b.span = bias_total;
+    b.valid = bias_valid; b.warps = bias_warps; b.maxLive = bias_live;
+    out->push_back(b);
   }
 
   // ATTENTION, MEASURED ONE LAUNCH AT A TIME.

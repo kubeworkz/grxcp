@@ -570,6 +570,63 @@ a variant of the untransposed one; it is a different traversal that happens to
 compute a transposed product. It is also the first use of `grx_cg.h` inside the
 library rather than in a test.
 
+**The block profiler was throwing away six launches, and they were the largest
+fusion target in the block.** `tests/bench/block_cycles.cpp` ran the qkv
+projections' per-head biases -- 3 projections x H heads -- and then called
+`probe.clear()` under a comment saying they were "counted with the other
+biases". They were not. The slots were discarded and no stage absorbed them, so
+every SHARE this bench reported was a fraction of a denominator that was too
+small, including the attention share published on the ledger.
+
+Counted, they are **11003 cycles at S=8 (6.8%)** and **19272 at S=16 (5.9%)** --
+larger than both remaining bias stages put together, and larger than either
+layernorm. Every share moved: attention 21.1% -> **19.8%** at S=16 and 14.7% ->
+**13.7%** at S=8, gelu 16.7% -> 15.7%.
+
+**I claimed the blocking RATIO was unharmed, and that was wrong.** The argument
+was that it is naive over blocked and both totals omitted the same six launches,
+so the omission cancels. It does not. Adding roughly the same CONSTANT to both
+sides of a ratio greater than one drags it toward one, and this stage is exactly
+constant -- `dnn_add_bias` does not care which sgemm produced the tensor it is
+adding to. Counting it costs 19067 cycles on the naive side and 19272 on the
+blocked side, and the S=16 figure falls from **2.301x to 2.224x**; S=8 falls from
+2.22x to **2.13x**.
+
+A ratio survives a PROPORTIONAL omission, not a constant one. So the discarded
+launches were not merely making shares wrong -- they were **inflating the
+headline speedup**, which is the number this project has quoted most often. The
+corrected pair is 2.13x at S=8 and 2.22x at S=16, and it was the regeneration
+that caught it rather than the reasoning.
+
+**Why it is so expensive is the interesting part.** Six launches of S x Dh --
+128 elements each at S=16 -- costing 3212 cycles apiece, against the mlp bias's
+7068 cycles for 1024 elements in ONE launch. It is not the arithmetic and it is
+barely the memory: it is six launches doing an eighth of the work each.
+
+**What this does to the fusion arithmetic.** The question that prompted the
+count was how much of the block is redundant round-tripping between adjacent
+elementwise stages. Two pairs were priced against the measured stages:
+
+| candidate | S=8 | S=16 | confidence |
+|---|---|---|---|
+| mlp bias -> gelu, fused as `gelu(f1 + b)` | 2.7% | 2.3% | high -- one launch simply disappears |
+| out-proj bias -> memcpy -> saxpy, fused to one pass | ~1.7% | ~1.6% | low -- the "one pass not three" factor is assumed, and the memcpy is not a probed launch so its cost is in nobody's total |
+| **qkv bias into the GEMM epilogue** | **6.8%** | **5.9%** | high -- it is the whole stage |
+
+The target that was invisible is bigger than both that were not.
+
+**And a caveat on the model those first two numbers came from.** Cycles per word
+is not a constant of a kernel: the same `dnn_add_bias` reads 6.17 cycles/word on
+the S x D tensor and 2.91 on S x F, because row length decides how per-row setup
+amortises. Any fusion estimate resting on a per-word rate is an estimate. The
+one number that does not rest on it is "this launch stops existing".
+
+Worth recording alongside: on the identical S x F shape, `dnn_gelu` costs **24.64
+cycles/word against `dnn_add_bias`'s 2.91**. Eight times, for the same traffic.
+gelu is computing, not moving, and no fusion reaches it -- which with softmax's
+68%-polynomial puts the exponential under roughly a fifth of the block as a
+floor.
+
 **Softmax was computing its exponential twice per element, and it is half of
 attention.** Attention is the largest stage in the block and the only one whose
 share grows with sequence length, so it was the obvious next target -- and there

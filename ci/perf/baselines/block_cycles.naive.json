@@ -31,6 +31,13 @@
           "valid": true
         },
         {
+          "name": "qkv bias (3 x H)",
+          "span": 11202,
+          "warps": 8,
+          "maxLive": 8,
+          "valid": true
+        },
+        {
           "name": "attention (2 GEMMs+mask+softmax)",
           "span": 37729,
           "warps": 96,
@@ -112,6 +119,13 @@
           "name": "qkv proj (3 GEMMs)",
           "span": 127124,
           "warps": 64,
+          "maxLive": 16,
+          "valid": true
+        },
+        {
+          "name": "qkv bias (3 x H)",
+          "span": 19067,
+          "warps": 16,
           "maxLive": 16,
           "valid": true
         },
