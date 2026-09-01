@@ -30,3 +30,23 @@ add_executable(test_npu_c930_model
 )
 target_include_directories(test_npu_c930_model PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 add_test(NAME npu_c930_model COMMAND test_npu_c930_model)
+
+# The fifth model, and the first one we did not write: the GRX930 team's own
+# npu_dpi_shim, vendored under third_party/grx930. The four models above were
+# built to produce a decision, which makes them evidence about the decision and
+# none about the register map -- we invented both sides. This one carries their
+# CSR addresses and computes a real INT8 GEMM, so the whole sequence is driven
+# against someone else's idea of what these registers do.
+#
+# Still a model. See third_party/grx930/README.md for the five defects measured
+# on import, and for why nothing green here says the c930 works.
+add_executable(test_npu_c930_shim
+    test_npu_c930_shim.cc
+    npu_c930.cpp
+    ${CMAKE_SOURCE_DIR}/third_party/grx930/npu_dpi_shim.c
+)
+target_include_directories(test_npu_c930_shim PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/third_party/grx930
+)
+add_test(NAME npu_c930_shim COMMAND test_npu_c930_shim)

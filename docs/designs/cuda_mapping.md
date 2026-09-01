@@ -1104,6 +1104,91 @@ kernel is a fusion shipping on an argument.
 The work is not lost: the five changed files and this bisection are attached to
 the session that found it.
 
+### 7.28 The NPU device is enumerable but not usable: there is no NPU memory path — **OURS, blocking**
+
+Found by trying to wire the GRX930 team's register model in, which is the first
+thing that ever asked what an NPU device would do after it was enumerated.
+
+`grxMalloc` → `allocate_device` → `vx_buffer_create(d->handle, …)`, and
+`probe_npu_device` sets `d.handle = nullptr` because an NPU has no Vortex
+handle. There is no `DeviceType::NPU` branch anywhere in `src/runtime/memory.cpp`
+— not in `allocate_device`, not in `allocate_device_physical`, not in the
+memcpy path. Measured directly against the installed driver:
+
+```
+vx_buffer_create(NULL, 64) -> 3     (VX_ERR_INVALID_VALUE)
+```
+
+So an allocation on an NPU device does not crash. It returns
+`grxErrorInvalidValue` — *invalid value* — which blames the caller's size
+argument for a device that simply has no allocator. That is the same class of
+mistake this project already fixed once on the module-load path, where a
+device with no pipeline was refusing with `grxErrorInvalidImage` and blaming
+the binary.
+
+The consequence is the one that matters: **`tests/libs/test_grxblas_npu.cpp`
+could never have passed, hardware or not.** Its first act inside
+`run_int8_case` is `grxMalloc`. Every one of its twenty-odd cases would fail at
+the allocation, before reaching a single register. That test has been compiled
+into every NPU build since it was written and has never executed a GEMM — it
+skips at `no NPU device found`, which reads like an absent-hardware skip and is
+actually hiding a missing subsystem behind it.
+
+Two more, found in the same pass and blocking the same thing:
+
+- **There is no seam to attach a register model to the *enumerated* device.**
+  `probe_npu_device` news its own `npu_c930_device_t` and calls
+  `npu_c930_detect` on it; `grxblas.cpp` has a *separate* file-static
+  `g_npu_dev` and calls `npu_c930_detect` on that. Two handles, two detections,
+  no injection point — so `npu_c930_attach_model`, which exists precisely so a
+  model can stand in for hardware, cannot reach either of the devices the
+  runtime actually uses. The four models in `test_npu_c930_model.cc` and the
+  fifth in `test_npu_c930_shim.cc` all drive the backend directly, below the
+  runtime, for this reason.
+- **`populate_npu_properties` hardcodes `p.backend = GRX_BACKEND_SILICON`** and
+  the name `"GRX930 NPU (silicon)"`, with the comment *"NPU is always real
+  hardware"*. It is a claim about what the device is, made by a function with
+  no way to know, in a codebase that has `GRX_BACKEND_SIMX` and
+  `GRX_BACKEND_RTLSIM` for exactly this distinction. Today nothing can attach a
+  model to the enumerated device, so the claim happens to hold; the moment the
+  seam above exists, the same line reports a software GEMM model as silicon.
+  The seam and this field have to land together — adding the first without the
+  second builds the fabrication, and per `AGENTS.md` the backend field must be
+  *derived* from how the device was reached, not asserted.
+
+None of this is a GRX930 problem and none of it is fixed by their shim. The
+shim makes the register half reachable (see `third_party/grx930/README.md`);
+the memory half does not exist yet on our side.
+
+### 7.29 Truncating a host pointer into a 32-bit base register fails silently, and not always out of range — **OURS, sharp edge**
+
+`grxblasGemmEx` refuses any A/B/C above `0xFFFFFFFF` before casting, because the
+NPU's `A_BASE`/`B_BASE`/`C_BASE` are 32-bit MMIO words. That refusal is right,
+and on a 64-bit host it refuses *every* real allocation — which is worth stating
+plainly, because it means the NPU GEMM path is unreachable from the public API
+on any host we have.
+
+The sharp edge is what happens when something below that guard truncates
+anyway. A truncated pointer is not reliably an out-of-range address; it is an
+**arbitrary** one. Measured, same machine, same program:
+
+| allocator | pointer | low 32 bits | inside the c930's 64 KB DDR window? |
+|---|---|---|---|
+| glibc `malloc` | `0x55ef9bfc62a0` | `0x9bfc62a0` | no |
+| ASAN `malloc` | `0x506000000020` | `0x00000020` | **yes — offset 32** |
+
+An address decoder can refuse the first. It cannot refuse the second: 32 is a
+perfectly ordinary DDR offset, so the DMA is aimed at a valid-looking location
+that has nothing to do with the buffer, and the corruption is silent.
+
+This was found the hard way. `test_npu_c930_shim.cc` originally truncated a live
+`malloc()` and asserted the result was refused. It passed — under glibc, by
+luck. Rebuilt under ASAN during a sabotage run, the same check went red because
+the allocator returned a pointer whose low word landed *inside* the window. A
+gate whose verdict depends on allocator internals is not a gate; both addresses
+are now pinned as constants and both outcomes are asserted, the second one
+precisely because it is the dangerous one.
+
 ## 8. Where GRX-G100 is *ahead* of the reference
 
 Worth recording, because the platform should expose these rather than

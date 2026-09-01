@@ -1702,6 +1702,35 @@ side is honest about what it can see, and that it can be exercised without one.
    gated here. The phase 7 exit gate needs both devices present at once. This
    is the item to hand back: GRXCP needs *access* to hardware or to a simulation
    that answers on the register map, not more host code.
+
+   **Half of that arrived, and it is the half that does not close the gate.**
+   The GRX930 team shipped `sim/npu_dpi_shim.c` — a standalone pure-C library
+   that answers on the CSR map with no Verilator dependency. It is vendored at
+   `third_party/grx930/` and wired up as a fifth register model
+   (`test_npu_c930_shim.cc`, `ctest -R npu_c930_shim`); driven through it, the
+   full `npu_c930_gemm` sequence completes and every element of C matches a host
+   INT8 reference. Five defects were measured on import and are recorded beside
+   it, two of which would have made a naive wire-up look green while computing
+   nothing.
+
+   It is **not** the simulation this item asks for. It computes the GEMM with a
+   C triple loop and its own header says it is not cycle-accurate, so it is a
+   model of the *interface*, not of the RTL: it can show that our host drives
+   the register map correctly, and it cannot show that the c930 does anything.
+   The exit gate is unchanged and still needs hardware. Per `AGENTS.md`, no green
+   run through it may be reported as the NPU working.
+
+   What it *does* change is where the next blocker is, and the next blocker is
+   ours, not theirs: **there is no NPU memory path at all** — see
+   `cuda_mapping.md` 7.28. `grxMalloc` on an NPU device reaches
+   `vx_buffer_create(nullptr, …)` and comes back `grxErrorInvalidValue`, so
+   `tests/libs/test_grxblas_npu.cpp` could never have passed even with a c930
+   attached; it fails at its first allocation, before any register. Nor is there
+   a seam to attach a model to the *enumerated* device — the runtime and
+   `grxblas.cpp` each hold their own `npu_c930_device_t` and detect
+   independently. Those two, plus deriving `p.backend` instead of asserting
+   `GRX_BACKEND_SILICON`, are what stand between this shim and an end-to-end
+   `grxblasGemmEx` run.
 2. ~~**`GRX_CAP_KERNEL_LAUNCH` refusals across the rest of the API.**~~ **Done.**
    `grxModuleLoad` now refuses with `grxErrorNotSupported` on a device without
    the bit, the same error the launch gives — "this device does not do kernels"

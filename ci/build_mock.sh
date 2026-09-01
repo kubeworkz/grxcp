@@ -449,7 +449,7 @@ else
   # block in context.cpp compiled to nothing, so the build contained the backend
   # and could not enumerate the device it drives. The test targets next to the
   # backend were never configured either.
-  for t in test_npu_c930 test_npu_c930_model; do
+  for t in test_npu_c930 test_npu_c930_model test_npu_c930_shim; do
     if [[ ! -x "$BUILD/cmake-npu/src/backends/npu_c930/$t" ]]; then
       echo "  FAIL  the NPU build did not produce $t"
       exit 1
