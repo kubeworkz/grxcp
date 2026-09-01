@@ -34,12 +34,41 @@
 using grxtest::check;
 using grxtest::section;
 
-// ---- NPU hardware limits (from c930_npu_top.sv defaults) ----
-static constexpr int NPU_MAX_M = 8;
-static constexpr int NPU_MAX_K = 16;
-static constexpr int NPU_MAX_N = 12;
-static constexpr int NPU_NUM_ROWS = 4;
-static constexpr int NPU_NUM_COLS = 4;
+// ---- NPU hardware limits ----
+//
+// TAKEN FROM THE HEADER THE BACKEND REFUSES WITH, not restated. These were six
+// independent constants carrying the same numbers as npu_c930.h, which means
+// the test agreed with itself and could not have caught either copy being
+// wrong. A test that owns a private copy of the limit it is testing is
+// checking its own arithmetic.
+//
+// The provenance also has to be right, and it was not. The old comment said
+// "from c930_npu_top.sv defaults"; c930_npu_top.sv declares MAX_M = 64,
+// MAX_K = 256, MAX_N = 8. These numbers are the SoC's INSTANTIATION --
+// c930_soc_top.sv passes 8 / 16 / 12 with a 4x4 array -- which is what
+// npu_c930.h says and what this now inherits. Getting that backwards is the
+// same confusion recorded as cuda_mapping.md 7.26: the GRX930 integration
+// guide tabulates MAX_N = 8 as a "core max" beside a SoC that instantiates 12,
+// and the RTL treats it as a buffer size rather than a cap.
+// The header is only on the include path when the NPU backend is configured,
+// and this file is globbed into both builds. Without the flag there is no NPU
+// backend in the binary and no device for this gate to reach, so main() skips
+// before any limit below is read; they are zero there because a zero cannot be
+// mistaken for a claim about hardware.
+#ifdef GRXCP_ENABLE_NPU
+#include "npu_c930.h"
+static constexpr int NPU_MAX_M    = NPU_C930_MAX_M;
+static constexpr int NPU_MAX_K    = NPU_C930_MAX_K;
+static constexpr int NPU_MAX_N    = NPU_C930_MAX_N;
+static constexpr int NPU_NUM_ROWS = NPU_C930_NUM_ROWS;
+static constexpr int NPU_NUM_COLS = NPU_C930_NUM_COLS;
+#else
+static constexpr int NPU_MAX_M    = 0;
+static constexpr int NPU_MAX_K    = 0;
+static constexpr int NPU_MAX_N    = 0;
+static constexpr int NPU_NUM_ROWS = 0;
+static constexpr int NPU_NUM_COLS = 0;
+#endif
 
 // ---- CPU reference GEMM (INT8 in, INT32 out, row-major, no transpose) ----
 //
@@ -243,6 +272,13 @@ static bool run_refusal_tests(grxblasHandle_t h) {
 
 // ---- Main ----
 int main() {
+#ifndef GRXCP_ENABLE_NPU
+  // Not a failure and not a pass: this binary contains no NPU backend, so the
+  // routing this gate exercises does not exist in it. Saying which of the two
+  // reasons a skip has is the point of saying it at all.
+  std::printf("built without GRXCP_ENABLE_NPU; no NPU backend here. skipping\n");
+  return 77;
+#else
   int count = 0;
   if (grxGetDeviceCount(&count) != grxSuccess || count <= 0) {
     std::printf("no devices; skipping\n");
@@ -343,4 +379,5 @@ int main() {
   }
   std::printf("\nall NPU GEMM tests passed\n");
   return grxtest::report();
+#endif  // GRXCP_ENABLE_NPU
 }

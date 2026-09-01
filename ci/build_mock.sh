@@ -468,6 +468,35 @@ else
     exit 1
   fi
   echo "  ok    and no NPU is enumerated on this machine, which has none"
+
+  # AND RUN THEM. Every add_test() in this project was registered into a suite
+  # nothing invoked: this gate built the cmake tree and checked that binaries
+  # EXISTED. Twenty-three tests were compiled every run and executed never,
+  # which is how a segfault lived in tests/libs/test_grxdnn_gelu.cpp -- reached
+  # only through ctest, because ctest runs it from the build tree where its
+  # reference vectors are not, and only in the NPU configuration, where the
+  # probe it then reaches read an uninitialised handle.
+  #
+  # Exit 77 is honoured as a skip by SKIP_RETURN_CODE, so the gates that need a
+  # device or a compiled .vxbin report "skipped" here rather than passing
+  # vacuously or failing for being unable to run. A test that cannot run says
+  # so; a test that fails is a failure.
+  if ! ctest --test-dir "$BUILD/cmake-npu" --output-on-failure \
+       > "$BUILD/ctest-npu.log" 2>&1; then
+    echo "  FAIL  ctest on the NPU configuration:"
+    grep -E "\(Failed\)|\*\*\*Failed" "$BUILD/ctest-npu.log" | head -8 |
+      sed 's/^/        /'
+    exit 1
+  fi
+  printf "  ok    ctest: %s\n" \
+    "$(grep -oE '[0-9]+% tests passed.*' "$BUILD/ctest-npu.log" | head -1)"
+  # Count the SUMMARY lines only. ctest names a skipped test twice -- once as it
+  # runs and once in the closing list -- so a bare `grep -c Skipped` reports
+  # double, which is how the first version of this line claimed 22 skips out of
+  # 24 tests.
+  printf "        %s skipped -- each needs a device or a compiled kernel\n" \
+    "$(grep -cE '^[[:space:]]+[0-9]+ - .* \(Skipped\)' \
+        "$BUILD/ctest-npu.log" || echo 0)"
 fi
 
 echo "all mock checks passed"

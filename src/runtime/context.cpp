@@ -263,7 +263,33 @@ static void populate_npu_properties(Device& d) {
 void probe_npu_device(std::vector<Device>& devices) {
   static std::once_flag npu_once;
   std::call_once(npu_once, [&devices] {
-    npu_c930_device_t* dev = new npu_c930_device_t;
+    // THE BRACES ARE THE FIX, AND THEY WERE MISSING.
+    //
+    // npu_c930_device_t is a C struct with no constructor, so `new T` -- no
+    // braces -- default-initialises it, which for a POD means every member is
+    // INDETERMINATE. Among those members are `read32` and `mmio_base`, and
+    // npu_c930_detect's first act is reg_read, which does
+    //
+    //     if (dev->read32) return dev->read32(dev->io_ctx, offset);
+    //
+    // an indirect call through whatever was in that word. `new T{}` value-
+    // initialises: every member zero, read32 null, mmio_base null, and detect
+    // takes the mmap path it was written for.
+    //
+    // IT DID NOT ALWAYS CRASH, which is why it survived. A fresh heap page from
+    // the OS is zeroed, so a program whose first act is grxGetDeviceCount gets
+    // a struct that happens to be zero and behaves. A program that reads a file
+    // FIRST does not: tests/libs/test_grxdnn_gelu.cpp loads its reference
+    // vectors before touching the device, and on that dirty heap this probe
+    // called a function pointer made of freed bytes. Reproduced deterministically
+    // by filling and freeing 4 MB of 0xAA before the first grx call.
+    //
+    // The predicate this probe uses was already tightened once -- detection is a
+    // write-readback now, because reading STATUS and accepting anything that was
+    // not 0xFFFFFFFF grew an NPU on any host where /dev/mem opened. That fixed
+    // what the answer was judged against. This is the handle the question was
+    // asked through, and it was never initialised at all.
+    npu_c930_device_t* dev = new npu_c930_device_t{};
     if (npu_c930_detect(dev) && dev->present) {
       Device d;
       d.index    = (int)devices.size();

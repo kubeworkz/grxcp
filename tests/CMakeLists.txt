@@ -75,7 +75,20 @@ foreach(src ${LIB_TEST_SRC})
     target_include_directories(${name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/unit)
     target_link_libraries(${name} PRIVATE ${_libs} grxrt)
     add_test(NAME ${name} COMMAND ${name})
-    set_tests_properties(${name} PROPERTIES SKIP_RETURN_CODE 77)
+    # RUN THEM WHERE THEIR REFERENCE VECTORS ARE.
+    #
+    # test_grxdnn_gelu, _attn and _block open gelu_ref.bin, attention_ref.bin
+    # and block_ref.bin by bare filename -- they were written to be run from
+    # tests/libs, which is how ci/run_real.sh runs them. Under ctest the working
+    # directory is the build tree, the open fails, and all three report FAILED.
+    # A gate that cannot find its own input has not measured anything, and
+    # saying "failed" there is a false report of a wrong answer.
+    #
+    # Pointed at the source directory they find the reference, then find no
+    # compiled .vxbin (this build does not produce one) and skip with 77, which
+    # is the truthful outcome.
+    set_tests_properties(${name} PROPERTIES SKIP_RETURN_CODE 77
+                         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/libs)
   endif()
 endforeach()
 
