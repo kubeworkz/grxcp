@@ -1057,6 +1057,53 @@ Verilator DDR stub already declares `logic [7:0] mem [0:MEM_BYTES-1]`, in a
 commit made after the one that wrote the guide.
 
 
+### 7.27 `sgemm_4x4` stops writing when it gains one more live pointer — **TOOLCHAIN, silent wrong answer**
+
+Adding a fused bias to the sgemm epilogue -- one `uint64_t` in the argument
+struct, one conditional load, one add per output -- makes `sgemm_4x4` produce
+**nothing**. Its outputs come back holding the test's poison value, so the
+kernel is not storing at all. `sgemm`, `sgemm_rb`, `sgemm_2d` and `sgemm_4x2`
+are all correct with the identical change.
+
+BISECTED BY SUBSTITUTION, because the obvious explanations are all wrong:
+
+| what the epilogue gains | `sgemm_4x4` |
+|---|---|
+| one more float in the store expression, no load | **correct** |
+| a load of a field that has been in the struct since ABI 1 (`stride_c`) | **breaks** |
+| a load of the new field at offset 112 | **breaks** |
+| the same field moved to offset 80 | **breaks** |
+| the load hoisted to the top of the kernel, before any per-lane guard | **breaks** |
+
+So it is not the new field, not the struct growing 112 -> 128 bytes, not the
+offset, and not a uniform load under divergence -- both placements fail and an
+existing field fails the same way. What separates the passing case from the
+failing ones is one additional 64-bit live value and one more load from the
+argument pointer.
+
+WHAT IT IS NOT. `ci/check_kernel_loops.py` reports **zero stack traffic in every
+kernel** in the failing build, and the k loops are byte-identical to the working
+one -- 14, 23 and 35 instructions for 2d, 4x2 and 4x4. `sgemm_4x4`'s stack frame
+SHRANK, 288 bytes to 256. If this were ordinary register pressure the frame
+would grow and the census would name the spill; it does neither.
+
+THE BOUNDARY IS THE ACCUMULATOR COUNT. `sgemm_2d` holds 4 accumulators and
+`sgemm_4x2` holds 8; both take the change. `sgemm_4x4` holds 16 and does not.
+All three are the same `micro_tile_body<RM, RN>` template, so the source is
+identical and only the instantiation differs.
+
+WHAT IT COSTS US. The fused bias is worth **5.9% of a transformer block at S=16
+and 6.8% at S=8** -- the qkv projections apply their bias in six launches over
+128 elements each, and a launch costs 2776 cycles before touching an element.
+The fusion is written and correct on every kernel that ships; `sgemm_4x4` is
+STAGED and the rule can never select it (7.26's neighbour, proved in
+`tests/libs/test_grxblas_rb.cpp`). It is held back because the oracle forces
+`sgemm_4x4` and a fusion that cannot be checked against the reference on every
+kernel is a fusion shipping on an argument.
+
+The work is not lost: the five changed files and this bisection are attached to
+the session that found it.
+
 ## 8. Where GRX-G100 is *ahead* of the reference
 
 Worth recording, because the platform should expose these rather than
