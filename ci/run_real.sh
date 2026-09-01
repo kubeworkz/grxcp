@@ -898,6 +898,36 @@ else
 fi
 
 echo
+echo "==> ATTENTION, ONE LAUNCH AT A TIME: what the largest stage is made of"
+# block_cycles reports attention as ONE stage, because that is what a caller
+# pays. It is also the largest stage in the block and the only one whose share
+# GROWS with sequence length, so "work on attention" was the obvious next move
+# and there was nothing to say which quarter of it to touch.
+#
+# Splitting it found softmax was HALF, at every length, rising to 53% at S=64 --
+# and the hot-loop census ranks dnn_softmax near the BOTTOM of its table at 2.00
+# instructions per float op. The rate was fine. There were simply a great many
+# float ops, because the kernel computed its exponential twice per element.
+#
+# Every region is summarised against its OWN clock and maxLive is checked
+# against occupancy, for the reason block_cycles does both: MCYCLE restarts at
+# zero at every launch.
+#
+# ~2 minutes. Feeds the perf baseline gate below.
+if [[ -n "$GRXGPU" && -d "$TOOLDIR/llvm-vortex" ]]; then
+  $CXX $CXXFLAGS -c "$ROOT/tests/bench/attention_cycles.cpp" \
+    -o "$BUILD/attention_cycles.o"
+  $CXX "${OBJS[@]}" "$BUILD/grxblas.o" "$BUILD/grxdnn.o" \
+    "$BUILD/attention_cycles.o" $LIBS -o "$BUILD/attention_bench"
+  if ! "$BUILD/attention_bench" --out "$BUILD/perf_attn.json"; then
+    rc=$?
+    [[ $rc -eq 77 ]] || exit $rc
+  fi
+else
+  echo "SKIPPED: needs --grxgpu <path> and a device toolchain in $TOOLDIR."
+fi
+
+echo
 echo "==> PERF BASELINE GATE: measured cycles against ci/perf/baselines/"
 # AGENTS.md section 4 has always said a moved number means real cycles moved.
 # Until now nothing compared any number to anything: the benches printed and a

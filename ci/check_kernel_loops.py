@@ -77,6 +77,21 @@ So the ranking below is printed with memory traffic beside it. A loop moving two
 or more words per float op has somewhere for its arithmetic to hide, and the
 only thing that settles whether a saving is real is a cycle count.
 
+AND IT COUNTS ONE LOOP, NOT THE KERNEL. dnn_softmax made three passes over each
+row and computed its exponential TWICE per element -- once to build the sum,
+once to write the result. Keeping the exponential in the output row instead
+halved the number of dev_exp calls and made softmax 1.39x to 1.74x faster over
+S = 8 to 64, with output bit-identical to the last digit. This census reported
+it as a REGRESSION: 34 instructions to 41, ins/fp 2.00 to 2.41, because the loop
+it looks at absorbed the store that the deleted third pass used to do. The
+kernel got smaller (259 bytes to 227) and its frame shrank (112 to 80) in the
+same change.
+
+Nothing is wrong with the number. It is the answer to "what is the innermost
+float loop made of", and that question stops tracking cost the moment work moves
+BETWEEN loops. Compare ins across a structural change and it will mislead; the
+bench is what settles it, every time.
+
 THE FLAG IS NOT A VERDICT, and sgemv is why. It carries the same marker at 2.0
 words per float op, and hoisting ITS address arithmetic was worth 1.12x to 1.94x
 on the span -- because it removed eight instructions of fifteen, not two of

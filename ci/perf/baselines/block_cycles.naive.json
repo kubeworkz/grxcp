@@ -18,21 +18,21 @@
       "stages": [
         {
           "name": "layernorm 1",
-          "span": 7388,
+          "span": 7385,
           "warps": 8,
           "maxLive": 8,
           "valid": true
         },
         {
           "name": "qkv proj (3 GEMMs)",
-          "span": 63212,
+          "span": 63293,
           "warps": 32,
           "maxLive": 16,
           "valid": true
         },
         {
           "name": "attention (2 GEMMs+mask+softmax)",
-          "span": 41961,
+          "span": 37729,
           "warps": 96,
           "maxLive": 16,
           "valid": true
@@ -46,42 +46,42 @@
         },
         {
           "name": "bias",
-          "span": 2143,
+          "span": 2197,
           "warps": 8,
           "maxLive": 8,
           "valid": true
         },
         {
           "name": "residual (saxpy)",
-          "span": 3223,
+          "span": 3717,
           "warps": 32,
           "maxLive": 16,
           "valid": true
         },
         {
           "name": "layernorm 2",
-          "span": 7586,
+          "span": 7570,
           "warps": 8,
           "maxLive": 8,
           "valid": true
         },
         {
           "name": "mlp GEMM 1 (D->F)",
-          "span": 84996,
+          "span": 84272,
           "warps": 128,
           "maxLive": 16,
           "valid": true
         },
         {
           "name": "bias",
-          "span": 4054,
+          "span": 4069,
           "warps": 8,
           "maxLive": 8,
           "valid": true
         },
         {
           "name": "gelu",
-          "span": 26511,
+          "span": 26557,
           "warps": 8,
           "maxLive": 8,
           "valid": true
@@ -103,7 +103,7 @@
       "stages": [
         {
           "name": "layernorm 1",
-          "span": 13783,
+          "span": 13680,
           "warps": 16,
           "maxLive": 16,
           "valid": true
@@ -117,7 +117,7 @@
         },
         {
           "name": "attention (2 GEMMs+mask+softmax)",
-          "span": 141237,
+          "span": 127749,
           "warps": 256,
           "maxLive": 16,
           "valid": true
@@ -145,7 +145,7 @@
         },
         {
           "name": "layernorm 2",
-          "span": 14012,
+          "span": 13501,
           "warps": 16,
           "maxLive": 16,
           "valid": true

@@ -66,6 +66,7 @@ EXPECTED = [
     ("perf_block_naive.json", "block_cycles.naive.json"),
     ("perf_gemm.json", "gemm_cycles.json"),
     ("perf_gemv.json", "gemv_cycles.json"),
+    ("perf_attn.json", "attention_cycles.json"),
 ]
 
 
@@ -98,6 +99,15 @@ def flatten(doc):
             tag = f"{sh['m']}x{sh['n']}x{sh['k']}"
             for field in ("sgemm_span", "tensor_span", "nslots", "busy_median"):
                 out[f"{tag} .{field}"] = sh[field]
+    elif doc.get("bench") == "attention_cycles":
+        # The sequence length and the region name are both part of the key. A
+        # region that vanished or was renamed is a STRUCTURAL change to what
+        # attention is made of, which is a different problem from its cycles
+        # moving, and it should read as one.
+        for p in doc["regions"]:
+            tag = f"S={p['seq']} {p['region']}"
+            out[f"{tag} .span"] = p["span"]
+            out[f"{tag} .warps"] = p["warps"]
     elif doc.get("bench") == "gemv_cycles":
         # The transpose is part of the key because sgemv is two traversals
         # wearing one name: OP_N is one thread per output row, OP_T is one warp

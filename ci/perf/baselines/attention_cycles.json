@@ -1,0 +1,131 @@
+{
+  "bench": "attention_cycles",
+  "device": {
+    "name": "GRX-G100 (simx)",
+    "sms": 1,
+    "warp": 4,
+    "warp_slots": 16
+  },
+  "regions": [
+    {
+      "seq": 8,
+      "region": "scores GEMM",
+      "span": 9763,
+      "warps": 16
+    },
+    {
+      "seq": 8,
+      "region": "causal mask",
+      "span": 6125,
+      "warps": 32
+    },
+    {
+      "seq": 8,
+      "region": "softmax",
+      "span": 17942,
+      "warps": 32
+    },
+    {
+      "seq": 8,
+      "region": "out GEMM",
+      "span": 9606,
+      "warps": 16
+    },
+    {
+      "seq": 8,
+      "region": "TOTAL",
+      "span": 43436,
+      "warps": 0
+    },
+    {
+      "seq": 16,
+      "region": "scores GEMM",
+      "span": 36436,
+      "warps": 64
+    },
+    {
+      "seq": 16,
+      "region": "causal mask",
+      "span": 13184,
+      "warps": 64
+    },
+    {
+      "seq": 16,
+      "region": "softmax",
+      "span": 48815,
+      "warps": 64
+    },
+    {
+      "seq": 16,
+      "region": "out GEMM",
+      "span": 26253,
+      "warps": 32
+    },
+    {
+      "seq": 16,
+      "region": "TOTAL",
+      "span": 124688,
+      "warps": 0
+    },
+    {
+      "seq": 32,
+      "region": "scores GEMM",
+      "span": 125935,
+      "warps": 256
+    },
+    {
+      "seq": 32,
+      "region": "causal mask",
+      "span": 29231,
+      "warps": 128
+    },
+    {
+      "seq": 32,
+      "region": "softmax",
+      "span": 153384,
+      "warps": 128
+    },
+    {
+      "seq": 32,
+      "region": "out GEMM",
+      "span": 80928,
+      "warps": 64
+    },
+    {
+      "seq": 32,
+      "region": "TOTAL",
+      "span": 389478,
+      "warps": 0
+    },
+    {
+      "seq": 64,
+      "region": "scores GEMM",
+      "span": 487869,
+      "warps": 1024
+    },
+    {
+      "seq": 64,
+      "region": "causal mask",
+      "span": 67581,
+      "warps": 256
+    },
+    {
+      "seq": 64,
+      "region": "softmax",
+      "span": 541166,
+      "warps": 256
+    },
+    {
+      "seq": 64,
+      "region": "out GEMM",
+      "span": 279249,
+      "warps": 128
+    },
+    {
+      "seq": 64,
+      "region": "TOTAL",
+      "span": 1375865,
+      "warps": 0
+    }
+  ]
+}

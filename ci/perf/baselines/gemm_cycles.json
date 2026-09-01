@@ -18,7 +18,7 @@
       "n": 16,
       "k": 16,
       "sgemm_span": 13571,
-      "tensor_span": 8659,
+      "tensor_span": 8993,
       "nslots": 64,
       "busy_median": 12910
     },
@@ -26,28 +26,28 @@
       "m": 16,
       "n": 16,
       "k": 32,
-      "sgemm_span": 21022,
-      "tensor_span": 10670,
+      "sgemm_span": 21056,
+      "tensor_span": 10677,
       "nslots": 64,
-      "busy_median": 20310
+      "busy_median": 20410
     },
     {
       "m": 16,
       "n": 16,
       "k": 64,
-      "sgemm_span": 36401,
-      "tensor_span": 14811,
+      "sgemm_span": 36484,
+      "tensor_span": 14771,
       "nslots": 64,
-      "busy_median": 35759
+      "busy_median": 35569
     },
     {
       "m": 32,
       "n": 32,
       "k": 32,
-      "sgemm_span": 82519,
+      "sgemm_span": 82328,
       "tensor_span": 30049,
       "nslots": 256,
-      "busy_median": 18604
+      "busy_median": 19036
     },
     {
       "m": 32,

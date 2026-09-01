@@ -372,6 +372,17 @@ present on disk changes nothing the test can see. This cost a wasted
 sabotage — a kernel was deliberately broken and every case still passed —
 which is the good outcome only because the sabotage was there to notice it.
 
+`tests/bench/attention_cycles.cpp` splits attention into its four launches --
+scores GEMM, causal mask, softmax, output GEMM -- over a sequence sweep, each
+region summarised against its OWN clock with maxLive checked against occupancy.
+It exists because block_cycles reports attention as one stage, which is what a
+caller pays and not what a person tuning it needs: attention is the largest
+stage and the only one whose share grows with sequence length, and there was
+nothing to say which quarter of it to touch. Softmax was half, at every length.
+It is still the largest single part after the fix, and that is what the checks
+pin -- per sequence length, rather than as a trend, because the first version
+compared the first share against the last and landed one rounding from red.
+
 `tests/bench/gemv_cycles.cpp` prices sgemv on the device, both traversals, three
 shapes each, and feeds the perf baseline gate. It exists because the hot-loop
 census ranks kernels by instructions per float op, and an instruction count is a

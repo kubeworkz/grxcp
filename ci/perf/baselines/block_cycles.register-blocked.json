@@ -18,77 +18,77 @@
       "stages": [
         {
           "name": "layernorm 1",
-          "span": 7388,
+          "span": 7385,
           "warps": 8,
           "maxLive": 8,
           "valid": true
         },
         {
           "name": "qkv proj (3 GEMMs)",
-          "span": 21468,
+          "span": 21333,
           "warps": 8,
           "maxLive": 8,
           "valid": true
         },
         {
           "name": "attention (2 GEMMs+mask+softmax)",
-          "span": 26604,
+          "span": 22177,
           "warps": 48,
           "maxLive": 16,
           "valid": true
         },
         {
           "name": "out proj (H GEMMs)",
-          "span": 10687,
+          "span": 10462,
           "warps": 8,
           "maxLive": 8,
           "valid": true
         },
         {
           "name": "bias",
-          "span": 2171,
+          "span": 2225,
           "warps": 8,
           "maxLive": 8,
           "valid": true
         },
         {
           "name": "residual (saxpy)",
-          "span": 3453,
+          "span": 3539,
           "warps": 32,
           "maxLive": 16,
           "valid": true
         },
         {
           "name": "layernorm 2",
-          "span": 7586,
+          "span": 7554,
           "warps": 8,
           "maxLive": 8,
           "valid": true
         },
         {
           "name": "mlp GEMM 1 (D->F)",
-          "span": 26829,
+          "span": 26162,
           "warps": 32,
           "maxLive": 16,
           "valid": true
         },
         {
           "name": "bias",
-          "span": 4071,
+          "span": 4086,
           "warps": 8,
           "maxLive": 8,
           "valid": true
         },
         {
           "name": "gelu",
-          "span": 26511,
+          "span": 26557,
           "warps": 8,
           "maxLive": 8,
           "valid": true
         },
         {
           "name": "mlp GEMM 2 (F->D)",
-          "span": 18579,
+          "span": 18881,
           "warps": 8,
           "maxLive": 8,
           "valid": true
@@ -103,7 +103,7 @@
       "stages": [
         {
           "name": "layernorm 1",
-          "span": 13516,
+          "span": 13657,
           "warps": 16,
           "maxLive": 16,
           "valid": true
@@ -117,7 +117,7 @@
         },
         {
           "name": "attention (2 GEMMs+mask+softmax)",
-          "span": 78298,
+          "span": 65264,
           "warps": 112,
           "maxLive": 16,
           "valid": true
@@ -145,7 +145,7 @@
         },
         {
           "name": "layernorm 2",
-          "span": 14012,
+          "span": 13501,
           "warps": 16,
           "maxLive": 16,
           "valid": true

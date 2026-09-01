@@ -88,10 +88,33 @@ __global__ void dnn_softmax(grxdnn_softmax_args* __UNIFORM__ arg) {
       part = grxdnn_dev::dev_fmax(part, xr[j]);
     const float row_max = tile.reduce(part, cg::greater<float>());
 
-    // Pass 2: the sum of the shifted exponentials.
+    // Pass 2: the shifted exponentials, SUMMED AND KEPT.
+    //
+    // This used to sum them and throw them away, and pass 3 computed every one
+    // a second time. The comment there said recomputing was cheaper than
+    // "staging the row anywhere a third pass could read it back from", and the
+    // premise was the mistake: there is nowhere to stage it only if you are
+    // looking for scratch memory. The output row is already allocated, already
+    // the right size, and already about to be written.
+    //
+    // So the exponential is computed once per element instead of twice, and
+    // pass 3 becomes a load, a multiply and a store. dev_exp is the expensive
+    // thing in this kernel by a wide margin -- the census prices this loop at
+    // 17 float operations, nearly all of them its polynomial -- and softmax is
+    // HALF of attention at every sequence length measured (49.4% at S=8 rising
+    // to 53.0% at S=64), which is why the second copy was worth finding.
+    //
+    // IN PLACE STAYS CORRECT, and it is the case to check. With y == x the
+    // write below lands on xr[j] -- but only after this lane has read it, and
+    // no other lane touches this j. Pass 3 then reads what pass 2 wrote rather
+    // than the input, which is exactly what it needs. row_max was reduced
+    // across the warp before any store happened.
     float sum = 0.0f;
-    for (uint32_t j = m.lane; j < cols; j += m.width)
-      sum += dev_exp(xr[j] - row_max);
+    for (uint32_t j = m.lane; j < cols; j += m.width) {
+      const float e = dev_exp(xr[j] - row_max);
+      yr[j] = e;
+      sum += e;
+    }
     const float row_sum = tile.reduce(sum, cg::plus<float>());
 
     // A row of zero width would divide by zero. The host refuses cols == 0, so
@@ -99,10 +122,9 @@ __global__ void dnn_softmax(grxdnn_softmax_args* __UNIFORM__ arg) {
     // every downstream layer and be blamed on something else.
     const float inv = (row_sum > 0.0f) ? (1.0f / row_sum) : 0.0f;
 
-    // Pass 3: write. Recomputing the exponential is cheaper than staging the
-    // row anywhere a third pass could read it back from.
+    // Pass 3: normalise what pass 2 left behind. No second exponential.
     for (uint32_t j = m.lane; j < cols; j += m.width)
-      yr[j] = dev_exp(xr[j] - row_max) * inv;
+      yr[j] *= inv;
   }
 }
 

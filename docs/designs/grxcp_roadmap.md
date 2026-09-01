@@ -570,6 +570,54 @@ a variant of the untransposed one; it is a different traversal that happens to
 compute a transposed product. It is also the first use of `grx_cg.h` inside the
 library rather than in a test.
 
+**Softmax was computing its exponential twice per element, and it is half of
+attention.** Attention is the largest stage in the block and the only one whose
+share grows with sequence length, so it was the obvious next target -- and there
+was no way to see which quarter of it to touch, because `block_cycles` reports it
+as one stage. It is four launches. `tests/bench/attention_cycles.cpp` splits
+them, each against its own clock with `maxLive` checked against occupancy, and
+the answer was immediate:
+
+| S | scores GEMM | causal mask | softmax | out GEMM |
+|---|---|---|---|---|
+| 8 | 19.4% | 12.2% | **49.4%** | 19.1% |
+| 16 | 24.1% | 8.7% | **49.7%** | 17.4% |
+| 32 | 25.5% | 5.9% | **52.1%** | 16.4% |
+| 64 | 27.5% | 3.8% | **53.0%** | 15.7% |
+
+Nothing pointed there. The hot-loop census ranks `dnn_softmax` near the BOTTOM
+of its cost table at 2.00 instructions per float op -- and the rate was correct.
+There were simply a great many float operations, because the kernel made three
+passes over each row and computed `dev_exp` in **two** of them: once to build the
+sum, once to write the result.
+
+The comment defending it said recomputing was cheaper than "staging the row
+anywhere a third pass could read it back from", and the premise was the mistake.
+There is nowhere to stage it only if you are hunting for scratch memory. The
+OUTPUT row is already allocated, already the right size, and already about to be
+written. Pass 2 keeps the exponential there and pass 3 becomes a load, a
+multiply and a store.
+
+**1.39x at S=8 rising to 1.74x at S=64 on softmax; 1.16x to 1.29x on attention;
+3.3% and 4.3% on the whole block.** The control is inside the measurement: the
+scores GEMM, the causal mask and the output GEMM are identical to the digit at
+every sequence length, so none of this is the relink. Attention's share of the
+block falls 17.1% -> 14.7% at S=8 and 24.2% -> 21.1% at S=16.
+
+**The arithmetic did not change and the output is bit-identical.** Both versions
+compute `e * inv`; the new one computes `e` once. All twelve softmax cases in
+`test_grxdnn` report the same worst-case difference to the last digit, in place
+included -- with `y == x` the write lands on `xr[j]` only after this lane has
+read it, and pass 3 then reads what pass 2 wrote, which is what it needs.
+
+**And the census called it a regression.** 34 instructions to 41, ins/fp 2.00 to
+2.41, because the loop it looks at absorbed the store the deleted third pass used
+to do. The kernel got smaller (259 bytes to 227) and its frame shrank (112 to
+80) in the same change. Nothing is wrong with the number -- it answers "what is
+the innermost float loop made of", and that question stops tracking cost the
+moment work moves BETWEEN loops. It is the fourth time this ranking has needed a
+caveat written next to it, and they are all now in the file's header.
+
 **`dnn_add_bias` was the worst kernel in the census and the change was
 reverted.** It headed the cost ranking at 13.00 instructions per float op, and
 its loop was five instructions of address arithmetic around one `fadd.s` -- an
