@@ -1709,6 +1709,87 @@ dependent, which is what this entry does.
   simulation. Every timing claim in this project already carries its backend for
   this reason.
 
+### 7.37 The RTL asserts on a misaligned access that SimX accepts — **OPEN, and the confound is not yet isolated**
+
+Recorded as an open thread with its evidence, not as a conclusion. It was found
+while trying to measure something else, and the something else is still
+unmeasured.
+
+**What was being attempted.** 7.12 established that the tensor unit's multi-CTA
+deadlock is a SimX defect the RTL does not share. That raised an obvious
+question — what does grxBLAS's single-CTA workaround actually cost? — and an
+equally obvious objection: nothing in reach could answer it, because every
+backend available was `NUM_CORES=1`, where the workaround costs nothing by
+construction. So `rtlsim` was rebuilt at `NUM_CORES=4`.
+
+It builds and enumerates correctly: `grx-smi` reports 4 SMs, 16 warps per SM,
+TCU and DXA on. `vecadd` passes on it. Two gates that pass at one core do not.
+
+**`test_grxblas` (scalar sgemm) hits an RTL assertion:**
+
+```
+%Error: VX_lsu_slice.sv:233: Assertion failed ... g_cores[0].core.execute.lsu_unit:
+        misaligned memory access, wid=0, PC=0x180001b80, addr=0x100000001, wsize=2!
+```
+
+A four-byte access at an address ending in `1`. Symbolized against
+`grxblas_kernels.elf`, `PC=0x180001b80` is in **`sgemm_shape`** — the entry
+point that reports the kernel's tile geometry to the host, which runs on every
+grxBLAS module load. The base it is writing through has come out as
+`0x100000001`, and the host passes `sargs.out = (uint64_t)(uintptr_t)dshape`
+from a `grxMalloc` that is at least 256-aligned. So the pointer is corrupted
+between the host writing it and the kernel dereferencing it, and the corruption
+is a single byte.
+
+**`test_grxblas_ex` (tensor) computes wrong answers**, in a scattered pattern
+that does not look shape-dependent: `exactly one tile, one k step` passes,
+`four tiles, two k steps` fails, `16x16x16` passes, `5x3x7` fails, `17x9x13`
+passes, and `1x1x1 -- one element, one product` fails by 6. The same binary is
+exact on `simx` and was exact on the one-core `rtlsim`.
+
+**THE CONFOUND, STATED RATHER THAN GUESSED AROUND.** Two configurations have
+been run, and they differ in more than one variable:
+
+| | cores | TCU | warps | `test_grxblas` |
+|---|---|---|---|---|
+| first `rtlsim` build | 1 | off | 4 | passes |
+| current `rtlsim` build | **4** | **on** | **16** | asserts |
+
+The one-core, TCU-**on** build that proved 7.12 was overwritten before
+`test_grxblas` was run against it, so the discriminating run does not exist.
+Core count is the interesting hypothesis and it is not the only one available.
+**This entry does not claim multi-core is broken.** It claims an assertion
+fires, names the function, and names what has not been separated.
+
+### The durable part, which does not depend on isolating that
+
+`VX_lsu_slice.sv:233` is an assertion. SimX has no equivalent — the same access
+on the same binary produces no diagnostic there at all, on any configuration.
+Whatever is corrupting that pointer has been in the tree for as long as
+`sgemm_shape` has, and every run on every backend anyone has used was silent
+about it.
+
+That is a class, not an incident: **a functional model that tolerates a
+misaligned access hides every misaligned access.** The project already carries
+one gap of this shape from the other direction — 7.6, where the FPGA command
+processor rounds unaligned transfers up to 64 bytes with all strobes set, which
+is silent corruption rather than a stop. Between them, misalignment is invisible
+on `simx`, corrupting on FPGA, and fatal on RTL, and only the last one tells
+you.
+
+The cheap general lesson is the one to keep: **the backend that complains
+loudest is the one worth running first**, and it had never been run.
+
+### What would settle it
+
+1. Rebuild `rtlsim` at `NUM_CORES=1` with TCU on and 16 warps — the missing cell
+   in the table — and run `test_grxblas`. One variable, one run.
+2. If it asserts there too, the bug is in `sgemm_shape`'s argument handling and
+   has nothing to do with core count, which makes it a live defect on every
+   backend and merely invisible on most.
+3. If it passes, the difference is core count and the question becomes what
+   `grxMalloc` or the argument staging does differently with four cores.
+
 ## 8. Where GRX-G100 is *ahead* of the reference
 
 Worth recording, because the platform should expose these rather than
