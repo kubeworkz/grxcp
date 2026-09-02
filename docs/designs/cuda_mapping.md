@@ -1614,9 +1614,46 @@ DXA, 4 warps per SM instead of 16. So:
 - Phase 3's tensor gate cannot run here at all: `grxblasGemmEx`'s fp16 path
   needs a TCU this build does not have, and the honest device correctly refuses
   it rather than pretending.
-- Phase 2's and phase 4's `rtlsim` clauses are separate runs and have not been
-  made. Phase 4's row now says the platform runs there rather than that it
-  cannot.
+- Nothing here says anything about silicon. `rtlsim` executes the RTL, which is
+  a real step past `simx` executing a functional model of it, and it is still a
+  simulation.
+
+### Phase 2 is fully met on `rtlsim`, and phase 4 is not
+
+Run after the driver existed, same binaries, `VORTEX_DRIVER=rtlsim`:
+
+| phase 2 clause | result |
+|---|---|
+| a warp reduction using `__shfl_down_sync` | `sample_04_warp_shuffle_reduce` PASSED |
+| `grx-sanitize` detects a planted out-of-bounds write and reports the source line | 1 finding: `oob-global write of 4 bytes at tests/kernels/sanitize/kernel.cpp:31:29 in san_oob_write`, with the address, the nearest live allocation, and the thread |
+| `grx-prof` produces a Perfetto trace a human can read | 9 events — `h2d`, `d2h`, `fill`, `device cycles` |
+
+`grx-prof`'s own banner is backend-aware and says the right thing without being
+told: *"On rtlsim that measures the simulator, not the device. Compare kernels
+by cycles, not by milliseconds."*
+
+**Phase 4's `.grx.cpp` clause holds; its CUDA-samples clause does not, and the
+reason is worth keeping.** `grxcc_vecadd` — a single-source `.grx.cpp` compiled
+by `grxcc` — passes on `rtlsim`. But `sample_01_vector_add` and
+`sample_03_reduction_shared` are refused:
+
+```
+launch exceeds a per-core resource bound
+```
+
+Not a defect. `01_vector_add.cu` line 48 reads `const int threadsPerBlock = 32`,
+and this configuration's `maxThreadsPerBlock` is **16** — 4 lanes x 4 warps,
+against `simx`'s 4 x 16 = 64. The device refuses a launch it cannot hold, by
+name, instead of running a truncated grid.
+
+That is the portability lesson underneath phase 4's clause and it is the same
+one CUDA code carries everywhere: **a block size written as a constant is a
+constant about one machine.** The samples are unmodified CUDA, which is the
+point of the clause, and unmodified CUDA picks 32 or 256 without asking. The
+clause is met on `simx` and cannot be met on this `rtlsim` config by any
+amount of work on our side — the honest options are to run `rtlsim` at a
+config with more resident warps, or to record the clause as configuration
+dependent, which is what this entry does.
 - Nothing here says anything about silicon. `rtlsim` executes the RTL, which is
   a real step past `simx` executing a functional model of it, and it is still a
   simulation. Every timing claim in this project already carries its backend for

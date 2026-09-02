@@ -224,6 +224,13 @@ died on its own first finding. It now indexes reports by grid-linear thread,
 and `GRX_CAP_GLOBAL_ATOMICS` reports the capability so nothing else has to
 discover this the same way (cuda_mapping.md 7.16).
 
+**Progress — `grx-prof` v1 is done, and the phase 2 exit gate is MET on BOTH
+BACKENDS.** All three clauses now run on a real Verilated GRX-G100 as well as
+on `simx`: the `__shfl_down_sync` reduction passes, `grx-sanitize` finds the
+planted out-of-bounds write and names `kernel.cpp:31:29`, and `grx-prof`
+produces a nine-event trace whose own banner says it is measuring the
+simulator. See cuda_mapping.md 7.36.
+
 **Progress — `grx-prof` v1 is done, and the phase 2 exit gate is MET.**
 
 The gate's three clauses: a `__shfl_down_sync` warp reduction producing correct
@@ -1040,7 +1047,7 @@ and the second silently did not. `cuda_mapping.md` section 7.23.
 | clause | state |
 |---|---|
 | a single `.grx.cpp` with `__global__` and `<<<>>>` compiles with `grxcc` and runs correctly on `simx` | **met** — PHASE 4 GATE |
-| ...and on `rtlsim` | **the platform runs there now** (7.36); this phase's own samples have not been re-run on it — see below |
+| ...and on `rtlsim` | **split.** `grxcc_vecadd`, a single-source `.grx.cpp`, runs correctly. The unmodified CUDA samples do NOT: `threadsPerBlock = 32` against this config's `maxThreadsPerBlock = 16`, refused by name as "launch exceeds a per-core resource bound". A block size written as a constant is a constant about one machine — cuda_mapping.md 7.36 |
 | at least ten CUDA samples compile unmodified except for the `grx_cuda_compat.h` include | **met** — eleven do, and run |
 | the conformance rate improves measurably over phase 1's published number | **met** — 61% to 65% |
 
