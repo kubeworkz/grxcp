@@ -1455,6 +1455,56 @@ Nothing in grxcp reads these counters today. The rule this records is for when
 something does: a performance number is only reportable alongside the backend it
 came from, and `GRX_BACKEND_MODEL` numbers are not the device's.
 
+**Both counters were then explained by the GRX930 team, and the explanations
+were checked against the RTL rather than accepted. One held; one did not.**
+
+`DMA_CT >= CYCLE_COUNT` is expected and correct. They are on different time
+bases: `DMA_CT` starts at `CTRL.START` and spans the whole DMA phase (A/B load,
+core compute, C writeback), while `CYCLE_COUNT` starts later, when the core
+receives `i_start` from the DMA. True on all twenty shapes measured. Nothing to
+do.
+
+`OP_COUNT` was given as
+
+```
+OP_COUNT = ceil(M/NUM_ROWS) * ceil(N/NUM_COLS) * ceil(K/NUM_ROWS) * NUM_ROWS * NUM_COLS
+```
+
+— hardware PE firings, `NUM_ROWS x NUM_COLS` per `S_RUN` cycle. **It misses all
+twenty shapes**, low by 10x to 40x. The measured relation is
+
+```
+OP_COUNT = 10 * M * ceil(N/NUM_COLS) * ceil(K/NUM_ROWS) * NUM_ROWS * NUM_COLS
+```
+
+which reproduces every one of the twenty exactly. Two differences: a factor of
+10 (the `S_RUN` phase runs ten cycles per pass, not one), and **`M` is not
+tiled** — it enters linearly where their formula has `ceil(M/NUM_ROWS)`. That is
+the physically sensible shape for a systolic array: `N` and `K` are what the
+array's dimensions tile, while `M` rows stream through it.
+
+The method is worth recording as much as the result. A first fit over the
+original twelve shapes gave `... * 10 * min(M, NUM_ROWS)`, which also matched
+all twelve. It was **not** reported, because a fit to the points it was fitted
+to is not evidence. Eight new shapes were chosen to break it -- `M = 3, 5, 6, 7`
+straddle the tile boundary where `min()` and linear `M` diverge -- predicted in
+advance, and then run:
+
+| shape | first fit predicted | RTL measured |
+|---|---|---|
+| M=3 N=4 K=4 | 480 | 480 |
+| M=5 N=4 K=4 | 1280 | **800** |
+| M=6 N=4 K=4 | 1280 | **960** |
+| M=7 N=8 K=4 | 2560 | **2240** |
+| M=8 N=12 K=5 | 7680 | 7680 |
+
+Three misses, all at a partial second tile, all in the direction that says `M`
+is linear. The corrected form was then checked against all twenty and misses
+none. **It is still a fit, not a reading of the RTL**, and it is reported to the
+team that owns the design as a fit — the same standard we held them to when
+their `CYCLE_COUNT` explanation turned out to be right and our guess about it
+was wrong (7.28).
+
 ### 7.35 `grxblasGemmEx` runs on the c930 RTL — **OURS, done; still not silicon**
 
 `tests/rtl/test_npu_rtl.cpp`, built only with `-DGRXCP_C930_RTL_DIR=<path>`.
