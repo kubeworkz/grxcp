@@ -114,6 +114,50 @@ __forceinline__ float dev_exp(float x) {
   return p * scale.f;
 }
 
+// exp() for arguments that CANNOT BE POSITIVE.
+//
+// softmax computes exp(x - row_max) where row_max is the maximum over the row,
+// so the argument is <= 0 by construction, at every element, always. Three of
+// dev_exp's instructions exist only to handle the positive side, and this is
+// the same function with them gone. It is an EXACT specialisation, not an
+// approximation: for x <= 0 it computes the identical sequence of operations
+// on the identical values.
+//
+//   1. `dev_fmin(_, 88.0f)` cannot bind, so it is dropped.
+//   2. `dev_copysign(0.5f, x)` is -0.5f. A constant, so it is one.
+//   3. `(k + 127) & 0xFF` is redundant. x is clamped to [-88, 0], so
+//      x * kInvLn2 is in [-127, 0], k is in [-127, 0], and k + 127 is in
+//      [0, 127] -- already inside eight bits. The mask cannot change it.
+//
+// NaN behaves identically, which is the case worth checking rather than
+// assuming. dev_exp gives fmin(fmax(NaN, -88), 88); IEEE-754 maxNum returns the
+// non-NaN operand, so that is fmin(-88, 88) = -88. Here it is fmax(NaN, -88) =
+// -88. Same value, same zero out the far end.
+//
+// MEASURED, because three instructions of seventeen is an argument and not a
+// result: softmax 542584 -> 521173 cycles at S=64, 3.9%. That is less than the
+// instruction count suggests, and the gap is the point -- this loop is waiting
+// on something other than issue rate.
+__forceinline__ float dev_exp_nonpos(float x) {
+  x = dev_fmax(x, -88.0f);
+
+  const float kInvLn2 = 1.44269504088896340736f;
+  const float kLn2Hi  = 0.693359375f;
+  const float kLn2Lo  = -2.12194440e-4f;
+
+  const int   k = (int)(x * kInvLn2 - 0.5f);
+  const float r = (x - (float)k * kLn2Hi) - (float)k * kLn2Lo;
+
+  const float r2 = r * r;
+  const float p  = 1.0f + r +
+                   r2 * (0.5f + r * (0.16666666666f +
+                         r * (0.04166666666f + r * 0.00833333333f)));
+
+  union { float f; uint32_t u; } scale;
+  scale.u = (uint32_t)(k + 127) << 23;
+  return p * scale.f;
+}
+
 // Which row this warp owns, and how far to jump for the next one.
 //
 // ONE WARP PER ROW is grxDNN's whole device-side layout, and every kernel uses

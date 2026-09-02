@@ -10,121 +10,121 @@
     {
       "seq": 8,
       "region": "scores GEMM",
-      "span": 7295,
+      "span": 7379,
       "warps": 16
     },
     {
       "seq": 8,
       "region": "causal mask",
-      "span": 6341,
+      "span": 6480,
       "warps": 32
     },
     {
       "seq": 8,
       "region": "softmax",
-      "span": 18385,
+      "span": 17698,
       "warps": 32
     },
     {
       "seq": 8,
       "region": "out GEMM",
-      "span": 7438,
+      "span": 7305,
       "warps": 16
     },
     {
       "seq": 8,
       "region": "TOTAL",
-      "span": 39459,
+      "span": 38862,
       "warps": 0
     },
     {
       "seq": 16,
       "region": "scores GEMM",
-      "span": 30389,
+      "span": 29979,
       "warps": 64
     },
     {
       "seq": 16,
       "region": "causal mask",
-      "span": 13585,
+      "span": 13560,
       "warps": 64
     },
     {
       "seq": 16,
       "region": "softmax",
-      "span": 50137,
+      "span": 48488,
       "warps": 64
     },
     {
       "seq": 16,
       "region": "out GEMM",
-      "span": 23294,
+      "span": 23426,
       "warps": 32
     },
     {
       "seq": 16,
       "region": "TOTAL",
-      "span": 117405,
+      "span": 115453,
       "warps": 0
     },
     {
       "seq": 32,
       "region": "scores GEMM",
-      "span": 105191,
+      "span": 107316,
       "warps": 256
     },
     {
       "seq": 32,
       "region": "causal mask",
-      "span": 29661,
+      "span": 29521,
       "warps": 128
     },
     {
       "seq": 32,
       "region": "softmax",
-      "span": 153024,
+      "span": 151407,
       "warps": 128
     },
     {
       "seq": 32,
       "region": "out GEMM",
-      "span": 76686,
+      "span": 76616,
       "warps": 64
     },
     {
       "seq": 32,
       "region": "TOTAL",
-      "span": 364562,
+      "span": 364860,
       "warps": 0
     },
     {
       "seq": 64,
       "region": "scores GEMM",
-      "span": 415322,
+      "span": 419798,
       "warps": 1024
     },
     {
       "seq": 64,
       "region": "causal mask",
-      "span": 67502,
+      "span": 68090,
       "warps": 256
     },
     {
       "seq": 64,
       "region": "softmax",
-      "span": 542584,
+      "span": 527204,
       "warps": 256
     },
     {
       "seq": 64,
       "region": "out GEMM",
-      "span": 271289,
+      "span": 271783,
       "warps": 128
     },
     {
       "seq": 64,
       "region": "TOTAL",
-      "span": 1296697,
+      "span": 1286875,
       "warps": 0
     }
   ]

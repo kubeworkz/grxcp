@@ -38,6 +38,7 @@ namespace cg = grx::cg;
 
 using grxdnn_dev::kNegInf;    // see dnn_device.h for why it is not -inf
 using grxdnn_dev::dev_exp;
+using grxdnn_dev::dev_exp_nonpos;
 using grxdnn_dev::RowMap;
 using grxdnn_dev::row_map;
 
@@ -111,7 +112,8 @@ __global__ void dnn_softmax(grxdnn_softmax_args* __UNIFORM__ arg) {
     // across the warp before any store happened.
     float sum = 0.0f;
     for (uint32_t j = m.lane; j < cols; j += m.width) {
-      const float e = dev_exp(xr[j] - row_max);
+      // xr[j] - row_max is <= 0 by construction; see dev_exp_nonpos.
+      const float e = dev_exp_nonpos(xr[j] - row_max);
       yr[j] = e;
       sum += e;
     }

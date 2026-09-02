@@ -840,6 +840,71 @@ makes the library say what it launched; the oracle asserts it, and the
 assertion was watched failing with the force hook disabled before it was
 believed ("forced 2d-i but the library ran naive").
 
+**Softmax, ablated rather than reasoned about.** With the scores GEMM 1.18x
+faster, softmax is the largest stage again at 41.8% of attention. It is three
+passes over the row with `dev_exp` in the middle, and the file already said the
+exponential was "the expensive thing in this kernel by a wide margin" — which
+is an assertion until something removes it. Four ablations, each a deliberately
+WRONG kernel run only to price a part, at S=64:
+
+| ablation | softmax | saved |
+|---|---|---|
+| control | 542584 | — |
+| **`dev_exp` removed** | 199253 | **63.3%** |
+| exp's polynomial cut to `1+r` | 386077 | 28.8% (**45.6% of the exp**) |
+| pass 1, the row max, removed | 479003 | 11.7% |
+| pass 3, the normalise, removed | 497121 | 8.4% |
+
+The exponential is confirmed at 63.3%, and the surprise is inside it: the
+polynomial is under half of it. The range reduction, the clamp and the
+exponent-field construction together cost MORE than the degree-5 series they
+exist to support.
+
+**Three of those instructions are dead in softmax specifically, and provably
+so.** `dev_exp`'s argument here is `xr[j] - row_max`, which is `<= 0` at every
+element by construction. So the clamp to `+88` cannot bind;
+`dev_copysign(0.5f, x)` is the constant `-0.5f`; and `(k + 127) & 0xFF` is
+redundant, because `x` in `[-88, 0]` gives `k` in `[-127, 0]` and `k + 127`
+already fits in eight bits. `dev_exp_nonpos` is `dev_exp` with those three
+gone.
+
+**Exact, and checked as such rather than argued.** A host-side comparison of
+the two functions over 8818703 values — every representable negative float down
+to -200 by bit pattern, plus the clamp edges and NaN — reports zero
+differences, bit for bit. NaN matters and is not obvious: `dev_exp` gives
+`fmin(fmax(NaN, -88), 88)`, and IEEE-754 `maxNum` returns the non-NaN operand,
+so both forms land on -88. The comparison was then sabotaged (one constant
+moved by 1e-4) and reported 63 mismatches, because a check that cannot fail
+proves nothing.
+
+**The census is the measurement that carries this, not the clock.**
+`dnn_softmax`'s element loop goes **41 instructions to 38, 17 float operations
+to 15**, deterministically; `dnn_gelu` (46/32) and `dnn_layernorm` (15/3) are
+unchanged to the digit, which is what confirms the specialisation did not leak
+into the shared `dev_exp`. Cycles move the right way at every sequence length
+— softmax 1.039x, 1.034x, 1.011x, 1.029x at S=8/16/32/64 — but the untouched
+control stages in the same runs scatter 0.979x to 1.018x, so at S=32 the gain
+is smaller than the largest control movement and attention's total is flat
+(0.999x). **The cycle figure is inside the relink band and is not claimed as a
+measurement; the instruction count is exact and is.**
+
+**Why this is kept where `dnn_add_bias` was reverted.** That change was also
+bit-identical and also strictly less work, and it was dropped because the block
+did not move — the kernel "does two loads and a store per float op; the
+arithmetic was hiding underneath the memory traffic the whole time". The
+difference is not judgement, it is the first ablation above: removing the
+exponential takes 63.3% of softmax away, which a memory-bound kernel cannot do.
+Softmax is compute-bound, which is the condition under which removing
+arithmetic pays and the condition `dnn_add_bias` did not meet.
+
+**Still on the table and deliberately not taken.** Pass 3 is 8.4% and reads
+back what pass 2 wrote; keeping the row in registers would remove that load,
+but each lane holds `cols / warp_size` floats — sixteen at S=64 — and 7.27 is
+what happens to this toolchain near a register cliff. Folding the normalise
+into the output GEMM instead is arithmetically free — scaling `out`'s rows is
+eight times less work than scaling `P` at Dh=8 — but it changes what
+`grxdnnSoftmaxForward` returns, and that is a public API and a gated kernel.
+
 **The data-type line was wrong about the hardware, in two different ways.**
 bf16 does not exist on this tensor unit in any configuration — there is no knob
 to enable — so it is struck rather than deferred, and `grxblasTensorType_t` has
