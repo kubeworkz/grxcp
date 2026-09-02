@@ -1709,7 +1709,7 @@ dependent, which is what this entry does.
   simulation. Every timing claim in this project already carries its backend for
   this reason.
 
-### 7.37 At `NUM_CORES=4` the RTL delivers kernel arguments on every *other* launch — **isolated to core count; mechanism still open**
+### 7.37 With more than one core, `rtlsim` delivers kernel arguments on every *other* launch — **reproduced at 2 and 4 cores, absent on `simx`, mechanism still open**
 
 This entry was first written with the confound unresolved and a misaligned
 pointer as its headline. Both have moved. The confound is isolated, the
@@ -1720,11 +1720,17 @@ keeping.
 
 **The variable is core count, and the missing cell now exists.**
 
-| | cores | TCU | warps | `test_grxblas` | `test_grxblas_ex` |
+| backend | cores | TCU | warps | `test_grxblas` | args delivered |
 |---|---|---|---|---|---|
-| build A | 1 | off | 4 | passes | n/a |
-| **build C** | **1** | **on** | **16** | **passes** | **passes** |
-| build B | **4** | on | 16 | RTL assertion | 4 failures |
+| `rtlsim` A | 1 | off | 4 | passes | 8/8 |
+| `rtlsim` C | 1 | on | 16 | passes | 8/8 |
+| **`rtlsim`** | **2** | on | 16 | **RTL assertion** | **4/8** |
+| **`rtlsim`** B | **4** | on | 16 | **RTL assertion** | **4/8** |
+| `simx` | 1 | on | 16 | passes | 8/8 |
+| **`simx`** | **4** | on | 16 | **passes** | **8/8** |
+
+The last row is what turns this from a thing we saw into a bounded defect, and
+the two-core row is what kills the obvious theory.
 
 Build C is the run this entry previously asked for and did not have. It holds
 TCU and warp count at build B's values and changes only `NUM_CORES`. Both gates
@@ -1785,13 +1791,51 @@ visible to the core the CTA landed on, or a dispatch path that only publishes
 arguments on alternate transactions. A period of 2 on a 4-core part is itself
 unexplained and worth explaining.
 
-What would narrow it further:
+Two of the three runs this entry asked for have been made, and both narrowed
+it.
 
-1. `NUM_CORES=2`. A period of 2 at two cores says something different than a
-   period of 2 at four.
-2. Instrumenting the runtime's argument staging to print the device address it
-   writes and having a kernel report the address it reads.
-3. Whether any kernel with a larger argument blob shows the same period —
+**`simx` at `NUM_CORES=4` delivers arguments on all 8 of 8 launches** and
+passes both gates. The functional model at the same core count, warp count and
+TCU configuration does not reproduce it. grxcp is byte-identical across the two
+— `launch_common` hands the same blob to the same `vx_enqueue_launch` — so
+grxcp is exonerated, and so is everything the two backends share, which
+includes `sim/common/cmd_processor.cpp`, where the blob is staged by
+`CMD_MEM_WRITE`, and `sw/runtime/common/utils.cpp`. What is left is
+`sw/runtime/rtlsim/vortex.cpp`, the Verilated model, or the RTL.
+
+Worth recording that the two drivers are structurally identical exactly where
+it would have been easy to lay the blame: both run `processor_.run()` on a
+`std::async` future, both let `dram_read`/`dram_write` reach `ram_` without
+waiting on it, and both guard only `vortex_dcr_read` with `future_.wait()`.
+That asymmetry looked like the answer for about ten minutes. It is present in
+the backend that works.
+
+**`NUM_CORES=2` behaves exactly like `NUM_CORES=4`** — the same 4/8, the same
+alternation, the same phase. A period of 2 at two cores and a period of 2 at
+four is not a round-robin over cores; that would give a period of 4 on the
+four-core part. Whatever alternates has two states regardless of how many cores
+exist, and it only exists once more than one does.
+
+**The corruption is finer than a cache line.** In the run that asserts, the
+kernel's `abi_version` load at offset 0 returns 3 correctly — it passes its own
+guard — while `out` at offset 8 does not. Both fields sit inside the same
+16-byte struct and the same 64-byte line, so a whole-line staleness story does
+not survive it.
+
+One attribution was checked rather than assumed. `PC=0x180001b80` was first
+symbolized against `grxblas_kernels.elf`, but the module actually loaded is
+`grxlibs_kernels.vxbin`. Disassembling the second binary puts the same
+`sw a2,0(a0)` at the same address in `__vx_kentry_sgemm_shape`, so the reading
+holds — but it held by luck, and the check cost one command.
+
+What is still unmeasured, and would narrow it further:
+
+1. Instrumenting the runtime's argument staging to print the device address it
+   writes, and having a kernel report the address it reads.
+2. Whether the L1 dcaches are implicated. This configuration runs
+   `DCACHE_WRITEBACK=1` with `L2_ENABLED=0`, so there is no shared level below
+   the per-core L1s. A build with the dcache disabled would say.
+3. Whether a kernel with a larger argument blob shows the same period.
    `vecadd` passes, but its gate launches once, which is a coin flip on a
    pattern with period 2.
 
