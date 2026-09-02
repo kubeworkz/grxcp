@@ -17,6 +17,11 @@
 - [Heterogeneous devices](designs/heterogeneous_devices.md) — **design, not
   built**: where the backend seam goes for the GRX930 NPU, why abstracting the
   driver is the wrong answer, and which of it can be gated before a c930 exists
+- [The GRXCP developer interface](designs/developer_interface.md) — **a
+  proposal, not built**: who the developer is, why the 2776-cycle launch cost
+  forces a graph-level ingestion rather than an eager backend, the bf16
+  asymmetry between the GPU tensor unit and the c930, and what replaces the
+  conformance number if we stop courting CUDA ports
 - [grxcc](designs/grxcc.md) — the single-source driver: why it orchestrates
   rather than parses, where the two passes are cut, and exactly what a
   text-level rewriter cannot see
