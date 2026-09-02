@@ -1107,52 +1107,114 @@ Verilator DDR stub already declares `logic [7:0] mem [0:MEM_BYTES-1]`, in a
 commit made after the one that wrote the guide.
 
 
-### 7.27 `sgemm_4x4` stops writing when it gains one more live pointer — **TOOLCHAIN, silent wrong answer**
+### 7.27 `sgemm_4x4` loses every SIMT split/join when it gains one more live pointer — **TOOLCHAIN, silent wrong answer, mechanism now known**
 
-Adding a fused bias to the sgemm epilogue -- one `uint64_t` in the argument
-struct, one conditional load, one add per output -- makes `sgemm_4x4` produce
-**nothing**. Its outputs come back holding the test's poison value, so the
-kernel is not storing at all. `sgemm`, `sgemm_rb`, `sgemm_2d` and `sgemm_4x2`
-are all correct with the identical change.
+Adding a fused bias to the sgemm epilogue — one `uint64_t` in the argument
+struct, one conditional load, one add per output — makes `sgemm_4x4` produce
+**nothing**. `sgemm`, `sgemm_rb`, `sgemm_2d` and `sgemm_4x2` are all correct
+with the identical change.
 
-BISECTED BY SUBSTITUTION, because the obvious explanations are all wrong:
+This entry previously recorded the trigger and guessed at the cause. The cause
+is now measured, and it is worse and more general than the guess.
 
-| what the epilogue gains | `sgemm_4x4` |
-|---|---|
-| one more float in the store expression, no load | **correct** |
-| a load of a field that has been in the struct since ABI 1 (`stride_c`) | **breaks** |
-| a load of the new field at offset 112 | **breaks** |
-| the same field moved to offset 80 | **breaks** |
-| the load hoisted to the top of the kernel, before any per-lane guard | **breaks** |
+### The mechanism: the compiler silently drops divergence handling
 
-So it is not the new field, not the struct growing 112 -> 128 bytes, not the
-offset, and not a uniform load under divergence -- both placements fail and an
-existing field fails the same way. What separates the passing case from the
-failing ones is one additional 64-bit live value and one more load from the
-argument pointer.
+VOLT emits **zero** `vx_split` / `vx_join` instructions in the affected
+instantiation. Every other kernel in the same translation unit keeps all of
+theirs.
 
-WHAT IT IS NOT. `ci/check_kernel_loops.py` reports **zero stack traffic in every
-kernel** in the failing build, and the k loops are byte-identical to the working
-one -- 14, 23 and 35 instructions for 2d, 4x2 and 4x4. `sgemm_4x4`'s stack frame
-SHRANK, 288 bytes to 256. If this were ordinary register pressure the frame
-would grow and the census would name the spill; it does neither.
+| kernel | accumulators | baseline | with the bias load |
+|---|---|---|---|
+| `sgemm` | — | 2 / 2 | 2 / 2 |
+| `sgemm_rb` | — | 6 / 6 | 6 / 6 |
+| `sgemm_2d` | 4 | 8 / 8 | 8 / 8 |
+| **`sgemm_4x4`** | **16** | **22 / 22** | **0 / 0** |
+| `sgemm_4x2` | 8 | 12 / 12 | 12 / 12 |
 
-THE BOUNDARY IS THE ACCUMULATOR COUNT. `sgemm_2d` holds 4 accumulators and
-`sgemm_4x2` holds 8; both take the change. `sgemm_4x4` holds 16 and does not.
-All three are the same `micro_tile_body<RM, RN>` template, so the source is
-identical and only the instantiation differs.
+Twenty-two reconvergence pairs to none, from one added load. With no split, a
+per-lane branch is a scalar branch and the whole warp follows one lane's
+decision.
 
-WHAT IT COSTS US. The fused bias is worth **5.9% of a transformer block at S=16
-and 6.8% at S=8** -- the qkv projections apply their bias in six launches over
-128 elements each, and a launch costs 2776 cycles before touching an element.
-The fusion is written and correct on every kernel that ships; `sgemm_4x4` is
-STAGED and the rule can never select it (7.26's neighbour, proved in
-`tests/libs/test_grxblas_rb.cpp`). It is held back because the oracle forces
-`sgemm_4x4` and a fusion that cannot be checked against the reference on every
-kernel is a fusion shipping on an argument.
+### Which is why it only fails when a branch actually diverges
 
-The work is not lost: the five changed files and this bisection are attached to
-the session that found it.
+`micro_tile_body`'s outer guard is `idx < row_blocks * col_blocks`. Sweeping
+`m` changes how many lanes pass it, with everything else held fixed — same
+kernel, same 16 accumulators, same bias load, one block of four threads,
+`n=4`, `k=2`:
+
+| m | lanes passing the guard | result |
+|---|---|---|
+| 4 | 1 of 4 | writes nothing |
+| 8 | 2 of 4 | writes nothing |
+| 12 | 3 of 4 | writes nothing |
+| **16** | **4 of 4 — uniform** | **correct** |
+| **20** | **5 of 5 — uniform** | **correct** |
+
+A kernel with no reconvergence is correct exactly when it never needed any.
+
+### How it was localised, since two instruments lied first
+
+The kernel was bisected with volatile marker stores at four points: entry, top
+of `micro_tile_body`, inside the guard, and the epilogue. Entry and body-top
+land; the guard marker does not. Dumping the guard's own inputs from inside the
+kernel showed `m=4, n=4, row_blocks=1, col_blocks=1` — all correct. The guard
+was right and the branch was still not taken, which is what pointed at
+reconvergence rather than at arithmetic.
+
+Two instruments had to be repaired first, and both would have produced a
+confident wrong answer:
+
+- **Non-volatile markers were dead-code eliminated.** A marker store to `C[2]`
+  is provably overwritten by the epilogue, so the compiler removed it, and its
+  absence read exactly like "control never got here".
+- **The markers were inserted at the wrong occurrence.** `replace(..., 1)` on a
+  line that appears in three kernels put two of them in `sgemm` and
+  `sgemm_rb`. The disassembly then failed to find them in `sgemm_4x4` — which
+  was true, and meant nothing. A third search used too small an address range
+  and missed a marker that was there.
+
+### What was wrong in the previous entry
+
+Kept because the corrections are the useful part:
+
+- "**Silent wrong answer**" is right, and understated. It is not that this
+  kernel stops storing; it is that this kernel stops being a SIMT kernel.
+- "**The boundary is the accumulator count**" is a fair reading of the trigger
+  and says nothing about the mechanism. Sixteen accumulators plus one more live
+  64-bit value crosses some threshold in the divergence pass; four and eight do
+  not.
+- "**If this were ordinary register pressure the frame would grow and the
+  census would name the spill; it does neither**" — correct, and now
+  explained. The frame shrinks because the function stopped carrying
+  reconvergence state, not because it needed less of it.
+
+### Why this is not a `sgemm_4x4` problem
+
+The trigger is a property of the function, not of the fusion. Any kernel that
+crosses the same threshold loses reconvergence the same way, silently, with no
+diagnostic from the toolchain, and will pass every test whose control flow
+happens to be uniform. The kernel that has lost divergence handling is exactly
+the one whose author did not think divergence was involved.
+
+`tests/repro/sgemm_4x4_splits/count_splits.sh` decodes `vx_split`/`vx_join` out
+of a device ELF per kernel. Counting them is a build-time check that does not
+depend on picking a shape that diverges, and a correctness gate cannot make
+that promise.
+
+### What it costs us
+
+The fused bias is worth **5.9% of a transformer block at S=16 and 6.8% at
+S=8** — the qkv projections apply their bias in six launches over 128 elements
+each, and a launch costs 2776 cycles before touching an element. Those figures
+are quoted from the measurement that produced them and have not been re-taken
+since; the fusion still cannot ship, so there is still nothing to measure.
+
+It cannot ship on a workaround either. Any source form that happens to restore
+the splits does so by falling under a threshold nobody has characterised, and
+would be shipping on luck — a later compiler change moves the threshold and the
+kernel goes quiet again, in a way no correctness gate catches. The fix belongs
+in the divergence pass, which should fail closed and loudly rather than emit a
+kernel with no reconvergence.
 
 ### 7.28 The NPU device is enumerable but not usable: there is no NPU memory path — **OURS, CLOSED**
 
