@@ -303,6 +303,20 @@ int             grxblasCycleSlotsNeeded(grxblasHandle_t handle, int m, int n);
 grxblasStatus_t grxblasGetLoadedKernelPath(grxblasHandle_t handle,
                                            const char** path);
 
+// Which sgemm kernel the LAST sgemm call on this handle actually launched:
+// "naive", "rb", "2d", "2d-i", "4x2", "4x4", or NULL if none has run yet.
+// Valid until the next sgemm call on this handle.
+//
+// This exists because a test that forces a kernel through the environment
+// hooks cannot otherwise tell whether the force took effect: a hook whose
+// kernel is missing from the module falls back to the rule, silently, and a
+// run labelled "forced 4x4" that actually ran 2d proves nothing about 4x4.
+// test_grxblas_rb used launched-warp counts as a proxy, which works only while
+// every kernel has a different launch geometry -- and sgemm_2d_i has exactly
+// sgemm_2d's. Asking is the discriminator that keeps working.
+grxblasStatus_t grxblasGetLastSgemmKernel(grxblasHandle_t handle,
+                                          const char** name);
+
 #ifdef __cplusplus
 }  // extern "C"
 #endif

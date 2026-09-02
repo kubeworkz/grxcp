@@ -72,24 +72,27 @@ void fill(std::vector<float>& v, unsigned seed) {
 // it deliberately so that what is checked is the SHIPPING path rather than a
 // kernel the rule may never select. Below the row tile that means the
 // reference, and the cases say so.
-enum class Pick { kNaive, kRule, kRb, kTwoD, kMid, kWide };
+enum class Pick { kNaive, kRule, kRb, kTwoD, kTwoDInterior, kMid, kWide };
 
 // Run one sgemm and return C. The kernel is chosen through the same
 // environment hooks the library reads, so every path goes through the real
 // selection logic rather than a test-only door.
 bool run(Pick pick, bool ta, bool tb, int m, int n, int k,
          const std::vector<float>& A, const std::vector<float>& B,
-         std::vector<float>* C, int* warps = nullptr) {
+         std::vector<float>* C, int* warps = nullptr,
+         const char** ran = nullptr) {
   unsetenv("GRXBLAS_SGEMM_NAIVE");
   unsetenv("GRXBLAS_SGEMM_RB");
   unsetenv("GRXBLAS_SGEMM_2D");
   unsetenv("GRXBLAS_SGEMM_4X2");
   unsetenv("GRXBLAS_SGEMM_4X4");
+  unsetenv("GRXBLAS_SGEMM_2D_I");
   if (pick == Pick::kNaive) setenv("GRXBLAS_SGEMM_NAIVE", "1", 1);
   if (pick == Pick::kRb)    setenv("GRXBLAS_SGEMM_RB", "1", 1);
   if (pick == Pick::kTwoD)  setenv("GRXBLAS_SGEMM_2D", "1", 1);
   if (pick == Pick::kMid)   setenv("GRXBLAS_SGEMM_4X2", "1", 1);
   if (pick == Pick::kWide)  setenv("GRXBLAS_SGEMM_4X4", "1", 1);
+  if (pick == Pick::kTwoDInterior) setenv("GRXBLAS_SGEMM_2D_I", "1", 1);
 
   // A fresh handle each time: the kernel choice is made per call from the
   // environment, but creating the handle here also means neither run can be
@@ -135,6 +138,13 @@ bool run(Pick pick, bool ta, bool tb, int m, int n, int k,
       h, ta ? GRXBLAS_OP_T : GRXBLAS_OP_N, tb ? GRXBLAS_OP_T : GRXBLAS_OP_N,
       m, n, k, &alpha, dA.p, lda, dB.p, ldb, &beta, dC.p, ldc);
   if (st != GRXBLAS_STATUS_SUCCESS) { grxblasDestroy(h); return false; }
+
+  // sgemm_2d_i launches EXACTLY sgemm_2d's geometry, so the warp count above
+  // cannot separate them. Ask the library instead.
+  if (ran) {
+    const char* nm = nullptr;
+    *ran = (grxblasGetLastSgemmKernel(h, &nm) == GRXBLAS_STATUS_SUCCESS) ? nm : nullptr;
+  }
 
   C->resize(poison.size());
   grxMemcpy(C->data(), dC.p, C->size() * sizeof(float), grxMemcpyDefault);
@@ -197,8 +207,9 @@ int main() {
   // operands. Run in one pass rather than two loops so a shape that breaks one
   // of them is reported next to the shape that did not break the other.
   struct Path { Pick pick; const char* name; };
-  const Path paths[4] = {{Pick::kRule, "the rule's choice"},
+  const Path paths[5] = {{Pick::kRule, "the rule's choice"},
                          {Pick::kTwoD, "sgemm_2d (forced)"},
+                         {Pick::kTwoDInterior, "sgemm_2d_i (forced)"},
                          {Pick::kMid,  "sgemm_4x2 (forced)"},
                          {Pick::kWide, "sgemm_4x4 (forced)"}};
 
@@ -221,11 +232,28 @@ int main() {
         std::snprintf(label, sizeof(label), "%s  [%c%c]", c.what,
                       ta ? 'T' : 'N', tb ? 'T' : 'N');
 
+        const char* ran = nullptr;
         if (!run(Pick::kNaive, ta, tb, c.m, c.n, c.k, A, B, &ref) ||
-            !run(path.pick, ta, tb, c.m, c.n, c.k, A, B, &fast)) {
+            !run(path.pick, ta, tb, c.m, c.n, c.k, A, B, &fast, nullptr, &ran)) {
           std::printf("  FAIL  %s: a run failed\n", label);
           ++grxtest::failures();
           continue;
+        }
+
+        // A forced run that silently fell back proves nothing about the
+        // kernel it names. sgemm_2d_i is the case where the warp count cannot
+        // tell -- it launches exactly sgemm_2d's geometry -- so the library is
+        // asked. It is legal only where m and n are whole numbers of tiles, and
+        // the rule refuses it elsewhere, which is not a failure.
+        if (path.pick == Pick::kTwoDInterior && ran) {
+          const bool legal = (c.m % 2 == 0) && (c.n % 2 == 0);
+          if (legal && std::strcmp(ran, "2d-i") != 0) {
+            std::printf("  FAIL  %s: forced 2d-i but the library ran %s\n",
+                        label, ran);
+            ++grxtest::failures();
+            continue;
+          }
+          if (!legal) continue;   // refused by design; nothing to compare
         }
 
         size_t at = ref.size();

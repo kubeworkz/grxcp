@@ -766,6 +766,80 @@ fifteen rather than two of thirteen. Memory traffic says the arithmetic can
 hide, not that it does. Neither the rate nor the flag separated the two cases.
 The bench did.
 
+**The scores GEMM was 35.5% of attention, and the fix was not a wider tile.**
+Once softmax stopped computing its exponential twice, the scores GEMM became
+the share that grows fastest with sequence length — 22.5% at S=8 rising to
+35.5% at S=64. `GRXBLAS_SGEMM_TRACE` says both of attention's GEMMs run the
+2x2 tile, because the rule has one threshold and, in `grxblas.cpp`'s own words,
+"THE WIDE TILE IS NOT IN THE RULE. Reachable only by asking, because nothing
+has measured it yet". So it was measured.
+
+At S=64, H=4, Dh=8 the two GEMMs do **identical arithmetic** — 131072
+multiply-adds each — and cost 487869 and 279249 cycles. The difference is the
+shape: `scores` is 16384 outputs of 8 MACs, `out` is 2048 outputs of 64. The
+scores GEMM pays per-output setup eight times as often over the same FLOPs,
+which is exactly what a wider register tile amortises.
+
+**Two obvious fixes were predicted, measured, and were both wrong.**
+
+| hypothesis | predicted | measured |
+|---|---|---|
+| wider tiles amortise the setup | faster | **0.76x to 1.00x** — slower everywhere |
+| unroll the k loop for more MLP | 5-8% faster | **7% SLOWER** at k=8 |
+
+The wide tiles lose because they trade warps for arithmetic density: 4x2 halves
+the warp count and 4x4 quarters it, and this configuration has warps to spare.
+They are not wrong, they are unmeasurable here, and the rule's caution was
+right. `tests/bench/attn_gemm_tiles.cpp` is that measurement, kept so nobody
+re-proposes it from the same reasoning. The k-loop unroll pays only from k=32
+up, and the scores GEMM is k=8.
+
+**What worked came from a cost model rather than a guess.** Sweeping k with the
+warp count held fixed splits the warp's cost in two: the k>=16 points fit a line
+of **29.1 cycles per k step on an intercept of 180 cycles**, and k=16 and k=64
+give that intercept to a decimal. At k=8 a warp costs 470 cycles, so roughly
+38% of the scores GEMM is setup that no amount of k-loop work amortises.
+
+Most of that setup is bounds tests that cannot fail. `micro_tile_body` computes
+`row_live[]`/`col_live[]` and guards every store with them, but when
+`m % RM == 0` and `n % RN == 0` every tile is wholly inside C — which is exactly
+attention, where m and n are the sequence length and the head dimension.
+`sgemm_2d_i` is the same 2x2 tile with those tests compiled out. It carries
+**2 split/join pairs against sgemm_2d's 8**, because the guards were also where
+the divergence came from.
+
+**Measured end to end, not quoted from the microbenchmark:**
+
+| S | scores GEMM | out GEMM | attention total |
+|---|---|---|---|
+| 8 | **1.338x** | 1.291x | 1.101x |
+| 16 | **1.199x** | 1.127x | 1.062x |
+| 32 | **1.197x** | 1.055x | 1.068x |
+| 64 | **1.175x** | 1.029x | 1.061x |
+
+The controls are in the same run: softmax and the causal mask are untouched
+kernels and move 0.974x to 1.002x. That band is wider than the softmax change's
+"identical to the digit", because this change relinks the whole `.vxbin` and
+moves every kernel's code, so the S=64 out GEMM's 1.029x is inside the noise and
+is not claimed. The scores GEMM's 1.175x is not.
+
+**It is a second entry point, not a branch, and that was measured too.**
+Dispatching between the two instantiations inside one `sgemm_2d` made interior
+shapes faster and boundary shapes **12% slower at k=8**: they pay instruction
+fetch for a body they never execute. Split across two entry points, a launch
+touches only the code it runs, and the interior path gets 1.18x instead of
+1.10x. The host picks on `m % RM == 0 && n % RN == 0`; nothing else changes,
+and everywhere the rule already said 2x2 it still says 2x2.
+
+**The oracle could not have caught a mistake here, so it was given a way to.**
+`sgemm_2d_i` launches *exactly* `sgemm_2d`'s geometry, and `test_grxblas_rb`
+told the kernels apart by counting launched warps — which cannot separate these
+two. A forced run that silently fell back would have compared 2d against the
+reference and reported it as evidence about 2d-i. `grxblasGetLastSgemmKernel`
+makes the library say what it launched; the oracle asserts it, and the
+assertion was watched failing with the force hook disabled before it was
+believed ("forced 2d-i but the library ran naive").
+
 **The data-type line was wrong about the hardware, in two different ways.**
 bf16 does not exist on this tensor unit in any configuration — there is no knob
 to enable — so it is struck rather than deferred, and `grxblasTensorType_t` has

@@ -923,6 +923,25 @@ if [[ -n "$GRXGPU" && -d "$TOOLDIR/llvm-vortex" ]]; then
     rc=$?
     [[ $rc -eq 77 ]] || exit $rc
   fi
+
+  # Every sgemm tiling, on attention's two shapes, each checked against the
+  # reference before its cycles are believed. This is the measurement that put
+  # sgemm_2d_i in the rule and kept the 4x2 and 4x4 tiles OUT of it -- both are
+  # slower here, at every shape, because they trade warps for arithmetic
+  # density on a device that has warps to spare.
+  #
+  # Run for its correctness assertions, which cover all six tilings; its cycle
+  # numbers are recorded in the roadmap rather than gated. One new perf
+  # baseline at a time, and this bench's numbers are a comparison between
+  # kernels rather than a level to hold.
+  $CXX $CXXFLAGS -c "$ROOT/tests/bench/attn_gemm_tiles.cpp" \
+    -o "$BUILD/attn_gemm_tiles.o"
+  $CXX "${OBJS[@]}" "$BUILD/grxblas.o" "$BUILD/attn_gemm_tiles.o" $LIBS \
+    -o "$BUILD/attn_tiles_bench"
+  if ! "$BUILD/attn_tiles_bench" --out "$BUILD/perf_attn_tiles.json"; then
+    rc=$?
+    [[ $rc -eq 77 ]] || exit $rc
+  fi
 else
   echo "SKIPPED: needs --grxgpu <path> and a device toolchain in $TOOLDIR."
 fi

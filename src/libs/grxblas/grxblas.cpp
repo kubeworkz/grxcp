@@ -76,6 +76,11 @@ struct Context {
   // The 2D micro-tile, and the entry point that says what tile each blocked
   // kernel produces. Both optional in the same way sgemm_rb is.
   grxFunction_t sgemm_2d_fn = nullptr;
+  // Same 2x2 tile with no bounds tests. Optional: an older module has no
+  // such entry and the rule simply never reaches it.
+  grxFunction_t sgemm_2d_i_fn = nullptr;
+  // What the last sgemm call launched; see grxblasGetLastSgemmKernel.
+  const char* last_sgemm_kernel = nullptr;
   // The wide micro-tile. Same body, a bigger tile: half a load per multiply-add
   // against the 2D tile's one, and a sixteenth of the threads instead of a
   // quarter.
@@ -268,13 +273,14 @@ bool env_forces(const char* name, uint64_t call) {
   return false;
 }
 
-enum class SgemmKernel { kNaive, kRegisterBlocked, kTwoD, kMid, kWide };
+enum class SgemmKernel { kNaive, kRegisterBlocked, kTwoD, kTwoDInterior, kMid, kWide };
 
 const char* sgemm_kernel_name(SgemmKernel k) {
   switch (k) {
     case SgemmKernel::kNaive:           return "naive";
     case SgemmKernel::kRegisterBlocked: return "rb";
     case SgemmKernel::kTwoD:            return "2d";
+    case SgemmKernel::kTwoDInterior:    return "2d-i";
     case SgemmKernel::kMid:             return "4x2";
     case SgemmKernel::kWide:            return "4x4";
   }
@@ -310,7 +316,17 @@ SgemmChoice decide_sgemm_kernel(const Context& ctx, const grxDeviceProp_t& prop,
   // The register-blocked kernel is reached only when the 2 x 2 tile is absent
   // from the module, with its own boundary, because that is the one measured
   // for it. The wider tiles are reached by nothing -- see below.
-  if (outputs >= resident && have_2d)          c.rule = SgemmKernel::kTwoD;
+  // The interior variant is the SAME tile with the bounds tests compiled out,
+  // so it is reached under exactly the condition that makes those tests
+  // vacuous. It is not a wider tile and it is not a different rule: everywhere
+  // the rule already says 2x2, it says 2x2, and only the guard work differs.
+  //
+  // Measured on the attention shapes: 1.18x on the 2x2 kernel at m=n=64, k=8,
+  // and the scores GEMM 1.15x end to end. tests/bench/attn_gemm_tiles.cpp.
+  const bool interior = have_2d && ctx.sgemm_2d_i_fn &&
+                        (m % ctx.td_rows == 0) && (n % ctx.td_cols == 0);
+  if (outputs >= resident && have_2d)
+    c.rule = interior ? SgemmKernel::kTwoDInterior : SgemmKernel::kTwoD;
   else if (outputs >= 2 * resident && have_rb) c.rule = SgemmKernel::kRegisterBlocked;
   (void)have_mid;
 
@@ -336,6 +352,20 @@ SgemmChoice decide_sgemm_kernel(const Context& ctx, const grxDeviceProp_t& prop,
   if (have_2d && env_forces("GRXBLAS_SGEMM_2D", call)) {
     c.kernel = SgemmKernel::kTwoD;
     c.why = "forced 2d";
+    return c;
+  }
+  // Forcing it at a shape it is not legal for would compute wrong answers
+  // rather than slow ones, so the divisibility test is not skippable even
+  // under a force. The oracle needs to reach it; it does not need to reach it
+  // anywhere.
+  if (ctx.sgemm_2d_i_fn && have_2d && env_forces("GRXBLAS_SGEMM_2D_I", call)) {
+    if (m % ctx.td_rows != 0 || n % ctx.td_cols != 0) {
+      c.why = "2d-i refused: m or n is not a whole number of tiles";
+      c.kernel = SgemmKernel::kTwoD;
+      return c;
+    }
+    c.kernel = SgemmKernel::kTwoDInterior;
+    c.why = "forced 2d-i";
     return c;
   }
   if (env_forces("GRXBLAS_SGEMM_RB", call)) {
@@ -566,6 +596,8 @@ grxblasStatus_t ensure_module_locked(Context& ctx) {
         ctx.sgemm_rb_fn = nullptr;
       if (grxModuleGetFunction(&ctx.sgemm_2d_fn, mod, "sgemm_2d") != grxSuccess)
         ctx.sgemm_2d_fn = nullptr;
+      if (grxModuleGetFunction(&ctx.sgemm_2d_i_fn, mod, "sgemm_2d_i") != grxSuccess)
+        ctx.sgemm_2d_i_fn = nullptr;
       if (grxModuleGetFunction(&ctx.sgemm_wide_fn, mod, "sgemm_4x4") != grxSuccess)
         ctx.sgemm_wide_fn = nullptr;
       if (grxModuleGetFunction(&ctx.sgemm_mid_fn, mod, "sgemm_4x2") != grxSuccess)
@@ -1312,6 +1344,19 @@ grxblasStatus_t grxblasGetLoadedKernelPath(grxblasHandle_t handle,
   return GRXBLAS_STATUS_SUCCESS;
 }
 
+grxblasStatus_t grxblasGetLastSgemmKernel(grxblasHandle_t handle,
+                                          const char** name) {
+  if (!handle) return GRXBLAS_STATUS_NOT_INITIALIZED;
+  if (!name) return GRXBLAS_STATUS_INVALID_VALUE;
+  auto* ctx = reinterpret_cast<Context*>(handle);
+  std::lock_guard<std::mutex> lock(ctx->mutex);
+  // A string literal from sgemm_kernel_name, so it outlives the handle; the
+  // header promises only until the next call, which is the weaker claim and
+  // the one that stays true if this ever becomes a buffer.
+  *name = ctx->last_sgemm_kernel;
+  return GRXBLAS_STATUS_SUCCESS;
+}
+
 // ---------------------------------------------------------------------------
 // Level 1 and level 2
 // ---------------------------------------------------------------------------
@@ -1523,6 +1568,7 @@ static grxblasStatus_t sgemm_batched(grxblasHandle_t handle,
       tiles = (size_t)((m + ctx->rb_rows - 1) / ctx->rb_rows) * (size_t)n;
       break;
     case SgemmKernel::kTwoD:
+    case SgemmKernel::kTwoDInterior:
       tiles = (size_t)((m + ctx->td_rows - 1) / ctx->td_rows) *
               (size_t)((n + ctx->td_cols - 1) / ctx->td_cols);
       break;
@@ -1550,6 +1596,8 @@ static grxblasStatus_t sgemm_batched(grxblasHandle_t handle,
     args.cycles = (uint64_t)(uintptr_t)ctx->probe;
   }
 
+  ctx->last_sgemm_kernel = sgemm_kernel_name(choice.kernel);
+
   g_sgemm_trace.add(SgemmTraceLine{call, m, n, k, batch, (int)transa,
                                    (int)transb, sgemm_kernel_name(choice.kernel),
                                    sgemm_kernel_name(choice.rule),
@@ -1559,6 +1607,7 @@ static grxblasStatus_t sgemm_batched(grxblasHandle_t handle,
   grxFunction_t fn_to_run = ctx->sgemm_fn;
   if (choice.kernel == SgemmKernel::kRegisterBlocked) fn_to_run = ctx->sgemm_rb_fn;
   else if (choice.kernel == SgemmKernel::kTwoD)       fn_to_run = ctx->sgemm_2d_fn;
+  else if (choice.kernel == SgemmKernel::kTwoDInterior) fn_to_run = ctx->sgemm_2d_i_fn;
   else if (choice.kernel == SgemmKernel::kMid)       fn_to_run = ctx->sgemm_mid_fn;
   else if (choice.kernel == SgemmKernel::kWide)      fn_to_run = ctx->sgemm_wide_fn;
 

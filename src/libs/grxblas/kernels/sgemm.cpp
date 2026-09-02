@@ -267,7 +267,23 @@ __global__ void sgemm_rb(grxblas_sgemm_args* __UNIFORM__ arg) {
 // __forceinline__ into thin entry points, the same shape hgemm_tcu.cpp uses for
 // its shape kernels: __global__ cannot be a template here.
 namespace {
-template <uint32_t RM, uint32_t RN>
+// INTERIOR: the caller has already checked m % RM == 0 and n % RN == 0, so
+// every tile this launch produces lies wholly inside C and no output needs a
+// bounds test. That is not a rare case -- it is attention, where m and n are
+// the sequence length and the head dimension and the tile is 2x2, and it was
+// paying four selects and four guarded stores per tile to discover that
+// nothing was out of range.
+//
+// The guards are also where this kernel's divergence comes from: `if
+// (!row_live[i]) continue` is a per-lane branch.
+//
+// MEASURED, and the shape of the measurement is why sgemm_2d_i is a SEPARATE
+// entry point rather than a branch inside sgemm_2d. Dispatching between the
+// two instantiations inside one kernel put both bodies in one function:
+// interior shapes still got faster, but boundary shapes got 12% SLOWER at
+// k=8 -- they pay instruction fetch for a copy they never execute. Split
+// across two entry points, a launch touches only the body it runs.
+template <uint32_t RM, uint32_t RN, bool INTERIOR>
 __forceinline__ void micro_tile_body(grxblas_sgemm_args* arg) {
   const float* A = reinterpret_cast<const float*>(arg->a);
   const float* B = reinterpret_cast<const float*>(arg->b);
@@ -298,14 +314,14 @@ __forceinline__ void micro_tile_body(grxblas_sgemm_args* arg) {
     #pragma unroll
     for (uint32_t i = 0; i < RM; ++i) {
       const uint32_t r = sub + i * row_blocks;
-      row_live[i] = (r < m);
-      row[i]      = row_live[i] ? r : (m - 1u);
+      row_live[i] = INTERIOR ? true : (r < m);
+      row[i]      = INTERIOR ? r : (row_live[i] ? r : (m - 1u));
     }
     #pragma unroll
     for (uint32_t j = 0; j < RN; ++j) {
       const uint32_t c = cb * RN + j;
-      col_live[j] = (c < n);
-      col[j]      = col_live[j] ? c : (n - 1u);
+      col_live[j] = INTERIOR ? true : (c < n);
+      col[j]      = INTERIOR ? c : (col_live[j] ? c : (n - 1u));
     }
 
     float acc[RM][RN];
@@ -364,10 +380,10 @@ __forceinline__ void micro_tile_body(grxblas_sgemm_args* arg) {
     const float alpha = arg->alpha, beta = arg->beta;
     #pragma unroll
     for (uint32_t j = 0; j < RN; ++j) {
-      if (!col_live[j]) continue;
+      if (!INTERIOR && !col_live[j]) continue;
       #pragma unroll
       for (uint32_t i = 0; i < RM; ++i) {
-        if (!row_live[i]) continue;
+        if (!INTERIOR && !row_live[i]) continue;
         const size_t at = (size_t)row[i] + (size_t)col[j] * ldc;
         C[at] = (beta == 0.0f) ? (alpha * acc[i][j])
                                : (alpha * acc[i][j] + beta * C[at]);
@@ -381,7 +397,17 @@ __forceinline__ void micro_tile_body(grxblas_sgemm_args* arg) {
 
 __global__ void sgemm_2d(grxblas_sgemm_args* __UNIFORM__ arg) {
   if (arg->abi_version != GRXBLAS_SGEMM_ABI_VERSION) return;
-  micro_tile_body<kTwoDRows, kTwoDCols>(arg);
+  micro_tile_body<kTwoDRows, kTwoDCols, false>(arg);
+}
+
+// Same tile as sgemm_2d, no bounds tests. The HOST decides which to launch, on
+// m % kTwoDRows == 0 && n % kTwoDCols == 0 -- the exact condition under which
+// row_live and col_live are all true for every tile in the grid. It reports no
+// geometry of its own because it has none: the tile is sgemm_2d's, and a second
+// set of shape fields saying 2 and 2 again is a second thing to keep in step.
+__global__ void sgemm_2d_i(grxblas_sgemm_args* __UNIFORM__ arg) {
+  if (arg->abi_version != GRXBLAS_SGEMM_ABI_VERSION) return;
+  micro_tile_body<kTwoDRows, kTwoDCols, true>(arg);
 }
 
 // THE WIDE TILE, and what it is for.
@@ -405,7 +431,7 @@ __global__ void sgemm_2d(grxblas_sgemm_args* __UNIFORM__ arg) {
 // is not by itself evidence about load counts.
 __global__ void sgemm_4x4(grxblas_sgemm_args* __UNIFORM__ arg) {
   if (arg->abi_version != GRXBLAS_SGEMM_ABI_VERSION) return;
-  micro_tile_body<kWideRows, kWideCols>(arg);
+  micro_tile_body<kWideRows, kWideCols, false>(arg);
 }
 
 // THE MIDDLE RUNG, and it exists because 4 x 4 failed for a reason that
@@ -428,7 +454,7 @@ __global__ void sgemm_4x4(grxblas_sgemm_args* __UNIFORM__ arg) {
 // reason to build a third one.
 __global__ void sgemm_4x2(grxblas_sgemm_args* __UNIFORM__ arg) {
   if (arg->abi_version != GRXBLAS_SGEMM_ABI_VERSION) return;
-  micro_tile_body<kMidRows, kMidCols>(arg);
+  micro_tile_body<kMidRows, kMidCols, false>(arg);
 }
 
 // What the host has to know to size a launch, reported by the module that
