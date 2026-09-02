@@ -189,7 +189,85 @@ default, not a nicer `grxcc`:
   `read_sgemm_shape` report when a module goes quiet is the pattern: a fallback
   that cannot fail is a fallback that cannot report.
 
-## 9. Open questions
+## 9. If the product is an SDK on a simulator
+
+Section 10 leaves open whether any of this precedes hardware. If it does, there
+are two precedents and they point opposite ways.
+
+### The precedent that says don't
+
+NVIDIA shipped a GPU simulator and killed it. `nvcc -deviceemu` was deprecated
+at CUDA 3.0 and gone shortly after, around 2010, replaced by debugging on real
+hardware. Developers petitioned against the removal and lost.
+
+The reason it deserved to die is the one that matters here. Device emulation ran
+kernels as host threads. It could not model warps, divergence, coalescing or
+occupancy — so it told you your program was **correct** and misled you about
+everything else. A model that validates function while lying about cost is worse
+than no model, because people quote its numbers. NVIDIA could also afford to
+kill it: they always have silicon, and every CUDA developer owns a GPU.
+
+### The precedent that says do
+
+Neither of those is our situation, and the industry that shares our situation
+does ship simulators as product. Arm sells Fixed Virtual Platforms as supported,
+versioned models precisely so software can be written before parts exist;
+Siemens PAVE360 builds pre-silicon environments around Arm cores; there is a
+virtual-prototyping industry underneath both. Automotive drives it because a
+vehicle program cannot wait for tape-out — which is the same arithmetic as a
+software schedule that has to overlap a hardware one.
+
+**We are in Arm's position, not NVIDIA's.** An SDK on a simulator is
+well-precedented. What separates the two precedents is not fidelity but
+disclosure: whether the model tells you what it is.
+
+That part we already do, and not by accident. Every bench prints the backend
+that produced its cycles. `grx-smi` reports a *narrower* capability set on a
+TCU-less `rtlsim` build rather than the one the header advertises. The perf
+baselines are per-backend files. `grxDeviceProp_t.backend` is derived rather
+than asserted, and the device seam refuses to let a model claim to be silicon.
+
+### The fidelity contract
+
+What we do not yet publish is where the two simulators disagree, and they do —
+materially. Measured, each entry with a gap number:
+
+| behaviour | `simx` | `rtlsim` | gap |
+|---|---|---|---|
+| tensor unit, second CTA | **deadlocks** | completes | 7.12 |
+| kernel args at `NUM_CORES` > 1 | 8 of 8 delivered | **4 of 8** | 7.37 |
+| misaligned 4-byte access | silent, no diagnostic | **assertion, stops** | 7.27 |
+| capability set, TCU-less build | n/a | reports the narrower set | 7.36 |
+
+A developer who only ever runs `simx` ships kernels that break on RTL. A
+developer who only ever runs `rtlsim` chases defects that are not in the design.
+Three rules follow, and they are cheap to state and cheap to enforce:
+
+1. **Agreement is evidence; a `simx`-only pass is not a pass.** Everything in
+   the table was found by running both.
+2. **Disagreement resolves toward `rtlsim`**, because it executes the design
+   rather than a model of it — but an `rtlsim` defect is not thereby a silicon
+   defect. 7.37's mechanism is still open and may live in the shim rather than
+   the RTL, and the entry says so.
+3. **Neither is authoritative for time.** Every cycle count names its backend,
+   and no cycle count in this project is a hardware claim.
+
+The practical shape that falls out: **develop on `simx`, gate on `rtlsim`.**
+`simx` is fast enough to iterate against; `rtlsim` is slow enough that it has to
+be a gate rather than an inner loop, and strict enough to be worth it — it is
+the backend that complains loudest, and 7.27 was found because it complained.
+
+### What the FVP precedent says we would still owe
+
+Arm's model is a supported binary you install. Ours is *clone three
+repositories and build a custom LLVM at a pin nothing enforces* — the pin in
+`grxgpu/docs/building_toolchain.md` names one commit and the toolchain in use is
+a different one, because the clone tracks a branch. If the product is a
+developer preview on a simulator, the on-ramp stops being cosmetic and becomes
+the product: one installable, a pinned toolchain, and a fidelity statement
+shipped beside the model.
+
+## 10. Open questions
 
 1. Which ingestion point (section 4), settled by the model survey rather than
    by discussion.
@@ -203,4 +281,9 @@ default, not a nicer `grxcc`:
    broken (7.37), and phase 3's tensor gate reads 2.51x against a 5x threshold.
    A developer preview on a simulator and an SDK for a part you can buy are
    different products with different bars, and this document does not say which
-   one is being built.
+   one is being built. Section 9 sets out what the first one would owe.
+5. Whether the fidelity contract in section 9 should be published rather than
+   kept internal. The argument for publishing it is the same one that governs
+   the conformance number: the disagreements exist whether or not we name them,
+   and a developer who finds them unaided concludes something worse than what
+   the table says.
