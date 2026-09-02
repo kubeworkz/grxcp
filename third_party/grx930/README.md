@@ -10,8 +10,8 @@ that a re-import cannot silently drop a fix.
 |---|---|
 | Source | GRX930 tree, `sim/npu_dpi_shim.{c,h}` |
 | First imported at | `817eb33` — "Address grxcp team feedback: context pointers, shim, doc fixes" |
-| Current import | `3070806` — "Fix 5 defects in NPU DPI shim found by grxcp team" |
-| Sizes | `.c` 10454 B, `.h` 5644 B |
+| Current import | `e02f460` — "Fix STATUS.DONE latch, wrap-safe bounds checks, allocator bugs (grxcp round 2)" |
+| Sizes | `.c` 11518 B, `.h` 5943 B |
 | Builds | clean under `gcc -O1 -Wall -Wextra -Wpedantic` |
 
 ## What it is, and what it is not
@@ -56,125 +56,88 @@ than guessed at — one of them against our reading:
   holding `i_busy` for 2171 cycles of a 4×4×8 GEMM. The register map was right
   and the model was wrong.
 
-## What is still open
+## Round two: what reading the fixes turned up, and its fixes
 
-### `STATUS.DONE` is inferred, not latched
+Two things came out of measuring `3070806` rather than accepting it. Both are
+fixed at `e02f460`, and both are recorded because the *shape* of them recurs.
 
-Not a slip — a modelling choice, and the one place the model still differs from
-the map in a way that matters.
+### `STATUS.DONE` was inferred, not latched
 
 ```c
-build_status() = (error ? 4 : 0)
-               | ((CYCLE_LO || OP_COUNT) && !busy ? 2 : 0)
-               | (busy ? 1 : 0)
+build_status() = ... | ((CYCLE_LO || OP_COUNT) && !busy ? 2 : 0) | ...
 ```
 
-DONE therefore means "some counter is non-zero and I am not busy", which is
-true of an idle device that ran *any* earlier GEMM. On hardware DONE is a latch
-set at completion — that is the whole reason `npu_c930_gemm` reads it, and the
-reason a device that ignored every write cannot fake it.
+DONE meant "some counter is non-zero and I am not busy" — true of any idle
+device that ran an earlier GEMM. On hardware DONE is a latch set at completion,
+which is the whole reason `npu_c930_gemm` reads it: it is the one bit a device
+that ignored every write cannot fake.
 
-Measured, in one process, after one good GEMM:
+Measured then, in one process, after one good GEMM: a `CTRL.START` the model
+refused outright (`DIM_M = 0`) read `STATUS = 0x02`, and an out-of-window START
+read `0x06` — ERROR and DONE together, saying it both failed and completed.
 
-- a `CTRL.START` the model refuses outright (`DIM_M = 0`) reads `STATUS = 0x02`
-  — a completion flag for a launch that was never accepted;
-- an out-of-window `START` reads `STATUS = 0x06` — ERROR and DONE together,
-  which says it both failed and completed.
+Their own test for the bounds check saw the correct `0x04`, because it ran on a
+freshly initialised shim where `CYCLE_LO` is still zero. That is the part worth
+keeping: **a register whose value depends on prior state cannot be characterised
+from a clean slate alone.** Every case in `case_done_is_latched` runs a good
+GEMM first and only then asks the awkward question.
 
-Their own test for the bounds check saw `0x04`, correctly, because it ran on a
-freshly initialised shim where `CYCLE_LO` is still zero. The same START the
-second time in a process reads `0x06`. That is worth naming as a test-design
-point rather than a carelessness one: a state-dependent register cannot be
-characterised from a clean slate alone.
+Fixed with a real `done_latch`, set when the cycle countdown reaches zero and
+cleared on `CTRL.START`. Re-measured: `0x00` and `0x04`.
 
-Neither reading can reach a caller through us, and
-`case_status_is_inferred_not_latched` gates the two reasons why:
-`npu_c930_gemm` validates dimensions *before* touching a register, and it
-checks ERROR *before* DONE. Both watched failing.
+### The bounds checks were `uint32_t` arithmetic
 
-### The bounds checks are `uint32_t` arithmetic
+`a_end = A_BASE + m*k` wraps, so a base near 2³² passed a check it should fail.
+Watched safely on the byte path — a write at `0xFFFFFFFF`, four billion bytes
+out of range, landed on `ddr[0..2]` with no ERROR — and under ASAN on the GEMM
+path, where the same arithmetic segfaults at `npu_dpi_shim.c:159`.
 
-Defect 4's fix computes `a_end = A_BASE + m*k` and compares against
-`NPU_DDR_SIZE`. In `uint32_t` that sum wraps, so a base near 2³² passes a check
-it should fail. Watched, safely, on the byte path:
+Fixed to `base >= SIZE || size > SIZE - base`, which cannot wrap, plus an
+`addr >= NPU_DDR_SIZE` guard in front of the byte path. Re-measured: the
+`0xFFFFFFFF` write is refused with ERROR and DDR is untouched; the ASAN case
+survives with `STATUS = 0x04`. (The inner `addr + highest` comparison still
+wraps in principle, but the guard in front of it makes that unreachable.)
 
-```
-guard: addr=0xFFFFFFFF -> addr+3 = 2, refused? NO
-ddr[0..3] before: 0 0 0 0
-ddr[0..3] after:  204 187 170 0
-STATUS = 0x00 (ERROR should have been raised and was NOT)
-```
+This is `cuda_mapping.md` 7.29 seen from the other side: a truncated 64-bit
+pointer is not an out-of-range address, it is an **arbitrary** one, and a check
+in the same width as the pointer cannot see the half that wraps. Our adapter's
+`in_window()` does the arithmetic in 64-bit and keeps doing it even though the
+shim now checks too — the guard that matters is the one in the process being
+protected.
 
-A write through an address four billion bytes out of range landed on
-`ddr[0..2]`, silently. The same arithmetic is in the GEMM path, where it
-segfaults instead — ASAN, `C_BASE = 0xFFFFFFF0`, `1×8×1`:
+## `npu_ddr_alloc.h` — assessed, fixed upstream, still not vendored
 
-```
-c_end = 0xfffffff0 + 32 = 0x00000010, <= 65536? yes -- check PASSES
-ERROR: AddressSanitizer: SEGV ... WRITE ... npu_dpi_shim.c:159
-```
+The GRX930 team also shipped a first-fit DDR allocator. Six defects were
+measured here against `1c279ab` and all six are fixed at `e02f460`:
 
-This is `cuda_mapping.md` 7.29 from the other side: a truncated host pointer is
-not out of range, it is *arbitrary*, and an `end > SIZE` check in the same width
-as the pointer cannot see the half that wraps. Our adapter's `in_window()` does
-the arithmetic in 64-bit for exactly this reason, and keeps doing it even though
-the shim now checks too — the duplication is the point.
+| Defect at `1c279ab` | State at `e02f460` |
+|---|---|
+| Failure returned `0`, which is also the first valid offset | `NPU_DDR_ALLOC_FAILED` (`0xFFFFFFFF`) |
+| Alignment padding counted twice, so the arena grew past 65536 | `total = size` on the allocated block; padding owns its own free block |
+| Could hand out a buffer running past the end of DDR | wrap-safe `size - padding >= size` availability test |
+| The "global" allocator was a `static` in a header, one copy per TU | removed; callers hold an `npu_ddr_alloc_t` |
+| The header's usage block had the wrong arity | corrected |
+| *(found later, in the same pass)* `padding + size > block->total` overflowed: `alloc(0xFFFFFFFF, 4)` against a padded free block returned offset 12 — 4 GB out of a 64 KB window | refused; the fit test is `size < padding \|\| size - padding < request` |
 
-## `npu_ddr_alloc.h` is NOT vendored
+Re-measured rather than accepted. The targeted cases pass, and their own
+`npu_ddr_alloc_dump` now prints `sum(total) = 65536 (OK)` where it used to print
+the overlap. Beyond those, an invariant fuzz over **79,114 allocations across
+3,000 random alloc/free trials** found nothing: blocks tile `[base, base+size)`
+exactly with no gap or overlap, every returned offset is aligned and inside the
+window, no two live allocations overlap, and draining every allocation restores
+a single whole free block.
 
-The GRX930 team also shipped a first-fit DDR allocator. It is not imported, and
-the reasons are measured, not stylistic. (Their `sim/npu_ddr_alloc.h`, at
-`1c279ab`.)
-
-**1. The failure sentinel is a valid address.** `npu_ddr_alloc` returns `0` on
-failure, and the documented window base is `0x0000`, so the first successful
-allocation also returns `0`. Measured: first alloc → 0, out-of-memory → 0,
-invalid alignment → 0. A caller cannot tell a buffer at the start of DDR from
-no buffer at all, and the wrong branch aims the DMA at offset 0 — which is
-where A usually is.
-
-**2. Alignment padding is counted twice, and the arena grows.** The allocated
-block's `total` includes the padding *and* the padding is inserted as its own
-free block. Their own `npu_ddr_alloc_dump` prints the overlap:
-
-```
-alloc(10,4) -> 0    sum(total)=65536
-alloc(10,4) -> 12   sum(total)=65538      <- window is 65536
-  [2] 0x000c-0x0018  USED  size=10 total=12
-  [3] 0x0016-0x10000 FREE  size=65514 total=65514
-```
-
-Block [2] claims through `0x18`; block [3] starts at `0x16`. After a free and a
-coalesce the merged free block reads `0x000a-0x10002` — two bytes past the end
-of a 64 KB window. Twelve padded allocations drift the arena to 65572.
-
-**3. It will hand out a buffer that runs off the end.** Driven to the point of
-harm rather than argued:
-
-```
-alloc(65526,4) -> offset 12, buffer is [12, 65538)
-the DDR window is [0, 65536).  past the end by 2 bytes
-```
-
-**4. The "global" allocator is per-translation-unit.**
-`static npu_ddr_alloc_t g_npu_ddr;` sits in the header, so every TU that
-includes it gets a private copy. Two TUs, both calling `npu_ddr_init_global`
-then `npu_ddr_malloc(64, 4)`, both received offset 0 for a live allocation.
-
-**5. The header's own usage block does not compile.** It shows
-`npu_ddr_alloc_init(0x0000, 0x10000)`, `npu_ddr_alloc(M * K, 4)` and
-`npu_ddr_free(a)`; the declarations take three, three and two arguments, and
-the global wrapper is spelled `npu_ddr_mfree`.
-
-None of this is hard to fix and the shape of the allocator is right. But our
-NPU allocator has to satisfy `grxMalloc`'s contract, not a firmware one —
-alignment from the device property, an out-of-band failure signal, and
-sanitizer redzones — so it will be written on our side against
-`cuda_mapping.md` 7.28 rather than imported.
+It is still not vendored, and now for one reason rather than five: **an NPU
+allocator here has to satisfy `grxMalloc`'s contract, not a firmware one.**
+Alignment comes from the device property rather than a caller argument, failure
+has to arrive as a `grxError_t`, and `GRX_SANITIZE` expects a trailing redzone
+on every allocation and quarantine rather than reuse on free. That is a
+different object with the same shape. Theirs stays the reference for the shape,
+and having it made ours obvious.
 
 ## The backend constants are not usable as constants
 
-`npu_dpi_shim.h` now defines `NPU_DPI_BACKEND_EMULATION 0x10`,
+`npu_dpi_shim.h` defined `NPU_DPI_BACKEND_EMULATION 0x10`,
 `NPU_DPI_BACKEND_SIMULATION 0x11` and `NPU_DPI_BACKEND_SILICON 0x00`, with the
 instruction to assign one to the device's backend field. Measured against our
 code as it stood, every one of the three made things worse:
@@ -196,5 +159,10 @@ which had been right all along — two divergent copies of one mapping is why on
 of them could stay wrong. The remaining `0x00 → simx` is a value collision that
 no defensive coding on our side can fix.
 
-The mapping belongs in our code, against our enum, and that is where it will go
-(`cuda_mapping.md` 7.28).
+`NPU_DPI_BACKEND_SILICON` is dropped at `e02f460`, and the remaining two carry
+a comment pointing the mapping back at us. That is the right resolution: what is
+useful to publish is the *distinction* — software model, RTL-backed simulation,
+silicon — while the mapping into `grxBackend_t` belongs in our code, next to the
+seam that attaches the model (`cuda_mapping.md` 7.28). Their `SIMULATION` lands
+on the existing `GRX_BACKEND_RTLSIM`; a software register model needs one new
+value, appended.

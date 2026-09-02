@@ -28,14 +28,16 @@
 //     so the map was right and the model was wrong. case_busy_covers_the_gemm
 //     now pins the property our poll loop rests on.
 //   - The GEMM path indexed ddr[] unchecked (watched under ASAN). Fixed
-//     upstream, and the adapter below ALSO refuses a launch whose A/B/C extents
-//     leave the window, the way an address decoder would. That is deliberate
-//     duplication: their check is uint32 arithmetic and an address near 2^32
-//     still wraps past it, so ours is in 64-bit and is the one that holds.
+//     upstream, twice: first with an extent check, then -- after this side
+//     showed a base near 2^32 wrapping straight past it -- with a wrap-safe
+//     form. The adapter below still does its own check in 64-bit. That
+//     duplication is deliberate and stays: the guard that matters is the one in
+//     the process being protected.
 //
-// What is NOT fixed, because it is a modelling choice rather than a slip, is
-// that STATUS.DONE is inferred from the counters instead of latched. See
-// case_status_is_inferred_not_latched.
+// A sixth followed from reading the fix rather than the original: STATUS.DONE
+// was inferred from the counters instead of latched. Also fixed. See
+// case_done_is_latched, which now gates the latch and the two properties on
+// our side that made the inference harmless while it lasted.
 //
 // The layout the shim reads is its own (A row-major m x k, B row-major k x n).
 // Whether that is the layout a column-major BLAS caller means is a separate
@@ -298,32 +300,35 @@ void case_busy_covers_the_gemm() {
         "DONE appears on the cycle after BUSY drops -- no window in between");
 }
 
-// STATUS.DONE IS NOT LATCHED IN THIS MODEL. IT IS INFERRED.
+// STATUS.DONE IS A LATCH, AND THAT TOOK TWO ROUNDS TO BECOME TRUE.
 //
-//   build_status() = (error ? 4 : 0) | ((CYCLE_LO || OP_COUNT) && !busy ? 2 : 0)
-//                                    | (busy ? 1 : 0)
+// On import it was inferred rather than latched:
 //
-// DONE is therefore "some counter is non-zero and I am not busy", which is true
-// of an idle device that ran ANY earlier GEMM. On real hardware DONE is a latch
-// set at completion -- that is the whole reason npu_c930_gemm reads it, and the
-// reason a device that ignored every write cannot fake it.
+//   build_status() = ... | ((CYCLE_LO || OP_COUNT) && !busy ? 2 : 0) | ...
 //
-// Two consequences, both measured, neither reachable through our backend:
+// which reads "some counter is non-zero and I am not busy" -- true of any idle
+// device that ran an earlier GEMM. Measured then, in one process after one good
+// GEMM: a START the model refused outright (DIM_M = 0) read STATUS = 0x02, a
+// completion flag for a launch never accepted; and an out-of-window START read
+// 0x06, ERROR and DONE together, which says it both failed and completed.
 //
-//   * a START the model refuses outright (M=0) reports DONE=1, if any earlier
-//     GEMM has run. A completion flag for a launch that was never accepted.
-//   * an out-of-window START reports STATUS=0x06 -- ERROR and DONE together,
-//     which is a contradiction: it both failed and completed.
+// Their own test for the bounds check saw the correct 0x04 because it ran on a
+// freshly initialised shim, where CYCLE_LO is still zero. That is the part
+// worth remembering: a register whose value depends on prior state cannot be
+// characterised from a clean slate alone, and every case below therefore runs a
+// good GEMM FIRST and only then asks the awkward question.
 //
-// Their own test for the bounds check saw 0x04 because it ran on a freshly
-// initialised shim, where the cycle counter is still zero. The same START, the
-// second time in a process, reads 0x06.
+// Fixed upstream with a real done_latch, set when the cycle countdown reaches
+// zero and cleared on CTRL.START -- which is what c930_npu_csr.sv does. Both
+// readings are now 0x00 and 0x04.
 //
-// What this case gates is OUR half -- the two properties that make their defect
-// unable to reach a caller. If either is ever reordered or dropped, a
-// contradictory STATUS becomes a successful GEMM.
-void case_status_is_inferred_not_latched() {
-  std::printf("their DONE is inferred, so check what protects us from it:\n");
+// What this case gates is the pair of properties on OUR side that made those
+// readings unable to reach a caller in the first place, and that still stand
+// between us and any future model with the same idea: dimensions are validated
+// before a register is touched, and ERROR is checked before DONE. Both are
+// watched failing -- reorder the two status checks and the last one goes red.
+void case_done_is_latched() {
+  std::printf("DONE is a latch, and the two checks that guard us either way:\n");
   const int M = 4, N = 4, K = 8;
   const uint32_t A_ADDR = 0x0100, B_ADDR = 0x0200, C_ADDR = 0x0400;
 
@@ -355,19 +360,18 @@ void case_status_is_inferred_not_latched() {
   check(s.starts == starts_before,
         "and refuses it BEFORE writing CTRL -- the device is never asked");
 
-  // The contradictory reading itself, produced by the model rather than by us:
-  // an out-of-window START, issued below the adapter so the adapter's own guard
-  // does not intercept it first.
+  // An out-of-window START, issued below the adapter so the adapter's own guard
+  // does not intercept it. ERROR without DONE: it failed, and it did not
+  // complete. Before the latch landed this read 0x06 -- both at once.
   npu_dpi_csr_write(NPU_C930_MMIO_BASE + 0x08, M);
   npu_dpi_csr_write(NPU_C930_MMIO_BASE + 0x1C, 0xfff0);   // C_BASE off the end
   npu_dpi_csr_write(NPU_C930_MMIO_BASE + 0x00, NPU_C930_CTRL_START);
-  const uint32_t both = npu_dpi_csr_read(NPU_C930_MMIO_BASE + 0x04);
+  const uint32_t after_err = npu_dpi_csr_read(NPU_C930_MMIO_BASE + 0x04);
   std::printf("        an out-of-window START, second time in the process, "
-              "reads STATUS=0x%02x\n", both);
-  check((both & NPU_C930_STATUS_ERROR) && (both & NPU_C930_STATUS_DONE),
-        "ERROR and DONE at once -- it both failed and completed");
-  std::printf("        (their own test for this saw 0x04: it ran on a freshly\n"
-              "         initialised shim, where CYCLE_LO is still zero.)\n");
+              "reads STATUS=0x%02x\n", after_err);
+  check((after_err & NPU_C930_STATUS_ERROR) &&
+        !(after_err & NPU_C930_STATUS_DONE),
+        "ERROR without DONE -- the two are mutually exclusive");
 
   // OUR PROTECTION #2: npu_c930_gemm checks ERROR before DONE, so a device
   // reporting both is a failure and not a success. Driven through a hook built
@@ -514,7 +518,7 @@ int main() {
   case_detect();
   case_gemm();
   case_busy_covers_the_gemm();
-  case_status_is_inferred_not_latched();
+  case_done_is_latched();
   case_out_of_window();
   case_counters();
   std::printf("\n%s (%d failure%s)\n", g_failures ? "FAILED" : "PASSED",

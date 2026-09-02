@@ -1227,6 +1227,45 @@ neither `SIMX` nor `RTLSIM` nor `SILICON`); their `SIMULATION` maps onto the
 existing `GRX_BACKEND_RTLSIM`, and their `SILICON` onto `GRX_BACKEND_SILICON`.
 Appending a value is ABI-safe; reusing an existing one would not be.
 
+### 7.31 A guard that wraps is not a guard — the same shape, three times in one exchange — **CROSS-TEAM, pattern**
+
+Recorded as a pattern rather than a defect, because it turned up three times in
+four days in three different pieces of code, written by two teams, and each time
+it took a run to see.
+
+1. **7.29, ours.** `grxblasGemmEx` casts a device pointer into a 32-bit
+   `A_BASE`/`B_BASE`/`C_BASE`. A truncated 64-bit pointer is not an out-of-range
+   address, it is an *arbitrary* one: glibc gave `0x9bfc62a0` (outside a 64 KB
+   window), ASAN gave `0x00000020` (offset 32, inside it, indistinguishable from
+   a real allocation).
+2. **The shim's extent check.** `a_end = A_BASE + m*k` compared against
+   `NPU_DDR_SIZE`, in `uint32_t`. With `A_BASE = 0xFFFFFFF0` the sum wraps to
+   `0x10` and the check passes. Watched: a byte write at `0xFFFFFFFF` landed on
+   `ddr[0..2]` with no error raised; the GEMM path segfaulted under ASAN.
+3. **The GRX930 allocator's fit test.** `if (padding + size > block->total)
+   continue;` — `padding + size` in `uint32_t`. Measured against their
+   `1c279ab`: after one small allocation leaves a free block at offset 10,
+   `npu_ddr_alloc(&a, 0xFFFFFFFF, 4)` computes `2 + 0xFFFFFFFF = 1`, sails past
+   the test, and **returns offset 12 for a four-gigabyte allocation out of a
+   64 KB window.** Their `e02f460` refuses it.
+
+Same shape every time: **a bounds check computed in the same width as the value
+it is bounding.** `base + extent <= LIMIT` and `extent <= LIMIT - base` are the
+same statement in arithmetic and different programs in C, and the first one is
+the one everybody writes.
+
+The rule this project takes from it: a bounds check is either done in a wider
+type than the address, or written so no addition or subtraction can leave the
+representable range — `base < LIMIT && extent <= LIMIT - base`. Our adapter's
+`in_window()` does it in 64-bit and keeps doing it even now that the shim checks
+too. Two guards for one hazard is not redundancy when they live in different
+processes: the one that matters is the one inside the address space being
+protected.
+
+The corollary is about testing, not arithmetic. All three were found by running
+a value near the edge of the type, and none by reading. A guard that has never
+been shown a wrapping input has not been tested; it has been reviewed.
+
 ## 8. Where GRX-G100 is *ahead* of the reference
 
 Worth recording, because the platform should expose these rather than
