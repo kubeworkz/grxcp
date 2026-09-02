@@ -24,6 +24,9 @@
 
 #ifdef GRXCP_ENABLE_NPU
 #include "npu_c930.h"
+// For npu_device_for: the NPU handle is owned by the runtime device table,
+// and asking it is what keeps this library and the runtime on one device.
+#include "../../runtime/internal.h"
 #endif
 
 namespace {
@@ -732,17 +735,24 @@ grxblasStatus_t ensure_hgemm(Context& ctx) {
 
 #ifdef GRXCP_ENABLE_NPU
 
-static npu_c930_device_t g_npu_dev;
-static bool              g_npu_detected = false;
-static std::once_flag    g_npu_once;
-
-static void ensure_npu_detected() {
-  std::call_once(g_npu_once, [] {
-    g_npu_detected = npu_c930_detect(&g_npu_dev) != 0;
-    if (g_npu_detected)
-      std::fprintf(stderr, "grxblas: GRX930 NPU detected at 0x%08x\n",
-                   NPU_C930_MMIO_BASE);
-  });
+// THE DEVICE THE RUNTIME ENUMERATED, NOT ONE OF OUR OWN.
+//
+// This was a file-static npu_c930_device_t plus a std::call_once that ran
+// npu_c930_detect on it. So an NPU build held TWO handles to one register
+// block and probed it twice -- on a real machine, two independent mmaps of
+// /dev/mem, each write-readback probing DIM_M behind the other's back.
+//
+// The routing bug underneath is the one that mattered. decide_gemm_engine asks
+// the CURRENT DEVICE what it is, and dispatches on the answer; this code then
+// ran the GEMM on a different device object entirely. With the model seam in
+// place that stops being theoretical: a model attached to the enumerated
+// device would have been exercised by everything except the GEMM, which would
+// have gone to a second handle that found nothing and refused -- or, worse, to
+// a second handle that found real hardware.
+//
+// One device, asked for by index, owned by the device table.
+static npu_c930_device_t* npu_device(int index) {
+  return grxcp::npu_device_for(index);
 }
 
 
@@ -761,12 +771,12 @@ static void ensure_npu_detected() {
 // NOTE: this assumes no transpose.  Transpose support would require
 // physical copies into row-major buffers, which is a follow-up.
 static grxblasStatus_t npu_gemm_path(
-    int m, int n, int k,
+    int device, int m, int n, int k,
     const float* alpha, const void* A, int lda,
     const void* B, int ldb,
     const float* beta, void* C, int ldc) {
-  ensure_npu_detected();
-  if (!g_npu_detected) return GRXBLAS_STATUS_NOT_SUPPORTED;
+  npu_c930_device_t* dev = npu_device(device);
+  if (!dev) return GRXBLAS_STATUS_NOT_SUPPORTED;
 
   // The NPU only does INT8→INT32.  Refuse non-unit alpha/beta for now
   // (the hardware has no alpha/beta scaling — C = A*B, not alpha*A*B + beta*C).
@@ -831,7 +841,7 @@ static grxblasStatus_t npu_gemm_path(
   const uint32_t b_addr = (uint32_t)(uintptr_t)B;
   const uint32_t c_addr = (uint32_t)(uintptr_t)C;
 
-  int rc = npu_c930_gemm(&g_npu_dev, m, n, k, a_addr, b_addr, c_addr);
+  int rc = npu_c930_gemm(dev, m, n, k, a_addr, b_addr, c_addr);
   if (rc != 0) return GRXBLAS_STATUS_EXECUTION_FAILED;
   return GRXBLAS_STATUS_SUCCESS;
 }
@@ -1036,11 +1046,18 @@ grxblasStatus_t grxblasGemmEx(grxblasHandle_t handle,
   //
   // ROUTED THROUGH THE SAME DECISION grxblasGetGemmEngine reports, so the
   // answer a caller can ask for cannot drift away from what actually happens.
-  const grxblasEngine_t engine = decide_gemm_engine(Atype, Btype, Ctype, nullptr);
+  // The device index comes back from the decision rather than being asked for
+  // again: the NPU path runs on the device the decision was made ABOUT, or the
+  // two can disagree, which is the failure decide_gemm_engine's out_device
+  // parameter was added to prevent in the first place.
+  int engine_device = -1;
+  const grxblasEngine_t engine =
+      decide_gemm_engine(Atype, Btype, Ctype, &engine_device);
   if (engine == GRXBLAS_ENGINE_NONE) return GRXBLAS_STATUS_NOT_SUPPORTED;
   if (engine == GRXBLAS_ENGINE_NPU_C930) {
 #ifdef GRXCP_ENABLE_NPU
-    return npu_gemm_path(m, n, k, alpha, A, lda, B, ldb, beta, C, ldc);
+    return npu_gemm_path(engine_device, m, n, k, alpha, A, lda, B, ldb, beta,
+                         C, ldc);
 #else
     return GRXBLAS_STATUS_NOT_SUPPORTED;
 #endif

@@ -103,7 +103,7 @@ void print_human(int index, const grxDeviceProp_t& p) {
                   : "HOST CLOCK around execution (CP writes back no timestamps)");
   if (!p.eventTimingIsDeviceSide &&
       (p.backend == GRX_BACKEND_SIMX || p.backend == GRX_BACKEND_RTLSIM ||
-       p.backend == GRX_BACKEND_GEM5))
+       p.backend == GRX_BACKEND_GEM5 || p.backend == GRX_BACKEND_MODEL))
     std::printf("                           on a simulator that measures the "
                 "SIMULATOR, not the device\n");
   std::printf("    __constant__           %s\n",
@@ -153,6 +153,7 @@ static const char* backend_json(grxBackend_t b) {
     case GRX_BACKEND_OPAE:    return "opae";
     case GRX_BACKEND_GEM5:    return "gem5";
     case GRX_BACKEND_SILICON: return "silicon";
+    case GRX_BACKEND_MODEL:   return "model";
   }
   return "unknown";
 }

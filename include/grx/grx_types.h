@@ -149,7 +149,15 @@ typedef enum {
   GRX_BACKEND_XRT     = 2,
   GRX_BACKEND_OPAE    = 3,
   GRX_BACKEND_GEM5    = 4,
-  GRX_BACKEND_SILICON = 5
+  GRX_BACKEND_SILICON = 5,
+  // A software register model: the register map answers, and whatever the
+  // model chooses to compute happens in software on the host. Appended rather
+  // than folded into SIMX or RTLSIM because it is neither -- SIMX is the
+  // Vortex functional simulator and RTLSIM executes the RTL, while this
+  // executes nothing of the device at all. A device reporting this backend is
+  // NOT hardware and no result obtained from it may be reported as the device
+  // working (AGENTS.md section 1).
+  GRX_BACKEND_MODEL   = 6
 } grxBackend_t;
 
 // Capability profile: which GRXCP subsystems a device actually implements.

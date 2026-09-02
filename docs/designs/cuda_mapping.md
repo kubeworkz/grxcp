@@ -1104,7 +1104,7 @@ kernel is a fusion shipping on an argument.
 The work is not lost: the five changed files and this bisection are attached to
 the session that found it.
 
-### 7.28 The NPU device is enumerable but not usable: there is no NPU memory path — **OURS, blocking**
+### 7.28 The NPU device is enumerable but not usable: there is no NPU memory path — **OURS, part done**
 
 Found by trying to wire the GRX930 team's register model in, which is the first
 thing that ever asked what an NPU device would do after it was enumerated.
@@ -1159,6 +1159,40 @@ Two more, found in the same pass and blocking the same thing:
 None of this is a GRX930 problem and none of it is fixed by their shim. The
 shim makes the register half reachable (see `third_party/grx930/README.md`);
 the memory half does not exist yet on our side.
+
+**Two of the three are now closed.**
+
+The seam is `src/backends/npu_c930/npu_c930_testing.h`:
+`grxcp_npu_attach_model_for_testing()` installs a register model that
+`probe_npu_device` detects through, and refuses after enumeration has run --
+because a model installed late would flip the property below without changing
+the device it describes, which is the fabrication the property exists to
+prevent. `grxblas.cpp`'s file-static `npu_c930_device_t` is gone; it asks
+`grxcp::npu_device_for(index)` for the handle the device table owns, so the
+GEMM now runs on the device `decide_gemm_engine` made its decision about rather
+than on a second one detected behind its back.
+
+The backend field is derived. `GRX_BACKEND_MODEL` is appended to `grxBackend_t`
+-- a software register model is neither `SIMX` (the Vortex functional
+simulator) nor `RTLSIM` (which executes the RTL) nor `SILICON`, because it
+executes nothing of the device at all -- and `populate_npu_properties` reads
+the same variable `probe_npu_device` detected through. The device also names
+itself: `"GRX930 NPU (software register model, NOT hardware)"`, where `grx-smi`
+prints it. Watched failing: restoring the old unconditional
+`p.backend = GRX_BACKEND_SILICON` turns three checks in
+`tests/unit/test_npu_enumerated_model.cpp` red, with the device reporting
+backend 5 and the name "(silicon)" while running on a C register file.
+
+That test is also the first thing in this project to reach an NPU device
+through the public API. It measures the remaining hole rather than asserting
+it, and the reading is the one predicted above:
+
+```
+note  grxMalloc(256) -> grxErrorInvalidValue (invalid argument)
+      totalGlobalMem is 65536 bytes and nothing allocates from it.
+```
+
+The allocator is what is left.
 
 ### 7.29 Truncating a host pointer into a 32-bit base register fails silently, and not always out of range — **OURS, sharp edge**
 

@@ -192,6 +192,7 @@ const char* backend_name(grxBackend_t b) {
     case GRX_BACKEND_OPAE:    return "opae";
     case GRX_BACKEND_GEM5:    return "gem5";
     case GRX_BACKEND_SILICON: return "silicon";
+    case GRX_BACKEND_MODEL:   return "model";
   }
   return "unknown";
 }
@@ -200,6 +201,18 @@ const char* backend_name(grxBackend_t b) {
 // NPU C930 device support
 // ---------------------------------------------------------------------------
 #ifdef GRXCP_ENABLE_NPU
+
+// The register model installed through npu_c930_testing.h, if any. Read in two
+// places -- probe_npu_device, to decide what to detect through, and
+// populate_npu_properties, to decide what the device says it is -- and those
+// two must never disagree, which is why it is one variable and not two flags.
+struct PendingNpuModel {
+  npu_c930_read_fn  read32  = nullptr;
+  npu_c930_write_fn write32 = nullptr;
+  void*             ctx     = nullptr;
+};
+static PendingNpuModel g_npu_model;
+static bool            g_npu_enumerated = false;
 
 // Fill grxDeviceProp_t for the GRX930 NPU from hardware constants.
 // The NPU has no vx_device_h and no vx_device_query — every field comes
@@ -257,7 +270,28 @@ static void populate_npu_properties(Device& d) {
   p.constantMemoryIsGlobal  = 1;  // no __constant__ path
   p.textureIsEmulated       = 1;  // and no TEX unit either
 
-  std::snprintf(p.name, sizeof(p.name), "GRX930 NPU (silicon)");
+  // WHAT THIS DEVICE IS, DERIVED RATHER THAN ASSERTED.
+  //
+  // These two lines used to read
+  //
+  //     p.backend = GRX_BACKEND_SILICON;  // NPU is always real hardware
+  //     snprintf(p.name, ..., "GRX930 NPU (silicon)");
+  //
+  // -- a claim about what the device is, made by a function with no way to
+  // know, in a struct whose entire purpose is to let a caller find out. It
+  // happened to hold only because nothing could reach this device except an
+  // mmap of /dev/mem. The seam in npu_c930_testing.h removes that accident:
+  // attach a register model and the same line would report a C triple loop as
+  // silicon, which is the fabrication AGENTS.md section 1 exists to stop.
+  //
+  // So the field follows the way the device was reached. There is exactly one
+  // predicate, it is the same one probe_npu_device used to decide what to
+  // detect through, and a model cannot be attached without it moving.
+  const bool via_model = g_npu_model.read32 || g_npu_model.write32;
+  p.backend = via_model ? GRX_BACKEND_MODEL : GRX_BACKEND_SILICON;
+  std::snprintf(p.name, sizeof(p.name), "GRX930 NPU (%s)",
+                via_model ? "software register model, NOT hardware"
+                          : "silicon");
 }
 
 void probe_npu_device(std::vector<Device>& devices) {
@@ -290,6 +324,13 @@ void probe_npu_device(std::vector<Device>& devices) {
     // what the answer was judged against. This is the handle the question was
     // asked through, and it was never initialised at all.
     npu_c930_device_t* dev = new npu_c930_device_t{};
+    // A model installed through the seam replaces the mmap, and only before
+    // this runs -- which is why the seam refuses after enumeration rather than
+    // pretending to work. npu_c930_attach_model memsets the struct, so this
+    // must come after the value-initialisation above and not instead of it.
+    if (g_npu_model.read32 || g_npu_model.write32)
+      npu_c930_attach_model(dev, g_npu_model.read32, g_npu_model.write32,
+                            g_npu_model.ctx);
     if (npu_c930_detect(dev) && dev->present) {
       Device d;
       d.index    = (int)devices.size();
@@ -300,11 +341,28 @@ void probe_npu_device(std::vector<Device>& devices) {
       d.npu_dev  = dev;
       devices.push_back(d);
       std::fprintf(stderr, "grxcp: GRX930 NPU detected at 0x%08x"
-                   " (device %d)\n", NPU_C930_MMIO_BASE, d.index);
+                   " (device %d)%s\n", NPU_C930_MMIO_BASE, d.index,
+                   (g_npu_model.read32 || g_npu_model.write32)
+                       ? " -- THROUGH A REGISTER MODEL, not hardware"
+                       : "");
     } else {
       delete dev;
     }
+    g_npu_enumerated = true;
   });
+}
+
+// The one NPU device handle in the process, or null. grxblas.cpp used to keep
+// its OWN file-static npu_c930_device_t and call npu_c930_detect on it, so a
+// build with an NPU had two handles, two detections and, on a real machine,
+// two independent mmaps of the same register block. Worse for the seam: a
+// model attached to the enumerated device would not have been the device
+// grxblasGemmEx dispatched through, so the routing could be exercised against
+// one device while the answer came from another.
+npu_c930_device* npu_device_for(int index) {
+  if (index < 0 || (size_t)index >= g_devices.size()) return nullptr;
+  const Device& d = g_devices[index];
+  return (d.type == DeviceType::NPU) ? d.npu_dev : nullptr;
 }
 
 #endif  // GRXCP_ENABLE_NPU
@@ -364,6 +422,36 @@ int  current_device_index()          { return g_current_device; }
 void set_current_device_index(int i) { g_current_device = i; }
 
 }  // namespace grxcp
+
+// ---------------------------------------------------------------------------
+// The test seam (npu_c930_testing.h)
+// ---------------------------------------------------------------------------
+#ifdef GRXCP_ENABLE_NPU
+extern "C" {
+
+int grxcp_npu_attach_model_for_testing(npu_c930_read_fn read32,
+                                       npu_c930_write_fn write32,
+                                       void* ctx) {
+  // AFTER ENUMERATION THIS CANNOT WORK, AND SAYS SO.
+  //
+  // probe_npu_device runs once behind a std::call_once. A model installed
+  // after that would sit in g_npu_model unread, and -- far worse -- would flip
+  // populate_npu_properties into reporting the device as a model when the
+  // device it describes was found by mmap. Returning 0 is the difference
+  // between a test that skips and a test that lies about what it ran on.
+  if (grxcp::g_npu_enumerated) return 0;
+  grxcp::g_npu_model.read32  = read32;
+  grxcp::g_npu_model.write32 = write32;
+  grxcp::g_npu_model.ctx     = ctx;
+  return 1;
+}
+
+int grxcp_npu_model_is_attached(void) {
+  return (grxcp::g_npu_model.read32 || grxcp::g_npu_model.write32) ? 1 : 0;
+}
+
+}  // extern "C"
+#endif  // GRXCP_ENABLE_NPU
 
 // ---------------------------------------------------------------------------
 // Public entry points

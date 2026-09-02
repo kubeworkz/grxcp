@@ -69,6 +69,12 @@ const char*  backend_name(grxBackend_t b);
 // Probe for the GRX930 NPU and append it to the device table.
 // Called once during ensure_initialized(), after Vortex device enumeration.
 void probe_npu_device(std::vector<Device>& devices);
+
+// The one NPU device handle in the process, or null when `index` is not an NPU.
+// There is exactly one, owned by the device table. grxblas.cpp asks for it
+// rather than detecting its own -- two handles meant two detections, and on a
+// real machine two independent mmaps of the same register block.
+struct npu_c930_device* npu_device_for(int index);
 #endif
 
 // ---------------------------------------------------------------------------
