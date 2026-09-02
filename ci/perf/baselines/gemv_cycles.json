@@ -11,48 +11,48 @@
       "trans": "N",
       "m": 64,
       "n": 64,
-      "span": 11229,
-      "busy_median": 8731,
+      "span": 11599,
+      "busy_median": 8849,
       "warps": 16
     },
     {
       "trans": "N",
       "m": 256,
       "n": 16,
-      "span": 17538,
-      "busy_median": 2808,
+      "span": 18113,
+      "busy_median": 2764,
       "warps": 64
     },
     {
       "trans": "N",
       "m": 16,
       "n": 256,
-      "span": 19901,
-      "busy_median": 19895,
+      "span": 19904,
+      "busy_median": 19899,
       "warps": 4
     },
     {
       "trans": "T",
       "m": 64,
       "n": 64,
-      "span": 22791,
-      "busy_median": 3905,
+      "span": 22809,
+      "busy_median": 3910,
       "warps": 64
     },
     {
       "trans": "T",
       "m": 256,
       "n": 16,
-      "span": 14723,
-      "busy_median": 10913,
+      "span": 15315,
+      "busy_median": 10950,
       "warps": 16
     },
     {
       "trans": "T",
       "m": 16,
       "n": 256,
-      "span": 53781,
-      "busy_median": 2142,
+      "span": 53505,
+      "busy_median": 2098,
       "warps": 256
     }
   ]
