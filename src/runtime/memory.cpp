@@ -22,6 +22,10 @@
 
 #include "internal.h"
 
+#ifdef GRXCP_ENABLE_NPU
+#include "npu_c930.h"
+#endif
+
 #include <grx/grx_runtime.h>
 
 #include <algorithm>
@@ -567,6 +571,62 @@ grxError_t enqueue_copy(void* dst, const void* src, size_t count,
   if (s.is_device && s.map.size < count) return grxErrorInvalidValue;
 
   const int device = d.is_device ? d.map.device : s.map.device;
+
+#ifdef GRXCP_ENABLE_NPU
+  // THE NPU HAS NO QUEUE, NO EVENTS AND NO vx_buffer_h.
+  //
+  // Everything below this point is the Vortex path: resolve_stream wants a
+  // vx_queue_h, and the three enqueue calls want buffer handles that an NPU
+  // allocation does not have (its Mapping::buffer is null and its address IS
+  // the DDR offset). So the copy happens here, synchronously, through the
+  // device's DDR hooks.
+  //
+  // A DEVICE WITH NO DDR HOOKS IS REFUSED, and that is every device today
+  // except one with a model attached: the hardware path would be an mmap of
+  // the DDR aperture or a bounce through the AXI DMA, and neither is written.
+  // Refusing is the only honest answer -- an accepted memcpy that moves no
+  // bytes leaves the caller reading whatever was in the buffer, which is worse
+  // than an error and much harder to find.
+  //
+  // Synchronous regardless of `blocking`: there is nothing to enqueue onto, so
+  // the copy is complete when this returns. That is a stronger guarantee than
+  // the caller asked for and needs no note in the stream's event chain.
+  {
+    Device* nd = nullptr;
+    if (acquire_device(device, &nd) == grxSuccess &&
+        nd->type == DeviceType::NPU) {
+      npu_c930_device* h = npu_device_for(device);
+      if (!h || !npu_c930_mem_ready(h)) return grxErrorNotSupported;
+
+      ProfileSample np;
+      const bool nprof = profile_begin(device, &np);
+      const uint32_t n = (uint32_t)count;
+      int rc = 0;
+      const char* dir;
+      if (d.is_device && s.is_device) {
+        dir = "d2d";
+        // Through a bounce buffer rather than hook-to-hook: the two extents
+        // may overlap, and a byte-by-byte device-to-device copy through a
+        // model with no aliasing guarantees is a bug waiting for the first
+        // overlapping call.
+        std::vector<uint8_t> tmp(count);
+        rc = npu_c930_mem_read(h, (uint32_t)(uintptr_t)src, tmp.data(), n);
+        if (rc == 0)
+          rc = npu_c930_mem_write(h, (uint32_t)(uintptr_t)dst, tmp.data(), n);
+      } else if (d.is_device) {
+        dir = "h2d";
+        rc = npu_c930_mem_write(h, (uint32_t)(uintptr_t)dst, src, n);
+      } else {
+        dir = "d2h";
+        rc = npu_c930_mem_read(h, (uint32_t)(uintptr_t)src, dst, n);
+      }
+      if (rc != 0) { profile_abandon(&np); return grxErrorInvalidValue; }
+      if (nprof) profile_end_transfer(&np, "memcpy", count, dir, stream);
+      return grxSuccess;
+    }
+  }
+#endif
+
   vx_queue_h q = nullptr;
   e = resolve_stream(stream, device, &q, nullptr);
   if (e != grxSuccess) return e;

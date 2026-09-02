@@ -123,6 +123,32 @@ void npu_c930_attach_model(npu_c930_device_t* dev,
     dev->io_ctx  = ctx;
 }
 
+void npu_c930_attach_memory(npu_c930_device_t* dev,
+                            npu_c930_mem_read_fn mem_read,
+                            npu_c930_mem_write_fn mem_write,
+                            void* ctx) {
+    if (!dev) return;
+    dev->mem_read  = mem_read;
+    dev->mem_write = mem_write;
+    dev->mem_ctx   = ctx;
+}
+
+int npu_c930_mem_ready(const npu_c930_device_t* dev) {
+    return (dev && dev->mem_read && dev->mem_write) ? 1 : 0;
+}
+
+int npu_c930_mem_write(npu_c930_device_t* dev, uint32_t addr, const void* src,
+                       uint32_t bytes) {
+    if (!npu_c930_mem_ready(dev)) return -1;
+    return dev->mem_write(dev->mem_ctx, addr, src, bytes);
+}
+
+int npu_c930_mem_read(npu_c930_device_t* dev, uint32_t addr, void* dst,
+                      uint32_t bytes) {
+    if (!npu_c930_mem_ready(dev)) return -1;
+    return dev->mem_read(dev->mem_ctx, addr, dst, bytes);
+}
+
 int npu_c930_detect(npu_c930_device_t* dev) {
     if (!dev) return 0;
 

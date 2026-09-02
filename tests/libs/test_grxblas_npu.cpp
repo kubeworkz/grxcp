@@ -25,6 +25,29 @@
 
 #include "../unit/grx_test.h"
 
+#ifdef GRXCP_ENABLE_NPU
+// THIS FILE HAS NEVER RUN A SINGLE CASE.
+//
+// It was written against hardware and has been compiled into every NPU build
+// since, exiting 77 at "no NPU device found (count=1)". That reads like a skip
+// for absent hardware. It was not: probe_npu_device kept its handle to itself,
+// so no NPU could be enumerated on a machine without a c930 at all, and even
+// if one had been, grxMalloc had no NPU branch and would have failed on the
+// first allocation of the first case.
+//
+// The seam and the allocator fixed both (cuda_mapping.md 7.28). This include
+// is what finally makes the file execute: the GRX930 team's own register model
+// stands in for the device, and every case below runs against it.
+//
+// A MODEL IS NOT HARDWARE. Its GEMM is a C triple loop in
+// third_party/grx930/npu_dpi_shim.c and its own header says it is not cycle
+// accurate. Everything green here says our host programs the register map,
+// sizes the buffers and moves the bytes correctly. It says nothing about the
+// c930, it does not meet the phase 7 exit gate, and per AGENTS.md no run
+// through it may be reported as the NPU working.
+#include "npu_shim_adapter.h"
+#endif
+
 #include <cstdio>
 #include <cstdlib>
 #include <cstdint>
@@ -70,12 +93,19 @@ static constexpr int NPU_NUM_ROWS = 0;
 static constexpr int NPU_NUM_COLS = 0;
 #endif
 
-// ---- CPU reference GEMM (INT8 in, INT32 out, row-major, no transpose) ----
+// ---- CPU reference GEMM (INT8 in, INT32 out, COLUMN-MAJOR) ----
 //
 // C[m x n] = alpha * A[m x k] * B[k x n] + beta * C[m x n]
 //
-// alpha and beta are integers (the NPU path requires alpha=1, beta=0,
-// but the reference computes the full expression for completeness).
+// COLUMN-MAJOR, because grxblas.h opens with "Shaped after cuBLAS, including
+// its column-major convention" and this is a test of grxBLAS.
+//
+// It used to index row-major -- A[i*lda + l] with lda = m -- which is not a
+// consistent layout at all: row-major A[m x k] has row stride k, not m. The
+// two agree only when m == k, so the square cases passed and every other shape
+// disagreed with the engine. That was invisible for as long as this file never
+// executed a case; the first run after the seam landed showed N=1 wrong in all
+// four elements and K=1 wrong in twelve of sixteen.
 static void reference_int8(int m, int n, int k,
                            int32_t alpha, int32_t beta,
                            const int8_t* A, int lda,
@@ -85,9 +115,9 @@ static void reference_int8(int m, int n, int k,
     for (int j = 0; j < n; ++j) {
       int64_t acc = 0;
       for (int l = 0; l < k; ++l) {
-        acc += (int64_t)A[i * lda + l] * (int64_t)B[l * ldb + j];
+        acc += (int64_t)A[i + (size_t)l * lda] * (int64_t)B[l + (size_t)j * ldb];
       }
-      const size_t ci = (size_t)i * ldc + j;
+      const size_t ci = (size_t)i + (size_t)j * ldc;
       C[ci] = (beta == 0) ? (int32_t)(alpha * acc)
                            : (int32_t)(alpha * acc + beta * C[ci]);
     }
@@ -142,13 +172,31 @@ static bool run_int8_case(grxblasHandle_t h,
   grxMemcpy(dA, A.data(), a_elems, grxMemcpyDefault);
   grxMemcpy(dB, B.data(), b_elems, grxMemcpyDefault);
 
-  // Call grxblasGemmEx — the NPU path should be taken if the device is an NPU
+  // ALPHA AND BETA ARE FLOATS, AND THIS FILE USED TO PUN INTEGERS THROUGH THEM.
+  //
+  // It passed reinterpret_cast<const float*>(&alpha) with alpha an int32_t --
+  // the cuBLAS convention, where the scalar's type follows computeType. Ours is
+  // not that API: grxblas.h says "alpha and beta are floats in both cases,
+  // because one signature cannot have two scalar types. For the int8 pairing
+  // they must hold exactly representable integers."
+  //
+  // So every call here handed the library the bit pattern of an integer and
+  // asked it to read a float. alpha = 1 arrives as 1.4e-45; the refusal path
+  // printed "alpha=0.0 beta=0.0" for a case that meant 0 and 1. Every GEMM in
+  // this file would have been refused for a non-unit alpha it never had.
+  //
+  // Nobody found out because this file has never executed. It compiled into
+  // every NPU build and exited 77 before reaching this line, which is worse
+  // than not existing: it looked like coverage.
+  const float alpha_f = (float)alpha;
+  const float beta_f  = (float)beta;
+
   const grxblasStatus_t s = grxblasGemmEx(
       h, GRXBLAS_OP_N, GRXBLAS_OP_N, m, n, k,
-      reinterpret_cast<const float*>(&alpha),
+      &alpha_f,
       dA, GRX_R_8I, lda,
       dB, GRX_R_8I, ldb,
-      reinterpret_cast<const float*>(&beta),
+      &beta_f,
       dC, GRX_R_32I, ldc);
 
   if (s == GRXBLAS_STATUS_NOT_SUPPORTED) {
@@ -279,6 +327,10 @@ int main() {
   std::printf("built without GRXCP_ENABLE_NPU; no NPU backend here. skipping\n");
   return 77;
 #else
+  // BEFORE THE FIRST grx CALL. Enumeration runs once behind a std::call_once
+  // and the seam refuses afterwards, so this cannot move down.
+  const bool model = grxtest::npu_shim_install();
+
   int count = 0;
   if (grxGetDeviceCount(&count) != grxSuccess || count <= 0) {
     std::printf("no devices; skipping\n");
@@ -307,6 +359,23 @@ int main() {
   grxDeviceProp_t prop{};
   grxGetDeviceProperties(&prop, npu_device);
   std::printf("NPU device %d: %s\n", npu_device, prop.name);
+
+  // SAY WHAT THIS RAN ON, EVERY TIME, WHERE THE RESULT IS READ.
+  //
+  // A green run against a software model and a green run against silicon look
+  // identical in a CI log, and only one of them means the NPU works. The
+  // device's own backend field is the source -- it is derived from how the
+  // device was reached, so this cannot drift away from the truth.
+  if (prop.backend == GRX_BACKEND_MODEL) {
+    std::printf("\n  *** THIS IS A SOFTWARE REGISTER MODEL, NOT HARDWARE. ***\n"
+                "  Everything below exercises the host: the register sequence,\n"
+                "  the buffer sizes and the byte movement. It says nothing\n"
+                "  about the c930 and does not meet the phase 7 exit gate.\n\n");
+  } else if (model) {
+    std::printf("  a model was installed but the device reports backend %d;"
+                " refusing to guess what this ran on\n", (int)prop.backend);
+    return 1;
+  }
 
   grxblasHandle_t h = nullptr;
   if (grxblasCreate(&h) != GRXBLAS_STATUS_SUCCESS) return 1;
@@ -346,15 +415,23 @@ int main() {
     // N exceeds NUM_COLS — two N-tiles
     failures += !run_int8_case(h, 4, NPU_NUM_COLS + 1, 4, 1, 0,
                                "N=NUM_COLS+1 (two N-tiles)");
-    // N = MAX_N — maximum N-tiling
-    failures += !run_int8_case(h, 4, NPU_MAX_N, 4, 1, 0,
-                               "N=MAX_N (maximum N-tiles)");
+    // THE CALLER'S N IS BOUNDED BY THE ENGINE'S MAX_M, NOT ITS MAX_N.
+    //
+    // grxBLAS is column-major and the c930 is row-major, so npu_gemm_path
+    // swaps the operands to turn one into the other -- B where the engine
+    // expects A, A where it expects B, dimensions crossed. The bounds cross
+    // with them. These three cases used to read MAX_N for n and MAX_M for m,
+    // which was written against the un-swapped path and is now exactly
+    // backwards; the largest legal n is MAX_M.
+    failures += !run_int8_case(h, 4, NPU_MAX_M, 4, 1, 0,
+                               "n=MAX_M (the crossed bound)");
   }
 
   section("maximum dimensions");
   {
-    failures += !run_int8_case(h, NPU_MAX_M, NPU_MAX_N, NPU_MAX_K, 1, 0,
-                               "MAX_M x MAX_N x MAX_K");
+    failures += !run_int8_case(h, NPU_MAX_N, NPU_MAX_M, NPU_MAX_K, 1, 0,
+                               "m=MAX_N x n=MAX_M x k=MAX_K (the largest legal"
+                               " shape)");
   }
 
   section("negative INT8 values (signed 2's complement)");
@@ -362,8 +439,8 @@ int main() {
     // The deterministic fill produces negative values; this section
     // explicitly tests with large-magnitude negatives
     failures += !run_int8_case(h, 4, 4, 4, 1, 0, "negative values (4x4x4)");
-    failures += !run_int8_case(h, 8, 12, 16, 1, 0,
-                               "negative values (8x12x16, full NPU)");
+    failures += !run_int8_case(h, 12, 8, 16, 1, 0,
+                               "negative values (12x8x16, the full engine)");
   }
 
   section("refusal tests");

@@ -1104,7 +1104,7 @@ kernel is a fusion shipping on an argument.
 The work is not lost: the five changed files and this bisection are attached to
 the session that found it.
 
-### 7.28 The NPU device is enumerable but not usable: there is no NPU memory path — **OURS, allocator done; memcpy open**
+### 7.28 The NPU device is enumerable but not usable: there is no NPU memory path — **OURS, CLOSED**
 
 Found by trying to wire the GRX930 team's register model in, which is the first
 thing that ever asked what an NPU device would do after it was enumerated.
@@ -1226,10 +1226,25 @@ twice `totalGlobalMem` refused as `grxErrorMemoryAllocation` rather than
 freeing everything a single allocation of nearly the whole window fits — which
 is only true if the extents coalesced.
 
-**What is left is `grxMemcpy`.** There is no way to move bytes into or out of
-the window: no host mapping of the NPU's DDR on the hardware path, and no hook
-for a model to supply one. Until that lands, an allocation on an NPU device is
-a reservation nobody can fill.
+**`grxMemcpy` closes it.** The register hooks covered the control path and said
+nothing about the data path, which had the same problem for the same reason. So
+`npu_c930.h` grows a matching pair — `npu_c930_mem_read_fn` /
+`npu_c930_mem_write_fn`, attached with `npu_c930_attach_memory` — and
+`enqueue_copy` gets an NPU branch that copies synchronously through them,
+before it reaches `resolve_stream` (there is no queue) or the three
+`vx_enqueue_*` calls (there are no buffer handles; an NPU allocation's address
+*is* its DDR offset). Device-to-device goes through a bounce buffer rather than
+hook-to-hook, because the two extents may overlap.
+
+**A device with no memory hooks is refused**, and that is every device today
+except one with a model attached: the hardware path would be an mmap of the DDR
+aperture or a bounce through the AXI DMA, and neither is written. Refusing is
+the only honest answer — an accepted `memcpy` that moves no bytes leaves the
+caller reading whatever was in the buffer.
+
+With that, `tests/libs/test_grxblas_npu.cpp` executes for the first time. It
+found two bugs in the NPU path (7.32) and two in itself (7.33) in the first
+minute, which is the return on making an unreachable path reachable.
 
 ### 7.29 Truncating a host pointer into a 32-bit base register fails silently, and not always out of range — **OURS, sharp edge**
 
@@ -1336,6 +1351,77 @@ protected.
 The corollary is about testing, not arithmetic. All three were found by running
 a value near the edge of the type, and none by reading. A guard that has never
 been shown a wrapping input has not been tested; it has been reviewed.
+
+### 7.32 The NPU GEMM was column-major on one side and row-major on the other — **OURS, silent wrong answer, fixed**
+
+Found in the first minute the NPU path ever ran.
+
+`grxblas.h` opens with *"Shaped after cuBLAS, including its column-major
+convention."* The c930 reads `A[i*K + p]` and `B[p*N + j]` and writes
+`C[i*N + j]` — row-major, with the natural strides. `npu_gemm_path` checked
+`lda == m && ldb == k && ldc == m`, which is the column-major contiguous case
+and is right, and then passed the three pointers to the engine unchanged. Its
+comment told the caller to "ensure the buffers are contiguous and row-major",
+which a caller cannot do: the buffers came from a column-major API.
+
+So the NPU path computed the right answer when `m == k == n` and a wrong one,
+silently, otherwise. It had never been observed because it had never executed
+(7.28).
+
+**The fix costs nothing.** A column-major matrix read row-major *is* its
+transpose, so
+
+```
+C(col-major, m x n) = A(m x k) . B(k x n)
+```
+
+is the same bytes as
+
+```
+C^T(row-major, n x m) = B^T(n x k) . A^T(k x m)
+```
+
+which is what the engine computes if it is handed B where it expects A, A where
+it expects B, and the dimensions swapped. No copy, no transpose pass, no
+staging buffer.
+
+**The consequence has to be stated, because it is surprising.** The engine's
+bounds now apply to the caller's dimensions *crossed*: the caller's `n` must
+fit `MAX_M` (8) and the caller's `m` must fit `MAX_N` (12). The refusal message
+says so by name rather than reporting a bare limit. `tests/libs/
+test_grxblas_npu.cpp` had `MAX_M x MAX_N x MAX_K` as its "maximum dimensions"
+case, which was written against the un-swapped path and is exactly backwards;
+the largest legal shape is `m=MAX_N, n=MAX_M, k=MAX_K`.
+
+Watched failing: removing the swap turns **15 of 16 numerical cases red**,
+including the square ones, because the reference is column-major now too.
+
+### 7.33 A test that had never run was also wrong — **OURS, fixed**
+
+Two defects in `tests/libs/test_grxblas_npu.cpp` itself, both found by running
+it for the first time, and both invisible for as long as it exited 77 before
+reaching them. Recorded because the lesson is about the shape of the risk
+rather than about either bug: **a test that compiles and never executes is
+worse than a test that does not exist, because it looks like coverage.** This
+one had a section list, deterministic fills, an exact-integer comparison and
+twenty cases, and not one of them had ever been evaluated.
+
+1. **It punned integers through a `float*`.** Every call passed
+   `reinterpret_cast<const float*>(&alpha)` with `alpha` an `int32_t` — the
+   cuBLAS convention, where the scalar's type follows `computeType`. Ours is
+   not that API; `grxblas.h` says alpha and beta are floats in both cases and
+   must hold exactly representable integers. So the library was handed the bit
+   pattern of an integer and asked to read a float: `alpha = 1` arrives as
+   1.4e-45, and the refusal path printed `alpha=0.0 beta=0.0` for a case that
+   meant 0 and 1. Every GEMM would have been refused for a non-unit alpha it
+   never had.
+2. **Its reference used a layout that does not exist.** It indexed row-major,
+   `A[i*lda + l]`, with `lda = m` — but row-major `A[m x k]` has row stride
+   `k`. The two agree only when `m == k`, so the square cases would have passed
+   and every other shape disagreed with the engine for a reason that had
+   nothing to do with the engine. First run after the seam landed: `N=1` wrong
+   in all four elements, `K=1` wrong in twelve of sixteen. Now column-major
+   throughout, matching the API it is testing.
 
 ## 8. Where GRX-G100 is *ahead* of the reference
 

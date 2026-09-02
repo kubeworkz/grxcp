@@ -31,8 +31,20 @@ foreach(src ${UNIT_SRC})
     endif()
   endforeach()
 
-  add_executable(${name} ${src})
+  # A test that drives the GRX930 team's register model needs the model
+  # compiled in. Read from what it includes, the same rule the library links
+  # above use -- a filename convention is one rename away from silently not
+  # building.
+  set(_extra_src "")
+  if(GRXCP_ENABLE_NPU AND _src_text MATCHES "npu_shim_adapter\\.h")
+    set(_extra_src ${CMAKE_SOURCE_DIR}/third_party/grx930/npu_dpi_shim.c)
+  endif()
+
+  add_executable(${name} ${src} ${_extra_src})
   target_link_libraries(${name} PRIVATE ${_unit_libs} grxrt)
+  target_include_directories(${name} PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/common
+      ${CMAKE_SOURCE_DIR}/third_party/grx930)
   # A few unit tests include the driver's own VX_types.h to check GRXCP's view
   # of a descriptor field for field against the definition it has to match. That
   # header lives in the sysroot's KERNEL include directory, not the runtime one,
@@ -71,8 +83,16 @@ foreach(src ${LIB_TEST_SRC})
   endforeach()
 
   if(_libs)
-    add_executable(${name} ${src})
-    target_include_directories(${name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/unit)
+    set(_extra_src "")
+    if(GRXCP_ENABLE_NPU AND _src_text MATCHES "npu_shim_adapter\\.h")
+      set(_extra_src ${CMAKE_SOURCE_DIR}/third_party/grx930/npu_dpi_shim.c)
+    endif()
+
+    add_executable(${name} ${src} ${_extra_src})
+    target_include_directories(${name} PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/unit
+        ${CMAKE_CURRENT_SOURCE_DIR}/common
+        ${CMAKE_SOURCE_DIR}/third_party/grx930)
     target_link_libraries(${name} PRIVATE ${_libs} grxrt)
     add_test(NAME ${name} COMMAND ${name})
     # RUN THEM WHERE THEIR REFERENCE VECTORS ARE.

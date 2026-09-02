@@ -210,6 +210,9 @@ struct PendingNpuModel {
   npu_c930_read_fn  read32  = nullptr;
   npu_c930_write_fn write32 = nullptr;
   void*             ctx     = nullptr;
+  npu_c930_mem_read_fn  mem_read  = nullptr;
+  npu_c930_mem_write_fn mem_write = nullptr;
+  void*                 mem_ctx   = nullptr;
 };
 static PendingNpuModel g_npu_model;
 static bool            g_npu_enumerated = false;
@@ -331,6 +334,11 @@ void probe_npu_device(std::vector<Device>& devices) {
     if (g_npu_model.read32 || g_npu_model.write32)
       npu_c930_attach_model(dev, g_npu_model.read32, g_npu_model.write32,
                             g_npu_model.ctx);
+    // AFTER attach_model, which memsets the struct. The header says so; this
+    // is the one call site that has to obey it.
+    if (g_npu_model.mem_read || g_npu_model.mem_write)
+      npu_c930_attach_memory(dev, g_npu_model.mem_read, g_npu_model.mem_write,
+                             g_npu_model.mem_ctx);
     if (npu_c930_detect(dev) && dev->present) {
       Device d;
       d.index    = (int)devices.size();
@@ -443,6 +451,16 @@ int grxcp_npu_attach_model_for_testing(npu_c930_read_fn read32,
   grxcp::g_npu_model.read32  = read32;
   grxcp::g_npu_model.write32 = write32;
   grxcp::g_npu_model.ctx     = ctx;
+  return 1;
+}
+
+int grxcp_npu_attach_memory_for_testing(npu_c930_mem_read_fn mem_read,
+                                        npu_c930_mem_write_fn mem_write,
+                                        void* ctx) {
+  if (grxcp::g_npu_enumerated) return 0;
+  grxcp::g_npu_model.mem_read  = mem_read;
+  grxcp::g_npu_model.mem_write = mem_write;
+  grxcp::g_npu_model.mem_ctx   = ctx;
   return 1;
 }
 

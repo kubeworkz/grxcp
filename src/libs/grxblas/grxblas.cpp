@@ -792,11 +792,47 @@ static grxblasStatus_t npu_gemm_path(
     return GRXBLAS_STATUS_NOT_SUPPORTED;
   }
 
-  // Validate dimensions against NPU hardware limits.
-  if (m > NPU_C930_MAX_M || n > NPU_C930_MAX_N || k > NPU_C930_MAX_K) {
+  // THE ENGINE IS ROW-MAJOR AND THIS LIBRARY IS COLUMN-MAJOR, AND NOTHING
+  // USED TO RECONCILE THEM.
+  //
+  // grxblas.h opens with "Shaped after cuBLAS, including its column-major
+  // convention". The c930 reads A[i*K + p] and B[p*N + j] and writes
+  // C[i*N + j] -- row-major, with the natural strides. This function used to
+  // check lda == m && ldb == k && ldc == m (the column-major contiguous case,
+  // which is right) and then pass the three pointers to the engine unchanged,
+  // with a comment telling the caller to "ensure the buffers are contiguous
+  // and row-major". A caller cannot: the buffers came from a column-major API.
+  //
+  // The result was correct only when m == k == n, and wrong in silence
+  // otherwise. Nobody found out because this path had never run -- see
+  // cuda_mapping.md 7.28 and 7.32.
+  //
+  // The fix is free. A column-major matrix read row-major IS its transpose, so
+  //
+  //     C(col-major, m x n) = A(m x k) . B(k x n)
+  //
+  // is the same bytes as
+  //
+  //     C^T(row-major, n x m) = B^T(n x k) . A^T(k x m)
+  //
+  // which is exactly what the engine computes if it is handed B where it
+  // expects A, A where it expects B, and the dimensions swapped. No copy, no
+  // transpose pass, no staging buffer.
+  //
+  // The consequence to state plainly: the engine's bounds now apply to the
+  // caller's dimensions CROSSED. The caller's n is what must fit MAX_M, and
+  // the caller's m is what must fit MAX_N.
+  const int eng_m = n;   // rows of C^T
+  const int eng_n = m;   // columns of C^T
+  const int eng_k = k;
+
+  if (eng_m > NPU_C930_MAX_M || eng_n > NPU_C930_MAX_N ||
+      eng_k > NPU_C930_MAX_K) {
     std::fprintf(stderr,
-                 "grxblas: NPU dimensions M=%d N=%d K=%d exceed limits"
-                 " (max %d/%d/%d).\n",
+                 "grxblas: NPU dimensions M=%d N=%d K=%d exceed limits."
+                 " The operands are swapped to turn this column-major call"
+                 " into the row-major one the engine computes, so N must fit"
+                 " MAX_M=%d, M must fit MAX_N=%d and K must fit MAX_K=%d.\n",
                  m, n, k, NPU_C930_MAX_M, NPU_C930_MAX_N, NPU_C930_MAX_K);
     return GRXBLAS_STATUS_NOT_SUPPORTED;
   }
@@ -841,7 +877,9 @@ static grxblasStatus_t npu_gemm_path(
   const uint32_t b_addr = (uint32_t)(uintptr_t)B;
   const uint32_t c_addr = (uint32_t)(uintptr_t)C;
 
-  int rc = npu_c930_gemm(dev, m, n, k, a_addr, b_addr, c_addr);
+  // B where it expects A, A where it expects B, dimensions swapped. See the
+  // note above.
+  int rc = npu_c930_gemm(dev, eng_m, eng_n, eng_k, b_addr, a_addr, c_addr);
   if (rc != 0) return GRXBLAS_STATUS_EXECUTION_FAILED;
   return GRXBLAS_STATUS_SUCCESS;
 }

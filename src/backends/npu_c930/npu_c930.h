@@ -102,6 +102,26 @@ typedef enum {
 typedef uint32_t (*npu_c930_read_fn)(void* ctx, uint32_t offset);
 typedef void     (*npu_c930_write_fn)(void* ctx, uint32_t offset, uint32_t v);
 
+// ---- And the same for DDR, for the same reason ----
+//
+// The register hooks above cover the CONTROL path. They say nothing about the
+// DATA path, and the data path has exactly the same problem: the NPU's DDR is
+// a 64 KB window the engine's DMA reads and writes, and on a machine with no
+// c930 there is no way to put anything in it.
+//
+// There is also no way on a machine WITH one, yet: the hardware path would be
+// an mmap of the DDR aperture or a bounce through the AXI DMA, and neither is
+// written. So these default to null and a copy through a device with no memory
+// hooks is REFUSED rather than silently doing nothing -- an accepted memcpy
+// that moves no bytes leaves the caller reading whatever was in the buffer,
+// which is the failure class this project bans.
+//
+// Return 0 on success, non-zero on failure (an address outside the window).
+typedef int (*npu_c930_mem_read_fn)(void* ctx, uint32_t addr, void* dst,
+                                    uint32_t bytes);
+typedef int (*npu_c930_mem_write_fn)(void* ctx, uint32_t addr, const void* src,
+                                     uint32_t bytes);
+
 // ---- NPU device handle ----
 typedef struct npu_c930_device {
     int      fd;            // /dev/mem file descriptor (Linux) or 0 (bare-metal)
@@ -114,6 +134,11 @@ typedef struct npu_c930_device {
     npu_c930_read_fn  read32;
     npu_c930_write_fn write32;
     void*             io_ctx;
+
+    // Injected DDR model. Null everywhere today -- see the note above.
+    npu_c930_mem_read_fn  mem_read;
+    npu_c930_mem_write_fn mem_write;
+    void*                 mem_ctx;
 } npu_c930_device_t;
 
 // Point a device at a register model instead of at MMIO. Call BEFORE
@@ -122,6 +147,26 @@ void npu_c930_attach_model(npu_c930_device_t* dev,
                            npu_c930_read_fn read32,
                            npu_c930_write_fn write32,
                            void* ctx);
+
+// Point a device's DDR at a model. Call AFTER npu_c930_attach_model, which
+// zeroes the whole struct -- doing it the other way round silently discards
+// these three fields, which is the kind of ordering hazard worth stating in
+// the header rather than discovering in a debugger.
+void npu_c930_attach_memory(npu_c930_device_t* dev,
+                            npu_c930_mem_read_fn mem_read,
+                            npu_c930_mem_write_fn mem_write,
+                            void* ctx);
+
+// Copy into / out of the device's DDR window. Returns 0 on success, -1 when
+// the device has no memory path at all -- which is every device today except
+// one with a model attached.
+int npu_c930_mem_write(npu_c930_device_t* dev, uint32_t addr, const void* src,
+                       uint32_t bytes);
+int npu_c930_mem_read(npu_c930_device_t* dev, uint32_t addr, void* dst,
+                      uint32_t bytes);
+
+// True when this device can move bytes into and out of DDR.
+int npu_c930_mem_ready(const npu_c930_device_t* dev);
 
 // ---- Detection ----
 
