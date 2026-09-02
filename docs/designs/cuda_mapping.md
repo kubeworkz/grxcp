@@ -1709,86 +1709,129 @@ dependent, which is what this entry does.
   simulation. Every timing claim in this project already carries its backend for
   this reason.
 
-### 7.37 The RTL asserts on a misaligned access that SimX accepts — **OPEN, and the confound is not yet isolated**
+### 7.37 At `NUM_CORES=4` the RTL delivers kernel arguments on every *other* launch — **isolated to core count; mechanism still open**
 
-Recorded as an open thread with its evidence, not as a conclusion. It was found
-while trying to measure something else, and the something else is still
-unmeasured.
+This entry was first written with the confound unresolved and a misaligned
+pointer as its headline. Both have moved. The confound is isolated, the
+misalignment turned out to be a symptom of something larger, and the pattern
+that was described here as "scattered" was not scattered at all. What follows
+is the corrected account; the method that corrected it is the part worth
+keeping.
 
-**What was being attempted.** 7.12 established that the tensor unit's multi-CTA
-deadlock is a SimX defect the RTL does not share. That raised an obvious
-question — what does grxBLAS's single-CTA workaround actually cost? — and an
-equally obvious objection: nothing in reach could answer it, because every
-backend available was `NUM_CORES=1`, where the workaround costs nothing by
-construction. So `rtlsim` was rebuilt at `NUM_CORES=4`.
+**The variable is core count, and the missing cell now exists.**
 
-It builds and enumerates correctly: `grx-smi` reports 4 SMs, 16 warps per SM,
-TCU and DXA on. `vecadd` passes on it. Two gates that pass at one core do not.
+| | cores | TCU | warps | `test_grxblas` | `test_grxblas_ex` |
+|---|---|---|---|---|---|
+| build A | 1 | off | 4 | passes | n/a |
+| **build C** | **1** | **on** | **16** | **passes** | **passes** |
+| build B | **4** | on | 16 | RTL assertion | 4 failures |
 
-**`test_grxblas` (scalar sgemm) hits an RTL assertion:**
+Build C is the run this entry previously asked for and did not have. It holds
+TCU and warp count at build B's values and changes only `NUM_CORES`. Both gates
+pass on it. TCU and warp count are exonerated; one variable is left.
+
+### What is actually wrong
+
+Not alignment. `sgemm_shape`, launched eight times with the same argument blob,
+the same output buffer and the same argument size — nothing varying but the
+launch index:
 
 ```
-%Error: VX_lsu_slice.sv:233: Assertion failed ... g_cores[0].core.execute.lsu_unit:
-        misaligned memory access, wid=0, PC=0x180001b80, addr=0x100000001, wsize=2!
+1 core:   wrote wrote wrote wrote wrote wrote wrote wrote      8/8
+4 cores:  ----- wrote ----- wrote ----- wrote ----- wrote      4/8
 ```
 
-A four-byte access at an address ending in `1`. Symbolized against
-`grxblas_kernels.elf`, `PC=0x180001b80` is in **`sgemm_shape`** — the entry
-point that reports the kernel's tile geometry to the host, which runs on every
-grxBLAS module load. The base it is writing through has come out as
-`0x100000001`, and the host passes `sargs.out = (uint64_t)(uintptr_t)dshape`
-from a `grxMalloc` that is at least 256-aligned. So the pointer is corrupted
-between the host writing it and the kernel dereferencing it, and the corruption
-is a single byte.
+Strict alternation, deterministic across processes, and **the first launch is
+one of the failures** — so this is not a stale value left by a predecessor.
+A silent launch takes the kernel's own early return: `sgemm_shape` begins with
+`if (arg->abi_version != GRXBLAS_SGEMM_ABI_VERSION) return;`, and the host
+wrote 3 into that field. The kernel is not seeing the arguments the host
+staged.
 
-**`test_grxblas_ex` (tensor) computes wrong answers**, in a scattered pattern
-that does not look shape-dependent: `exactly one tile, one k step` passes,
-`four tiles, two k steps` fails, `16x16x16` passes, `5x3x7` fails, `17x9x13`
-passes, and `1x1x1 -- one element, one product` fails by 6. The same binary is
-exact on `simx` and was exact on the one-core `rtlsim`.
+Three things were measured rather than assumed, and each removed a candidate:
 
-**THE CONFOUND, STATED RATHER THAN GUESSED AROUND.** Two configurations have
-been run, and they differ in more than one variable:
+- **`grxMalloc` is clean on the failing build.** The earlier version of this
+  entry asserted the host "passes `sargs.out` from a `grxMalloc` that is at
+  least 256-aligned". That was an assumption. Measured on build B itself,
+  `grxMalloc(28)` returns `0x10000, 0x10100, 0x10200, 0x10300` — 256-aligned,
+  identical to SimX. The allocator was never the suspect it looked like.
+- **Argument size is not the variable.** Sizes 16/24/32/48/64 appeared to
+  alternate pass/fail, which reads as a size effect until the sizes are held
+  fixed: at 16 bytes alone, both outcomes still occur, in the same alternating
+  order. The first sweep was measuring launch index and calling it size.
+- **A failing launch writes nowhere.** Eight launches with eight *distinct*
+  output buffers leave buffers 0, 2, 4, 6 untouched and 1, 3, 5, 7 correct.
+  No buffer is written twice and none is written by the wrong launch, so the
+  kernel is not running with a neighbour's arguments — it is running with
+  arguments whose `abi_version` field is not 3.
 
-| | cores | TCU | warps | `test_grxblas` |
-|---|---|---|---|---|
-| first `rtlsim` build | 1 | off | 4 | passes |
-| current `rtlsim` build | **4** | **on** | **16** | asserts |
+**Where the misaligned access came from.** `VX_lsu_slice.sv:233` fired on
+`addr=0x100000001` at `PC=0x180001b80`, which disassembles to `sw a2,0(a0)`
+with `a0` loaded by `ld a0,8(a0)` — that is `arg->out`, the pointer field at
+offset 8. On that particular launch the `abi_version` word happened to read
+back as 3 while `out` did not read back as `0x10000`, so the kernel passed its
+own guard and dereferenced a value that was never written. The assertion is a
+downstream consequence of the argument blob not arriving, not an independent
+defect. It is still the most useful thing that happened, for the reason below.
 
-The one-core, TCU-**on** build that proved 7.12 was overwritten before
-`test_grxblas` was run against it, so the discriminating run does not exist.
-Core count is the interesting hypothesis and it is not the only one available.
-**This entry does not claim multi-core is broken.** It claims an assertion
-fires, names the function, and names what has not been separated.
+### What is still open
 
-### The durable part, which does not depend on isolating that
+The mechanism is below grxcp. `launch_common` hands `args_host` and
+`args_size` straight to `vx_enqueue_launch`; everything between that call and
+the kernel's first load belongs to the Vortex runtime and the RTL. This entry
+does not name a cause, because nothing measured here distinguishes a staging
+buffer written to one place and read from another, a cache line not made
+visible to the core the CTA landed on, or a dispatch path that only publishes
+arguments on alternate transactions. A period of 2 on a 4-core part is itself
+unexplained and worth explaining.
 
-`VX_lsu_slice.sv:233` is an assertion. SimX has no equivalent — the same access
-on the same binary produces no diagnostic there at all, on any configuration.
-Whatever is corrupting that pointer has been in the tree for as long as
-`sgemm_shape` has, and every run on every backend anyone has used was silent
-about it.
+What would narrow it further:
 
-That is a class, not an incident: **a functional model that tolerates a
-misaligned access hides every misaligned access.** The project already carries
-one gap of this shape from the other direction — 7.6, where the FPGA command
-processor rounds unaligned transfers up to 64 bytes with all strobes set, which
-is silent corruption rather than a stop. Between them, misalignment is invisible
-on `simx`, corrupting on FPGA, and fatal on RTL, and only the last one tells
-you.
+1. `NUM_CORES=2`. A period of 2 at two cores says something different than a
+   period of 2 at four.
+2. Instrumenting the runtime's argument staging to print the device address it
+   writes and having a kernel report the address it reads.
+3. Whether any kernel with a larger argument blob shows the same period —
+   `vecadd` passes, but its gate launches once, which is a coin flip on a
+   pattern with period 2.
 
-The cheap general lesson is the one to keep: **the backend that complains
-loudest is the one worth running first**, and it had never been run.
+### The part that does not depend on the mechanism
 
-### What would settle it
+Two lessons, and the second is ours.
 
-1. Rebuild `rtlsim` at `NUM_CORES=1` with TCU on and 16 warps — the missing cell
-   in the table — and run `test_grxblas`. One variable, one run.
-2. If it asserts there too, the bug is in `sgemm_shape`'s argument handling and
-   has nothing to do with core count, which makes it a live defect on every
-   backend and merely invisible on most.
-3. If it passes, the difference is core count and the question becomes what
-   `grxMalloc` or the argument staging does differently with four cores.
+**A functional model that tolerates a misaligned access hides every misaligned
+access.** SimX emits no diagnostic for this access on any configuration. 7.6 is
+the same class from the FPGA direction — unaligned transfers rounded up to 64
+bytes with all strobes set, which is silent corruption rather than a stop.
+Misalignment is invisible on SimX, corrupting on FPGA, and fatal on RTL, and
+only the last one tells you. **The backend that complains loudest is the one
+worth running first**, and it had never been run.
+
+**And a silent fallback in our own code is what let it stay quiet.**
+`read_sgemm_shape` treats an unwritten buffer as "this module does not report
+its geometry" and drops to the reference kernel — deliberately, so that a
+module predating `sgemm_shape` still works. That is the right behaviour for an
+old module and the wrong behaviour for a broken device, and from the host the
+two are indistinguishable: an ABI-version mismatch and an argument blob that
+never arrived both leave the buffer exactly as `grxMemset` left it. On build B
+the effect is that grxBLAS quietly stops using its blocked kernels on half the
+processes that load it, computes correct answers by the reference path, and
+says nothing. The correctness gate cannot see it because the fallback is
+correct. **A fallback that cannot fail is a fallback that cannot report**, and
+this one sits directly on top of the argument path that turned out to be
+broken.
+
+`read_sgemm_shape` now says so. It still falls back -- refusing to run would be
+worse than running the reference, and a guessed tile geometry would be a wrong
+answer rather than a slow one -- but it prints which module went quiet, names
+both causes, and states that the blocked kernels are off. Watched in both
+directions before being believed: with `sargs.abi_version` sabotaged to 999 on
+SimX the message appears **and `test_grxblas` still reports `PASSED (0
+failures)`**, which is the whole argument for the message existing; reverted,
+it is silent again. The first attempt to watch it proved nothing -- the gate
+ran against `build-real/test_grxblas`, which statically links grxblas and
+predates the edit, so both the silence and the sabotage were measurements of a
+stale binary. `strings` on the built library is what caught it.
 
 ## 8. Where GRX-G100 is *ahead* of the reference
 

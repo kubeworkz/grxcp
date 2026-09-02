@@ -470,7 +470,34 @@ void read_sgemm_shape(Context& ctx) {
   // without writing, leaving the buffer as memset left it. Treated the same as
   // no entry point, because it means the same thing -- this module will not say
   // what it does.
-  if (shape[GRXBLAS_SGEMM_SHAPE_RB_RM] == 0) return;
+  //
+  // It is said out loud, though, because from here the two causes are
+  // indistinguishable and only one of them is benign. An older module whose
+  // sgemm_shape expects a different GRXBLAS_SGEMM_ABI_VERSION returns without
+  // writing; so does a device that never delivered the argument blob. Both
+  // leave the buffer exactly as grxMemset left it, and both then take the
+  // reference path -- which computes the right answer, which is why no
+  // correctness gate can see the difference. cuda_mapping.md 7.37 is the case
+  // that made this concrete: at NUM_CORES=4 under Verilator, every other
+  // launch does not receive its arguments, so grxBLAS silently ran without its
+  // blocked kernels on half the processes that loaded it and nothing said so.
+  //
+  // The fallback is still the fallback. A wrong tile geometry would be a wrong
+  // answer, and refusing to run would be worse than running the reference. But
+  // a fallback that cannot fail is a fallback that cannot report, and this one
+  // sits directly on the argument path.
+  if (shape[GRXBLAS_SGEMM_SHAPE_RB_RM] == 0) {
+    std::fprintf(stderr,
+                 "grxblas: %s has an sgemm_shape entry point that launched "
+                 "successfully and reported nothing.\n"
+                 "         Either the module's ABI version is not %d, or the "
+                 "device did not deliver the\n"
+                 "         kernel's arguments. Using the reference sgemm: "
+                 "answers stay correct, the blocked\n"
+                 "         kernels are off. See cuda_mapping.md 7.37.\n",
+                 ctx.sgemm_path.c_str(), GRXBLAS_SGEMM_ABI_VERSION);
+    return;
+  }
   ctx.rb_rows = (int)shape[GRXBLAS_SGEMM_SHAPE_RB_RM];
   // The 2D tile is allowed to be absent while sgemm_rb is present: a module can
   // carry one blocked kernel and not the other, and each is gated on its own
