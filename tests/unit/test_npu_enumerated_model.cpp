@@ -131,22 +131,79 @@ int main() {
   check(grxGetDevice(&current) == grxSuccess && current == npu,
         "and it is the current device");
 
-  // NOT A GATE YET. grxMalloc has no NPU branch: allocate_device calls
-  // vx_buffer_create(d->handle, ...) and an NPU device's handle is null, so the
-  // request goes to the Vortex driver and comes back VX_ERR_INVALID_VALUE --
-  // reported to the caller as "invalid value", blaming the size argument for a
-  // device that has no allocator at all (cuda_mapping.md 7.28).
+  // This was an observation and is now a gate. Before the allocator landed,
+  // allocate_device called vx_buffer_create(d->handle, ...) with a null handle
+  // and the driver answered VX_ERR_INVALID_VALUE -- reported to the caller as
+  // "invalid value", blaming the size argument for a device with no allocator
+  // at all. Measured through this very seam:
   //
-  // Printed rather than asserted, because a red gate on a hole we are about to
-  // fill is noise. The gate arrives with the allocator.
-  section("what an allocation on this device does today");
-  void* p = nullptr;
-  const grxError_t e = grxMalloc(&p, 256);
-  std::printf("  note  grxMalloc(256) -> %s (%s)\n",
-              grxGetErrorName(e), grxGetErrorString(e));
-  std::printf("        totalGlobalMem is %zu bytes and nothing allocates from "
-              "it.\n", prop.totalGlobalMem);
-  if (e == grxSuccess) grxFree(p);
+  //   grxMalloc(256) -> grxErrorInvalidValue (invalid argument)
+  //   totalGlobalMem is 65536 bytes and nothing allocates from it.
+  section("allocating from the 64 KB DDR window");
+  std::printf("  note  totalGlobalMem is %zu bytes\n", prop.totalGlobalMem);
+
+  void* a = nullptr;
+  const grxError_t ea = grxMalloc(&a, 256);
+  check(ea == grxSuccess, "grxMalloc(256) succeeds");
+  if (ea != grxSuccess) {
+    std::printf("        %s (%s)\n", grxGetErrorName(ea), grxGetErrorString(ea));
+    return grxtest::report();
+  }
+
+  // A device pointer here IS a DDR byte offset -- no MMU, and A_BASE takes it
+  // literally. Two things follow, and both are checked because both were bugs
+  // in the reference allocator the GRX930 team sent us.
+  const uint64_t addr_a = (uint64_t)(uintptr_t)a;
+  std::printf("  note  first allocation is at DDR offset %llu\n",
+              (unsigned long long)addr_a);
+  check(a != nullptr,
+        "the pointer is not null -- offset 0 is reserved, or success and "
+        "failure would be the same value");
+  check(addr_a + 256 <= prop.totalGlobalMem,
+        "and it lies inside the window");
+
+  void* b = nullptr;
+  void* c = nullptr;
+  check(grxMalloc(&b, 192) == grxSuccess, "a second allocation");
+  check(grxMalloc(&c, 384) == grxSuccess, "and a third");
+  const uint64_t addr_b = (uint64_t)(uintptr_t)b;
+  const uint64_t addr_c = (uint64_t)(uintptr_t)c;
+  const bool overlap =
+      (addr_a < addr_b + 192 && addr_b < addr_a + 256) ||
+      (addr_a < addr_c + 384 && addr_c < addr_a + 256) ||
+      (addr_b < addr_c + 384 && addr_c < addr_b + 192);
+  check(!overlap, "no two live allocations overlap");
+  check(addr_b + 192 <= prop.totalGlobalMem &&
+        addr_c + 384 <= prop.totalGlobalMem,
+        "all three lie inside the window");
+  check((addr_a & 3) == 0 && (addr_b & 3) == 0 && (addr_c & 3) == 0,
+        "all three are 4-byte aligned, which the DMA requires");
+
+  // The window is 64 KB and that is all it is. A request larger than the
+  // device has must come back as out-of-memory rather than as a pointer.
+  void* huge = nullptr;
+  const grxError_t eh = grxMalloc(&huge, prop.totalGlobalMem * 2);
+  check(eh != grxSuccess, "an allocation twice the size of DDR is refused");
+  check(eh == grxErrorMemoryAllocation,
+        "and refused as out of memory, not as an invalid argument");
+
+  check(grxFree(b) == grxSuccess, "freeing the middle allocation");
+  void* b2 = nullptr;
+  check(grxMalloc(&b2, 192) == grxSuccess, "and allocating again");
+  check((uint64_t)(uintptr_t)b2 == addr_b, "reuses the freed extent");
+
+  check(grxFree(a) == grxSuccess, "free a");
+  check(grxFree(b2) == grxSuccess, "free b");
+  check(grxFree(c) == grxSuccess, "free c");
+
+  // Everything back: the whole window minus the reserved first block must be
+  // available again, which is only true if the free extents coalesced.
+  void* whole = nullptr;
+  const grxError_t ew = grxMalloc(&whole, prop.totalGlobalMem - 512);
+  check(ew == grxSuccess,
+        "after freeing everything, one allocation of nearly the whole window "
+        "fits -- the extents coalesced");
+  if (ew == grxSuccess) grxFree(whole);
 
   return grxtest::report();
 #endif

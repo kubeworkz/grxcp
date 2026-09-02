@@ -44,6 +44,11 @@ struct Slab {
   uint64_t    base   = 0;
   uint64_t    size   = 0;
   int         device = 0;
+  // The NPU's DDR is a fixed window, not a buffer the driver handed us. It is
+  // carried as a slab so the free list, the interval map, grxFree and the
+  // sanitizer all work on it unchanged -- but it has no vx_buffer_h to release
+  // and it must come BACK whole on a device reset rather than disappearing.
+  bool        npu    = false;
 };
 
 struct FreeExtent {
@@ -195,14 +200,95 @@ bool take_best_fit(int device, uint64_t bytes, uint64_t align,
 // may be a scarcer resource than ordinary device memory, and handing out a
 // piece of a shared slab would keep the whole slab physical for as long as any
 // piece of it lived.
+#ifdef GRXCP_ENABLE_NPU
+// THE FIRST WORD OF DDR IS NEVER HANDED OUT.
+//
+// The NPU's DDR window starts at byte 0 and a device pointer here IS the DDR
+// offset -- there is no MMU and A_BASE/B_BASE/C_BASE take the address
+// literally. But grxMalloc's failure signal is a null pointer, so an
+// allocation at offset 0 and an allocation that failed are the same value to
+// every caller.
+//
+// The GRX930 team hit the same wall from the other side: their reference
+// allocator returned 0 for failure while its documented window base was
+// 0x0000, so the first successful allocation and an out-of-memory were
+// indistinguishable. They fixed it with an out-of-band sentinel. We cannot --
+// the return type is void* and null already means failure -- so the fix is
+// structural: reserve the first aligned block and never allocate from it. It
+// costs one alignment unit of a 64 KB window and removes the ambiguity
+// entirely rather than moving it somewhere a caller has to remember.
+constexpr uint64_t kNpuReservedBase = kMinAlign;
+
+// Add (or restore) the device's DDR window as a single free extent.
+// Idempotent: a window already carrying free space is left alone.
+grxError_t ensure_npu_window(const Device& d) {
+  for (size_t i = 0; i < g_slabs.size(); ++i)
+    if (g_slabs[i].npu && g_slabs[i].device == d.index) return grxSuccess;
+
+  if (d.prop.totalGlobalMem <= kNpuReservedBase) return grxErrorMemoryAllocation;
+
+  Slab s;
+  s.buffer = nullptr;                       // no driver buffer to release
+  s.base   = kNpuReservedBase;
+  s.size   = (uint64_t)d.prop.totalGlobalMem - kNpuReservedBase;
+  s.device = d.index;
+  s.npu    = true;
+  g_slabs.push_back(s);
+  sanitize_note_region(s.base, s.size);
+  insert_free(s.base, s.size, g_slabs.size() - 1);
+  return grxSuccess;
+}
+
+// One fixed window, carved by the same best-fit free list every other device
+// uses. No direct tier: the direct tier exists so a large allocation can get
+// its own driver buffer, and there is no driver here -- a request the window
+// cannot satisfy is out of memory, not a reason to ask for a second window.
+grxError_t allocate_npu(Device& d, uint64_t bytes, uint64_t align,
+                        uint64_t need, bool managed, uint64_t* out_address) {
+  grxError_t e = ensure_npu_window(d);
+  if (e != grxSuccess) return e;
+
+  uint64_t base = 0;
+  size_t   slab_index = 0;
+  if (!take_best_fit(d.index, need, align, &base, &slab_index))
+    return grxErrorMemoryAllocation;
+
+  Allocation a;
+  a.buffer  = nullptr;
+  a.base    = base;
+  a.size    = need;
+  a.offset  = base - g_slabs[slab_index].base;
+  a.device  = d.index;
+  a.direct  = false;      // freed back to the window, not released to a driver
+  a.managed = managed;
+  a.slab    = slab_index;
+  g_live[{d.index, base}] = a;
+  sanitize_note_alloc(base, bytes);
+  *out_address = base;
+  return grxSuccess;
+}
+#endif  // GRXCP_ENABLE_NPU
+
 grxError_t allocate_device_physical(int device, uint64_t bytes,
                                     uint64_t* out_address) {
   Device* d = nullptr;
   grxError_t e = acquire_device(device, &d);
   if (e != grxSuccess) return e;
 
-  const uint64_t need = align_up(bytes + sanitize_redzone_bytes(),
-                                 alignment_for(*d));
+  const uint64_t align = alignment_for(*d);
+  const uint64_t need = align_up(bytes + sanitize_redzone_bytes(), align);
+
+#ifdef GRXCP_ENABLE_NPU
+  // On the NPU there is one address space and no MMU, so every allocation is
+  // already where the DMA engine can reach it -- VX_MEM_PHYS has no meaning
+  // and no separate pool to come from. Same window, and `physical` stays false
+  // because it records "asked the driver for a physical buffer", which nobody
+  // did.
+  if (d->type == DeviceType::NPU) {
+    std::lock_guard<std::mutex> lock(g_mem_mutex);
+    return allocate_npu(*d, bytes, align, need, /*managed=*/false, out_address);
+  }
+#endif
 
   vx_buffer_h buf = nullptr;
   vx_result_t r = vx_buffer_create(d->handle, need,
@@ -239,6 +325,26 @@ grxError_t allocate_device(int device, uint64_t bytes, bool managed,
   const uint64_t slab  = slab_size();
 
   std::lock_guard<std::mutex> lock(g_mem_mutex);
+
+#ifdef GRXCP_ENABLE_NPU
+  // AN NPU DEVICE HAS NO vx_device_h, AND EVERY LINE BELOW ASSUMES ONE.
+  //
+  // This branch did not exist. allocate_device went straight on to
+  // vx_buffer_create(d->handle, ...) with handle == nullptr, and the driver
+  // answered VX_ERR_INVALID_VALUE -- reported to the caller as "invalid
+  // value", blaming the size argument for a device that had no allocator at
+  // all. Measured, before the fix, through the seam in npu_c930_testing.h:
+  //
+  //   grxMalloc(256) -> grxErrorInvalidValue (invalid argument)
+  //   totalGlobalMem is 65536 bytes and nothing allocates from it.
+  //
+  // The same shape as the module-load refusal that used to say "invalid
+  // image" on a device with no pipeline, and the reason nothing above the
+  // backend had ever run on an NPU: tests/libs/test_grxblas_npu.cpp fails at
+  // its first allocation, before it reaches a single register.
+  if (d->type == DeviceType::NPU)
+    return allocate_npu(*d, bytes, align, need, managed, out_address);
+#endif
 
   // Direct tier: big allocations get their own buffer so they cannot fragment
   // a slab and so freeing them returns memory to the device immediately.
@@ -372,6 +478,16 @@ void release_all_allocations(int device) {
     it = (g_slabs[it->second.slab].device == device) ? g_free.erase(it)
                                                      : std::next(it);
   }
+  // A DEVICE RESET FREES THE NPU'S DDR; IT DOES NOT TAKE IT AWAY.
+  //
+  // The loop above erases every free extent, and the loop below releases the
+  // driver buffer behind each slab. Neither is right for the NPU window: there
+  // is no buffer to release, and the window is a fixed property of the SoC
+  // that is still there after the reset. Put it back whole, which is exactly
+  // what "every allocation on this device is gone" means for a fixed window.
+  for (size_t i = 0; i < g_slabs.size(); ++i)
+    if (g_slabs[i].npu && g_slabs[i].device == device)
+      insert_free(g_slabs[i].base, g_slabs[i].size, i);
   for (auto& s : g_slabs) {
     if (s.device == device && s.buffer) {
       vx_buffer_release(s.buffer);
@@ -579,6 +695,15 @@ grxError_t grxMallocHost(void** ptr, size_t size) {
   grxcp::Device* d = nullptr;
   grxError_t e = grxcp::acquire_device(grxcp::current_device_index(), &d);
   if (e != grxSuccess) return grxcp::set_error(e);
+
+#ifdef GRXCP_ENABLE_NPU
+  // Pinned host memory is a driver mapping (vx_buffer_create | VX_MEM_HOST,
+  // then vx_buffer_map). The NPU has no driver and no way to map its DDR into
+  // the host's address space, so there is nothing here to pin. Refused by name
+  // rather than sent to vx_buffer_create with a null handle, which would come
+  // back "invalid value" and blame the size.
+  if (d->type == grxcp::DeviceType::NPU) return grxcp::set_error(grxErrorNotSupported);
+#endif
 
   vx_buffer_h buf = nullptr;
   vx_result_t r = vx_buffer_create(d->handle, size,

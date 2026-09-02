@@ -1104,7 +1104,7 @@ kernel is a fusion shipping on an argument.
 The work is not lost: the five changed files and this bisection are attached to
 the session that found it.
 
-### 7.28 The NPU device is enumerable but not usable: there is no NPU memory path — **OURS, part done**
+### 7.28 The NPU device is enumerable but not usable: there is no NPU memory path — **OURS, allocator done; memcpy open**
 
 Found by trying to wire the GRX930 team's register model in, which is the first
 thing that ever asked what an NPU device would do after it was enumerated.
@@ -1192,7 +1192,44 @@ note  grxMalloc(256) -> grxErrorInvalidValue (invalid argument)
       totalGlobalMem is 65536 bytes and nothing allocates from it.
 ```
 
-The allocator is what is left.
+**The allocator is done too.** `allocate_device` gets a `DeviceType::NPU`
+branch that carves the SoC's fixed 64 KB window with the same best-fit free
+list every other device uses -- the window is registered as a slab with a null
+`vx_buffer_h`, so `grxFree`, the interval map, `lookup_device_pointer` and the
+sanitizer all work on it unchanged. There is no direct tier: that tier exists
+so a large allocation can get its own driver buffer, and there is no driver
+here, so a request the window cannot satisfy is out of memory rather than a
+reason to ask for a second window.
+
+**The first aligned block is reserved and never handed out.** A device pointer
+on the NPU *is* the DDR byte offset -- no MMU, and `A_BASE` takes it literally
+-- so an allocation at offset 0 would be indistinguishable from `grxMalloc`
+failing, because null is already the failure signal. The GRX930 team hit the
+same wall from the other side and fixed it with an out-of-band sentinel
+(`NPU_DDR_ALLOC_FAILED`); we cannot, because the return type is `void*`, so the
+fix is structural. It costs one alignment unit of 65536 and removes the
+ambiguity rather than moving it somewhere a caller has to remember. Watched
+failing: setting `kNpuReservedBase = 0` puts the first allocation at offset 0
+and the null check goes red.
+
+A device reset frees the window rather than taking it away —
+`release_all_allocations` re-inserts it whole, because "every allocation on
+this device is gone" means something different for a fixed window than for a
+driver buffer. `grxMallocPhysical` uses the same window (there is one address
+space and `VX_MEM_PHYS` has no meaning without an MMU); `grxMallocHost` is
+refused by name, since pinning is a driver mapping and there is no driver.
+
+Measured through the seam: first allocation at offset 256, three live
+allocations non-overlapping and 4-byte aligned inside the window, a request for
+twice `totalGlobalMem` refused as `grxErrorMemoryAllocation` rather than
+`grxErrorInvalidValue`, a freed extent reused at the same offset, and after
+freeing everything a single allocation of nearly the whole window fits — which
+is only true if the extents coalesced.
+
+**What is left is `grxMemcpy`.** There is no way to move bytes into or out of
+the window: no host mapping of the NPU's DDR on the hardware path, and no hook
+for a model to supply one. Until that lands, an allocation on an NPU device is
+a reservation nobody can fill.
 
 ### 7.29 Truncating a host pointer into a 32-bit base register fails silently, and not always out of range — **OURS, sharp edge**
 
