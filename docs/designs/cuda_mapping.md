@@ -512,7 +512,7 @@ through config registers. Two consequences a port has to deal with:
 Neither has a CUDA analogue, so neither can be hidden. Slot allocation is the
 program's job, and it is visible in the API.
 
-### 7.12 Tensor unit deadlocks on a second CTA — **DEVICE STACK, blocking**
+### 7.12 Tensor unit deadlocks on a second CTA — **SIMX ONLY: the RTL does not have it**
 
 `Core::issue` takes a CTA admission slot for **every** TCU micro-op that holds
 the FU lock (guarded only by `VX_CFG_EXT_TCU_ENABLE`), while the matching
@@ -539,6 +539,56 @@ The fix is to make acquire and release symmetric. Until it lands, grxBLAS's
 tensor GEMM is a **persistent single-CTA kernel**: one block, warps walking the
 output tiles. On a one-SM configuration that costs nothing; anywhere else it is
 a ceiling, and it comes out the day the watch turns green.
+
+### THE RTL DOES NOT HAVE THIS DEFECT
+
+Measured the day `rtlsim` first ran (7.36). Same repro, same `.vxbin`, two
+backends whose ISA flags, warp count and TCU settings are now identical
+(`0x63380901128`, 16 warps, TCU and DXA on):
+
+```
+simx      one CTA: completes    two CTAs: DEADLOCK
+rtlsim    one CTA: completes    two CTAs: completes
+```
+
+Which is coherent rather than surprising once stated: **everything 7.12
+describes is SimX's C++.** `Core::issue` and `tcu_unit.cpp` are the functional
+model. The RTL is a different implementation of the same architecture and was
+never obliged to share the model's bookkeeping bug. Nobody could tell, because
+nobody had run the RTL.
+
+The confound was checked before this was believed. A launch that completes
+proves nothing if the tensor instruction never executed, so: `test_grxblas_ex`
+— the fp16 and int8 tensor GEMM gate, exact against an integer reference —
+**passes on `rtlsim` with 0 failures.** The TCU is issuing WMMA and computing
+correctly there. The repro's own criterion is also stronger than liveness: the
+child returns the status of `grxDeviceSynchronize`, so a launch that failed
+would report a status rather than "completes".
+
+**What this does NOT license.** The single-CTA workaround should not come out on
+the strength of this alone, and removing it here would not move a number anyway:
+both backends in reach are `NUM_CORES=1`, and grxblas.cpp's own comment is right
+that on one SM the workaround costs nothing — the single CTA already takes all
+16 warp slots of the only core. The roadmap's phase 3 note calls the ratio "a
+fact about how little of the core the single-CTA workaround lets it use", and on
+a one-SM part that sentence is the loose one: the workaround is not what caps
+2.74× there. Where it is a ceiling is multi-SM, and neither backend here has a
+second SM to prove it on.
+
+So the actionable outputs are narrower than they first look, and worth stating
+separately:
+
+1. **For the GRXGPU team:** the defect is in the model, not the design. That
+   changes who fixes it and where they look.
+2. **For us:** the workaround's cost is unmeasured, because it is zero on every
+   configuration we can currently run. Measuring it needs an `rtlsim` built with
+   `NUM_CORES > 1`.
+3. **For the watch:** `tests/repro/tcu_multi_cta/main.cpp` printed "THE DEFECT IS
+   FIXED" on a pass. That is one of two things it cannot distinguish from a
+   single run — repaired, or never present — and the second is what happened. It
+   now names the backend that answered and says the verdict applies to that
+   backend only. **A watch that reports a conclusion it has not earned is worse
+   than one that reports less.**
 
 ### 7.13 One device module at a time — **TOOLCHAIN**
 

@@ -118,7 +118,7 @@ int main(int argc, char** argv) {
 
   const int two = try_launch(argv[0], image, 2, 60);
   if (two == -1) {
-    std::printf("  two CTAs: DEADLOCK -- upstream defect still present\n");
+    std::printf("  two CTAs: DEADLOCK on this backend -- defect still present\n");
     std::printf("            tcu_unit.cpp takes a CTA admission slot for every "
                 "TCU op and\n            releases it only for ops that ARE "
                 "WGMMA -- so a WMMA kernel\n            deadlocks whether or "
@@ -129,10 +129,44 @@ int main(int argc, char** argv) {
     return 0;
   }
   if (two == 0) {
-    std::printf("  two CTAs: completes -- THE DEFECT IS FIXED\n");
-    std::printf("            Remove the single-CTA workaround in "
-                "src/libs/grxblas/kernels/hgemm_tcu.cpp\n            and let "
-                "the host launch one CTA per tile again.\n");
+    // "COMPLETES" IS NOT "FIXED", AND THIS USED TO SAY IT WAS.
+    //
+    // The line here read "THE DEFECT IS FIXED", which is one of two things it
+    // could mean and the watch cannot tell them apart from a single run:
+    //
+    //   * the defect was present on this backend and has been repaired, or
+    //   * this backend never had it.
+    //
+    // The second turned out to be real. The defect is in SimX's C++ --
+    // tcu_unit.cpp takes a CTA admission slot for every TCU op and releases it
+    // only for ops that ARE WGMMA. The RTL is a different implementation of the
+    // same architecture and does not have it: measured, two CTAs complete on
+    // `rtlsim` at a configuration whose ISA flags, warp count and TCU settings
+    // are identical to the SimX one that deadlocks (cuda_mapping.md 7.12).
+    //
+    // So the verdict is per backend, and the message says which one answered.
+    // A watch that reports a conclusion it has not earned is worse than one
+    // that reports less.
+    grxDeviceProp_t p{};
+    const char* backend = "this backend";
+    if (grxGetDeviceProperties(&p, 0) == grxSuccess) {
+      switch (p.backend) {
+        case GRX_BACKEND_SIMX:    backend = "simx";    break;
+        case GRX_BACKEND_RTLSIM:  backend = "rtlsim";  break;
+        case GRX_BACKEND_SILICON: backend = "silicon"; break;
+        default: break;
+      }
+    }
+    std::printf("  two CTAs: completes on %s\n", backend);
+    std::printf("            This backend does not have the defect. It says\n"
+                "            nothing about any other: the deadlock is in SimX's\n"
+                "            tcu_unit.cpp, and `rtlsim` has been measured\n"
+                "            completing the same launch. Run this on the\n"
+                "            backend you intend to ship against before removing\n"
+                "            the single-CTA workaround in grxblas.cpp -- and\n"
+                "            note that on a ONE-SM configuration the workaround\n"
+                "            costs nothing, so removing it there will not move\n"
+                "            a number.\n");
     return 0;
   }
   std::printf("  two CTAs: failed with status %d (not a deadlock)\n", two);
