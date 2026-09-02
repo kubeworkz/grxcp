@@ -514,6 +514,14 @@ program's job, and it is visible in the API.
 
 ### 7.12 Tensor unit deadlocks on a second CTA — **SIMX ONLY: the RTL does not have it**
 
+> **A note on attribution, because a commit elsewhere now claims this number.**
+> GRX930's `3df215b` is titled "Fix tensor unit deadlock on second CTA (Gap
+> 7.12)" and fixes a race in the c930 NPU's CSR command queue. That is a
+> different defect in a different repository: 7.12 is `Core::issue` in the GPU's
+> SimX, it is C++, and it remains open. Their change does not touch it. Verified
+> the same day by building both sides of their commit and running the NPU queue
+> directly — see `tests/repro/npu_cmd_queue/`.
+
 `Core::issue` takes a CTA admission slot for **every** TCU micro-op that holds
 the FU lock (guarded only by `VX_CFG_EXT_TCU_ENABLE`), while the matching
 release lives inside `VX_CFG_TCU_WGMMA_ENABLE` and only fires for ops where
