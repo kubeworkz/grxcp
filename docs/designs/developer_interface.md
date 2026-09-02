@@ -108,27 +108,43 @@ What would settle it is not argument but a survey: take three or four models the
 company actually intends to run, and count how many primitives each route needs
 that we do not have. That is a day of work and it replaces a design meeting.
 
-## 5. bf16 is the blocker with the longest lead time
+## 5. bf16 is plumbing, not silicon — corrected
 
-Modern inference runs in bf16. The situation on this hardware is asymmetric and
-worth escalating on its own:
+**This section originally said the GPU tensor unit had no bf16 and that the
+strategy would have to route bf16 through the NPU before tape-out. That was
+wrong, and the correction is good news.** It is left visible rather than
+rewritten away, because the mistake is instructive: `grxblas.h` states bf16 is
+"not a type this tensor unit has, in any build, with no knob to enable", and
+that sentence is true about what is *reachable* while saying nothing about what
+is *built*. It was read as a statement about the hardware.
 
-- **The GPU's tensor unit has no bf16 in any configuration.** `grxblas.h` states
-  it directly: not a type this tensor unit has, in any build, with no knob to
-  enable.
-- **The c930 NPU does have it.** `c930_npu_core.sv` declares
-  `i_precision` with `3 = BF16`, and `c930_bf16_mul.sv` is a real multiplier in
-  the tree.
+Prompted by the grxgpu team, the datapath was checked directly:
 
-So the datapath the strategy needs exists on the accelerator and not on the GPU.
-And the NPU cannot currently carry it at scale: its dimension bounds are
-`MAX_M=8, MAX_N=12, MAX_K=16`, and as of today its command queue cannot pipeline
-two back-to-back commands (see `tests/repro/npu_cmd_queue/`).
+| layer | bf16 present? | evidence |
+|---|---|---|
+| SimX functional model | yes | `FEDP<bf16,fp32>` and `FEDP<bf16,bf16>`, dispatched from `sim/simx/tcu/tcu_unit.cpp` |
+| RTL tensor unit (TFR) | **yes, and ungated** | `TCU_BF16_ID` is a case arm in `hw/rtl/tcu/tfr/VX_tcu_tfr_mul_f16.sv` behind no `ifdef` |
+| RTL tensor unit (fpnew) | yes | `mult_result_bf16` in `VX_tcu_fedp_fpnew.sv` |
+| c930 NPU | yes | `i_precision` mode 3, `c930_bf16_mul.sv` |
+| **configuration schema** | **no** | `VX_config.toml` defines TCU enable knobs for TF32, FP16, FP8, FP4, INT8, INT4, MX, MXFP4, NVFP4, SPARSE, DSM and WGMMA. There is no `TCU_BF16_ENABLE`. |
 
-**bf16 at useful scale is presently reachable on neither device.** This is cheap
-to address before tape-out and impossible afterwards, which makes it the item on
-this page with the least schedule slack. It should go to the hardware teams
-independently of whether the rest of this proposal is adopted.
+So the multiplier is synthesized into every build we make and nothing can ask
+for it. The device consequently reports `fp16, int8` and nothing else, which is
+what `test_grxblas_ex` prints and what `grxblasGetTensorTypes` returns.
+
+**What bf16 actually needs is a config knob, a bit in the reported type set, and
+a path through `grxblasGemmEx`** — all software, none of it on the tape-out
+critical path. That moves it from the item on this page with the least schedule
+slack to an ordinary piece of enabling work, and it removes the argument that
+bf16 forces matmul through the NPU.
+
+Two things survive the correction. The NPU's bf16 is still bounded at
+`MAX_M=8, MAX_N=12, MAX_K=16` with a command queue that cannot pipeline two
+commands, so the NPU is not a bf16 escape hatch if the GPU path stalls. And the
+general lesson is worth more than the specific fact: **a capability can be
+absent from the product while present in the silicon, and the two are not the
+same finding.** The honest instrument would have been to ask the device, which
+this project already does elsewhere and did not do here.
 
 ## 6. The metric changes, and improves
 
