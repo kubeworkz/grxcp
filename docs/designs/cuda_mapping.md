@@ -1189,6 +1189,44 @@ gate whose verdict depends on allocator internals is not a gate; both addresses
 are now pinned as constants and both outcomes are asserted, the second one
 precisely because it is the dangerous one.
 
+### 7.30 An unrecognised backend printed as `silicon` — **OURS, fixed**
+
+`grx-smi --json` rendered `grxDeviceProp_t.backend` with a chained ternary whose
+last arm was `: "silicon"`. Every value that was not one of the five named
+before it — including every value outside the enum — printed as silicon. The
+field exists so a caller can tell a simulator from a chip, and the fallthrough
+answered "chip" for anything it did not recognise.
+
+`grxcp::backend_name` in `context.cpp` had this right the whole time: it is a
+switch with a `return "unknown"` after it. There were two copies of one mapping
+and only one of them was honest, which is how the other stayed wrong.
+
+Found by measurement, not by reading, and by an outside proposal. The GRX930
+team offered three constants for this field so that an attached software
+register model would stop being reported as silicon —
+`NPU_DPI_BACKEND_EMULATION` 0x10, `SIMULATION` 0x11, `SILICON` 0x00. Assigned
+to `p.backend` against the code as it stood, all three made it worse:
+
+| `p.backend = ...` | `grx-smi --json` said | `backend_has_vm` |
+|---|---|---|
+| `NPU_DPI_BACKEND_EMULATION` (0x10) | `"silicon"` | no |
+| `NPU_DPI_BACKEND_SIMULATION` (0x11) | `"silicon"` | no |
+| `NPU_DPI_BACKEND_SILICON` (0x00) | `"simx"` | **yes** |
+
+The first two are the fabrication the constants were meant to prevent. The third
+collides with `GRX_BACKEND_SIMX == 0` and switches on `backend_has_vm`, which
+would advertise managed memory on a device with no MMU — re-opening 7.5.
+
+The JSON arm is a switch with a `return "unknown"` now. The value collision is
+not fixable from here and is not ours to fix: **a foreign header must not
+assign values for another project's typed field.** What GRX930 can usefully
+publish is the distinction — software model / RTL-backed / silicon — and the
+mapping into `grxBackend_t` belongs in our code, next to the seam that attaches
+the model. That mapping needs one new enum value (a software register model is
+neither `SIMX` nor `RTLSIM` nor `SILICON`); their `SIMULATION` maps onto the
+existing `GRX_BACKEND_RTLSIM`, and their `SILICON` onto `GRX_BACKEND_SILICON`.
+Appending a value is ABI-safe; reusing an existing one would not be.
+
 ## 8. Where GRX-G100 is *ahead* of the reference
 
 Worth recording, because the platform should expose these rather than

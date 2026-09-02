@@ -18,18 +18,24 @@
 // the phase 7 exit gate, and per AGENTS.md no green run here may be reported as
 // the NPU working.
 //
-// TWO DEFECTS IN THE SHIM SHAPE THIS FILE, both measured on import and both
-// recorded in third_party/grx930/README.md:
+// FIVE DEFECTS WERE MEASURED ON IMPORT AND ALL FIVE ARE NOW FIXED UPSTREAM --
+// the history is in third_party/grx930/README.md. Two of them shaped this file
+// and are worth keeping in view:
 //
-//   - STATUS.BUSY is never asserted, so npu_c930_wait_idle() returns on its
-//     first poll whether or not the model has finished. DONE is the only thing
-//     that separates running from finished here -- which our backend checks,
-//     and which is the only reason this is safe to wire up at all.
-//   - The GEMM path indexes ddr[] unchecked, while mem_read/mem_write both
-//     range-check. A C_BASE near the top of the window writes past the array
-//     (watched under ASAN). So the adapter below refuses a launch whose A/B/C
-//     extents leave the window, the way an address decoder would, rather than
-//     forwarding a START that corrupts the process.
+//   - STATUS.BUSY was never asserted, so npu_c930_wait_idle returned on its
+//     first poll whether or not the model had finished. Fixed, and the RTL
+//     answer came with it: c930_npu_csr.sv drives bit 0 from the core's i_busy,
+//     so the map was right and the model was wrong. case_busy_covers_the_gemm
+//     now pins the property our poll loop rests on.
+//   - The GEMM path indexed ddr[] unchecked (watched under ASAN). Fixed
+//     upstream, and the adapter below ALSO refuses a launch whose A/B/C extents
+//     leave the window, the way an address decoder would. That is deliberate
+//     duplication: their check is uint32 arithmetic and an address near 2^32
+//     still wraps past it, so ours is in 64-bit and is the one that holds.
+//
+// What is NOT fixed, because it is a modelling choice rather than a slip, is
+// that STATUS.DONE is inferred from the counters instead of latched. See
+// case_status_is_inferred_not_latched.
 //
 // The layout the shim reads is its own (A row-major m x k, B row-major k x n).
 // Whether that is the layout a column-major BLAS caller means is a separate
@@ -219,10 +225,22 @@ void case_gemm() {
   check(bad == 0, "all M*N results match INT8 x INT8 -> INT32 done on the host");
 }
 
-void case_not_finished() {
-  std::printf("a launch that has not finished when the host looks:\n");
-  std::printf("        (their STATUS.BUSY is never asserted, so wait_idle\n"
-              "         returns at once -- DONE is the only evidence there is)\n");
+// This case used to be "a launch that has not finished when the host looks",
+// and it existed because the imported shim never asserted STATUS.BUSY, so
+// npu_c930_wait_idle returned on its first poll and DONE was the only evidence
+// of completion there was. The GRX930 team fixed that -- and answered the
+// question behind it with RTL: c930_npu_csr.sv line 180 reads
+// `{29'd0, i_error, done_latch, i_busy}`, so bit 0 IS driven on silicon, and
+// their Icarus run shows the core holding i_busy for 2171 cycles of a
+// 4x4x8 GEMM. The shim was wrong, not the register map.
+//
+// So the property worth pinning is the one our poll loop actually rests on:
+// BUSY must stay up for the whole GEMM and drop in the same breath as DONE.
+// A BUSY that dropped early -- at the end of the 2-cycle pipeline fill, say --
+// would send wait_idle home before the result existed, and npu_c930_gemm would
+// report "no DONE" on a launch that was merely still running.
+void case_busy_covers_the_gemm() {
+  std::printf("BUSY is driven, and drops exactly when DONE arrives:\n");
   const int M = 8, N = 12, K = 16;
   const uint32_t A_ADDR = 0x0100, B_ADDR = 0x0400, C_ADDR = 0x0800;
 
@@ -230,33 +248,143 @@ void case_not_finished() {
   int8_t A[8 * 16], B[16 * 12];
   load_operands(A, B, M, N, K, A_ADDR, B_ADDR);
 
+  // One model cycle per STATUS read, so the poll loop has to go round many
+  // times. That is the point: a quantum this small was fatal before the fix.
   Shim s;
-  s.quantum = 1;   // far less model time than this shape needs
+  s.quantum = 1;
   npu_c930_device_t dev;
   npu_c930_attach_model(&dev, shim_read, shim_write, &s);
   if (npu_c930_detect(&dev) != 1) { check(false, "detected"); return; }
 
   const int polls_before = s.polls;
   const int rc = npu_c930_gemm(&dev, M, N, K, A_ADDR, B_ADDR, C_ADDR);
-  // Read AFTER the launch: expected_cycles() reads the live CSRs, so asking
-  // before npu_c930_gemm has programmed DIM_M/N/K returns 0 and the printed
-  // comparison is between the shape and nothing.
+  // AFTER the launch: expected_cycles() reads the live CSRs, so asking before
+  // npu_c930_gemm has programmed DIM_M/N/K compares the shape against nothing.
   const int expected = npu_dpi_expected_cycles();
-  const int advanced = (s.polls - polls_before) * s.quantum;
-  std::printf("        shape needs %d model cycles; %d poll(s) advanced %d\n",
-              expected, s.polls - polls_before, advanced);
-  check(advanced < expected, "the poll really did stop short of the shape");
-  check(rc != 0, "the GEMM is reported FAILED, not as success");
-  check(s.starts == 1, "even though START was accepted");
+  const int polls = s.polls - polls_before;
+  std::printf("        shape needs %d model cycles; the poll went round %d times\n",
+              expected, polls);
+  check(rc == 0, "the GEMM completes");
+  check(polls > expected, "and wait_idle really did have to wait for it");
+  check(s.starts == 1, "one START");
 
-  // And the direction of the mistake matters. This model writes C at START,
-  // before it will admit to being done -- so the refusal above threw away an
-  // answer that happened to be correct. That is the safe direction: on hardware
-  // the same state is a DMA still in flight, and the buffer holds whatever it
-  // held before.
-  const int32_t c00 = ddr_get32(C_ADDR);
-  check(c00 == reference(A, B, N, K, 0, 0),
-        "C was already correct in DDR -- the refusal was conservative, not wrong");
+  int bad = 0;
+  for (int i = 0; i < M; ++i)
+    for (int j = 0; j < N; ++j)
+      if (ddr_get32(C_ADDR + (i * N + j) * 4) != reference(A, B, N, K, i, j)) ++bad;
+  check(bad == 0, "and C is right at 8x12x16, the largest shape the SoC takes");
+
+  // The transition itself, cycle by cycle, below npu_c930_gemm.
+  npu_dpi_init();
+  load_operands(A, B, M, N, K, A_ADDR, B_ADDR);
+  npu_dpi_csr_write(NPU_C930_MMIO_BASE + 0x08, M);
+  npu_dpi_csr_write(NPU_C930_MMIO_BASE + 0x0C, N);
+  npu_dpi_csr_write(NPU_C930_MMIO_BASE + 0x10, K);
+  npu_dpi_csr_write(NPU_C930_MMIO_BASE + 0x14, A_ADDR);
+  npu_dpi_csr_write(NPU_C930_MMIO_BASE + 0x18, B_ADDR);
+  npu_dpi_csr_write(NPU_C930_MMIO_BASE + 0x1C, C_ADDR);
+  npu_dpi_csr_write(NPU_C930_MMIO_BASE + 0x00, NPU_C930_CTRL_START);
+  int last_busy = 0, first_done = -1;
+  for (int c = 1; c <= 4096; ++c) {
+    npu_dpi_run(1);
+    const uint32_t st = npu_dpi_csr_read(NPU_C930_MMIO_BASE + 0x04);
+    if (st & NPU_C930_STATUS_BUSY) last_busy = c;
+    if ((st & NPU_C930_STATUS_DONE) && first_done < 0) first_done = c;
+    if (first_done >= 0) break;
+  }
+  std::printf("        BUSY high through cycle %d, DONE first seen at %d\n",
+              last_busy, first_done);
+  check(first_done == last_busy + 1,
+        "DONE appears on the cycle after BUSY drops -- no window in between");
+}
+
+// STATUS.DONE IS NOT LATCHED IN THIS MODEL. IT IS INFERRED.
+//
+//   build_status() = (error ? 4 : 0) | ((CYCLE_LO || OP_COUNT) && !busy ? 2 : 0)
+//                                    | (busy ? 1 : 0)
+//
+// DONE is therefore "some counter is non-zero and I am not busy", which is true
+// of an idle device that ran ANY earlier GEMM. On real hardware DONE is a latch
+// set at completion -- that is the whole reason npu_c930_gemm reads it, and the
+// reason a device that ignored every write cannot fake it.
+//
+// Two consequences, both measured, neither reachable through our backend:
+//
+//   * a START the model refuses outright (M=0) reports DONE=1, if any earlier
+//     GEMM has run. A completion flag for a launch that was never accepted.
+//   * an out-of-window START reports STATUS=0x06 -- ERROR and DONE together,
+//     which is a contradiction: it both failed and completed.
+//
+// Their own test for the bounds check saw 0x04 because it ran on a freshly
+// initialised shim, where the cycle counter is still zero. The same START, the
+// second time in a process, reads 0x06.
+//
+// What this case gates is OUR half -- the two properties that make their defect
+// unable to reach a caller. If either is ever reordered or dropped, a
+// contradictory STATUS becomes a successful GEMM.
+void case_status_is_inferred_not_latched() {
+  std::printf("their DONE is inferred, so check what protects us from it:\n");
+  const int M = 4, N = 4, K = 8;
+  const uint32_t A_ADDR = 0x0100, B_ADDR = 0x0200, C_ADDR = 0x0400;
+
+  npu_dpi_init();
+  int8_t A[4 * 8], B[8 * 4];
+  load_operands(A, B, M, N, K, A_ADDR, B_ADDR);
+
+  Shim s;
+  npu_c930_device_t dev;
+  npu_c930_attach_model(&dev, shim_read, shim_write, &s);
+  if (npu_c930_detect(&dev) != 1) { check(false, "detected"); return; }
+
+  // one good GEMM, so the model's cycle counter is non-zero from here on
+  check(npu_c930_gemm(&dev, M, N, K, A_ADDR, B_ADDR, C_ADDR) == 0,
+        "a good GEMM first, which leaves CYCLE_LO non-zero");
+
+  // Show the inference directly, below our backend.
+  npu_dpi_csr_write(NPU_C930_MMIO_BASE + 0x08, 0);            // DIM_M = 0
+  npu_dpi_csr_write(NPU_C930_MMIO_BASE + 0x00, NPU_C930_CTRL_START);
+  const uint32_t refused = npu_dpi_csr_read(NPU_C930_MMIO_BASE + 0x04);
+  std::printf("        a START the model refuses (M=0) reads STATUS=0x%02x\n",
+              refused);
+
+  // OUR PROTECTION #1: dimensions are validated before any register is touched,
+  // so npu_c930_gemm can never issue the START that produces that reading.
+  const int starts_before = s.starts;
+  check(npu_c930_gemm(&dev, 0, N, K, A_ADDR, B_ADDR, C_ADDR) != 0,
+        "npu_c930_gemm refuses M=0");
+  check(s.starts == starts_before,
+        "and refuses it BEFORE writing CTRL -- the device is never asked");
+
+  // The contradictory reading itself, produced by the model rather than by us:
+  // an out-of-window START, issued below the adapter so the adapter's own guard
+  // does not intercept it first.
+  npu_dpi_csr_write(NPU_C930_MMIO_BASE + 0x08, M);
+  npu_dpi_csr_write(NPU_C930_MMIO_BASE + 0x1C, 0xfff0);   // C_BASE off the end
+  npu_dpi_csr_write(NPU_C930_MMIO_BASE + 0x00, NPU_C930_CTRL_START);
+  const uint32_t both = npu_dpi_csr_read(NPU_C930_MMIO_BASE + 0x04);
+  std::printf("        an out-of-window START, second time in the process, "
+              "reads STATUS=0x%02x\n", both);
+  check((both & NPU_C930_STATUS_ERROR) && (both & NPU_C930_STATUS_DONE),
+        "ERROR and DONE at once -- it both failed and completed");
+  std::printf("        (their own test for this saw 0x04: it ran on a freshly\n"
+              "         initialised shim, where CYCLE_LO is still zero.)\n");
+
+  // OUR PROTECTION #2: npu_c930_gemm checks ERROR before DONE, so a device
+  // reporting both is a failure and not a success. Driven through a hook built
+  // for exactly this, rather than through the shim -- the point is our ordering,
+  // and a test of our ordering should not depend on how someone else's model
+  // happens to reach that state.
+  struct Both {
+    static uint32_t rd(void*, uint32_t off) {
+      if (off == 0x04) return NPU_C930_STATUS_ERROR | NPU_C930_STATUS_DONE;
+      return 0x5u;   // any R/W readback, so detect() sees a live register file
+    }
+    static void wr(void*, uint32_t, uint32_t) {}
+  };
+  npu_c930_device_t contradictory;
+  npu_c930_attach_model(&contradictory, Both::rd, Both::wr, nullptr);
+  check(npu_c930_gemm(&contradictory, M, N, K, A_ADDR, B_ADDR, C_ADDR) != 0,
+        "npu_c930_gemm reads ERROR|DONE as FAILED, not as DONE");
 }
 
 void case_out_of_window() {
@@ -325,12 +453,23 @@ void case_out_of_window() {
   }
 }
 
-// Not a gate. Their header names four registers as accurate and three of them
-// read the wrong value; gating on someone else's defect turns our suite amber
-// for a bug we cannot fix here. Recorded, reported, and printed every run so it
-// cannot quietly stop being true -- the gate arrives with the fix.
-void observe_counters() {
-  std::printf("counter layout, as OBSERVED (not gated -- see the README):\n");
+// THIS WAS AN OBSERVATION AND IS NOW A GATE, which is the whole point of having
+// written it down.
+//
+// On import, three of the four counters their header names as accurate read the
+// wrong register: OP_COUNT was written at 0x28 and read at 0x2c, so 0x2c
+// returned STALL_COUNT, 0x30 returned DMA_CT, and 0x34 read zero forever. That
+// was not gated -- a red gate on someone else's defect turns our suite amber for
+// a bug we cannot fix here -- so it was printed every run and reported instead,
+// with the promise that the gate would arrive with the fix.
+//
+// It arrived. The cause was not the re-index we guessed at: `ADDR_CYCLE_HI`
+// (0x28) exists as a localparam in c930_npu_csr.sv and appears in no case
+// statement, so the RTL has a dead register there and the header had simply
+// omitted it. CYCLE_COUNT is 32 bits, not 64. Our guess was wrong and theirs was
+// checkable, which is why the question was asked rather than assumed.
+void case_counters() {
+  std::printf("the counters, at the addresses the header documents:\n");
   const int M = 4, N = 4, K = 8;
   npu_dpi_init();
   int8_t A[4 * 8], B[8 * 4];
@@ -342,17 +481,25 @@ void observe_counters() {
   npu_c930_gemm(&dev, M, N, K, 0x0100, 0x0200, 0x0400);
 
   static const struct { uint32_t off; const char* name; } kRegs[] = {
-    {0x24, "CYCLE_COUNT (header)"},
-    {0x28, "(undocumented)     "},
-    {0x2c, "OP_COUNT    (header)"},
-    {0x30, "STALL_COUNT (header)"},
-    {0x34, "DMA_CT      (header)"},
+    {0x24, "CYCLE_LO   "},
+    {0x28, "(dead)     "},
+    {0x2c, "OP_COUNT   "},
+    {0x30, "STALL_COUNT"},
+    {0x34, "DMA_CT     "},
   };
   for (const auto& r : kRegs)
     std::printf("        0x%02x  %s = %u\n", r.off, r.name,
                 npu_dpi_csr_read(NPU_C930_MMIO_BASE + r.off));
-  std::printf("        M*N*K*2 = %d, which is at 0x28, not at OP_COUNT's 0x2c\n",
-              M * N * K * 2);
+
+  check(npu_dpi_csr_read(NPU_C930_MMIO_BASE + 0x2c) ==
+            (uint32_t)(M * N * K * 2),
+        "OP_COUNT reads M*N*K*2 at 0x2c");
+  check(npu_dpi_csr_read(NPU_C930_MMIO_BASE + 0x28) == 0,
+        "0x28 reads 0 -- ADDR_CYCLE_HI is dead in the RTL");
+  check(npu_dpi_csr_read(NPU_C930_MMIO_BASE + 0x24) != 0,
+        "CYCLE_LO counted something");
+  check(npu_dpi_csr_read(NPU_C930_MMIO_BASE + 0x30) == 0,
+        "STALL_COUNT is 0 (this model does not stall)");
 }
 
 }  // namespace
@@ -366,9 +513,10 @@ int main() {
   case_guard();
   case_detect();
   case_gemm();
-  case_not_finished();
+  case_busy_covers_the_gemm();
+  case_status_is_inferred_not_latched();
   case_out_of_window();
-  observe_counters();
+  case_counters();
   std::printf("\n%s (%d failure%s)\n", g_failures ? "FAILED" : "PASSED",
               g_failures, g_failures == 1 ? "" : "s");
   return g_failures ? 1 : 0;

@@ -119,16 +119,49 @@ void print_human(int index, const grxDeviceProp_t& p) {
   std::printf("\n");
 }
 
+// AN UNRECOGNISED BACKEND IS "unknown", NOT "silicon".
+//
+// This was a chained ternary whose last arm was `: "silicon"`, so every value
+// that is not one of the five named above -- including every value outside the
+// enum -- printed as silicon. That is the single worst default available: the
+// field exists so a caller can tell a simulator from a chip, and the fallthrough
+// answered "chip" for anything it did not recognise.
+//
+// It is not hypothetical. The GRX930 team proposed three constants for this
+// field (`NPU_DPI_BACKEND_EMULATION` 0x10, `SIMULATION` 0x11, `SILICON` 0x00)
+// so that an attached software register model would stop being reported as
+// silicon. Measured against the code as it stood, all three made it worse:
+//
+//   device->backend = ...                grx-smi --json said   backend_has_vm
+//   NPU_DPI_BACKEND_EMULATION  (0x10)    "silicon"             no
+//   NPU_DPI_BACKEND_SIMULATION (0x11)    "silicon"             no
+//   NPU_DPI_BACKEND_SILICON    (0x00)    "simx"                YES
+//
+// The first two are the fabrication the constants were meant to prevent. The
+// third collides with GRX_BACKEND_SIMX == 0 and would additionally turn on
+// backend_has_vm, advertising managed memory on a device with no MMU
+// (cuda_mapping.md 7.5 is the refusal that re-opens).
+//
+// `grxcp::backend_name` in context.cpp already gets this right -- it is a
+// switch with a `return "unknown"` after it. This was a second, divergent copy
+// of the same mapping, which is why one of them could be wrong for so long.
+static const char* backend_json(grxBackend_t b) {
+  switch (b) {
+    case GRX_BACKEND_SIMX:    return "simx";
+    case GRX_BACKEND_RTLSIM:  return "rtlsim";
+    case GRX_BACKEND_XRT:     return "xrt";
+    case GRX_BACKEND_OPAE:    return "opae";
+    case GRX_BACKEND_GEM5:    return "gem5";
+    case GRX_BACKEND_SILICON: return "silicon";
+  }
+  return "unknown";
+}
+
 void print_json(int index, const grxDeviceProp_t& p, bool last) {
   std::printf("  {\n");
   std::printf("    \"index\": %d,\n", index);
   std::printf("    \"name\": \"%s\",\n", p.name);
-  std::printf("    \"backend\": \"%s\",\n",
-              p.backend == GRX_BACKEND_SIMX    ? "simx"    :
-              p.backend == GRX_BACKEND_RTLSIM  ? "rtlsim"  :
-              p.backend == GRX_BACKEND_XRT     ? "xrt"     :
-              p.backend == GRX_BACKEND_OPAE    ? "opae"    :
-              p.backend == GRX_BACKEND_GEM5    ? "gem5"    : "silicon");
+  std::printf("    \"backend\": \"%s\",\n", backend_json(p.backend));
   std::printf("    \"computeCapability\": \"%d.%d\",\n",
               p.computeCapabilityMajor, p.computeCapabilityMinor);
   std::printf("    \"warpSize\": %d,\n", p.warpSize);
