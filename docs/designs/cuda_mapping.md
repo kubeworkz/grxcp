@@ -1196,6 +1196,16 @@ diagnostic from the toolchain, and will pass every test whose control flow
 happens to be uniform. The kernel that has lost divergence handling is exactly
 the one whose author did not think divergence was involved.
 
+**Reported upstream.** The toolchain is `clang 20.1.8`,
+`github.com/vortexgpgpu/llvm.git @ 4c836512`, and the defect was re-verified
+against it on the current source — which has since gained a third template
+parameter on `micro_tile_body`, and reproduces unchanged: `sgemm_4x4` 0/0 while
+`sgemm_2d`, `sgemm_2d_i`, `sgemm_4x2`, `sgemm_rb` and `sgemm` all keep theirs.
+The report asks three things: whether the divergence pass has a bailout that can
+fail OPEN, whether `__forceinline__` into several `__global__` entry points is
+relevant when only the largest instantiation loses its splits, and confirmation
+that they reproduce.
+
 `tests/repro/sgemm_4x4_splits/count_splits.sh` decodes `vx_split`/`vx_join` out
 of a device ELF per kernel. Counting them is a build-time check that does not
 depend on picking a shape that diverges, and a correctness gate cannot make
