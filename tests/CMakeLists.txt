@@ -119,3 +119,58 @@ if(TARGET test_device_props)
   set_tests_properties(test_device_props_fpga PROPERTIES
     ENVIRONMENT "VORTEX_DRIVER=xrt" SKIP_RETURN_CODE 77)
 endif()
+
+# ---------------------------------------------------------------------------
+# The c930 RTL under Verilator (tests/rtl/)
+# ---------------------------------------------------------------------------
+#
+# Built only when the GRX930 RTL is on hand and Verilator is installed:
+#
+#   cmake -DGRXCP_ENABLE_NPU=ON -DGRXCP_C930_RTL_DIR=/path/to/c930 ...
+#
+# Without either, the target simply does not exist. That is deliberate: a test
+# that cannot be built should not be a test that reports 77, because a skip is a
+# claim about the machine and "the RTL is not checked out" is a claim about the
+# checkout.
+#
+# The RTL is NOT vendored. It is theirs, it moves, and a copy here would go
+# stale silently -- which is exactly the failure third_party/grx930/README.md
+# exists to prevent for the two files we do vendor.
+#
+# PARAMETERS ARE PASSED EXPLICITLY. c930_npu_top's own defaults are the "core
+# defaults" of cuda_mapping.md 7.26 (8x8 array, MAX_M=64, MAX_K=256, MAX_N=8);
+# c930_soc_top instantiates 4/4/8/16/12. Verilating with the defaults would
+# build a different machine than the one NPU_C930_MAX_* describes.
+if(GRXCP_ENABLE_NPU AND GRXCP_C930_RTL_DIR)
+  find_program(VERILATOR_BIN verilator)
+  if(VERILATOR_BIN AND EXISTS "${GRXCP_C930_RTL_DIR}/c930_npu_top.sv")
+    find_package(verilator HINTS $ENV{VERILATOR_ROOT})
+    if(verilator_FOUND)
+      set(_c930_rtl
+        c930_npu_top.sv c930_npu_core.sv c930_npu_csr.sv c930_npu_dma.sv
+        c930_systolic_array.sv c930_tensor_pe.sv c930_fx_acc.sv
+        c930_fp16_acc.sv c930_fp16_mul.sv c930_bf16_mul.sv
+        c930_cla_sub.sv c930_cla_comp.sv)
+      list(TRANSFORM _c930_rtl PREPEND "${GRXCP_C930_RTL_DIR}/")
+
+      add_executable(test_npu_rtl ${CMAKE_CURRENT_SOURCE_DIR}/rtl/test_npu_rtl.cpp)
+      target_include_directories(test_npu_rtl PRIVATE
+          ${CMAKE_CURRENT_SOURCE_DIR}/unit
+          ${CMAKE_CURRENT_SOURCE_DIR}/rtl)
+      target_link_libraries(test_npu_rtl PRIVATE grxblas grxrt)
+      verilate(test_npu_rtl SOURCES ${_c930_rtl}
+               TOP_MODULE c930_npu_top
+               PREFIX Vc930_npu_top
+               VERILATOR_ARGS -Wno-fatal -Wno-lint -Wno-style
+                              -GNUM_ROWS=4 -GNUM_COLS=4
+                              -GMAX_M=8 -GMAX_K=16 -GMAX_N=12)
+      add_test(NAME test_npu_rtl COMMAND test_npu_rtl)
+      set_tests_properties(test_npu_rtl PROPERTIES SKIP_RETURN_CODE 77)
+      message(STATUS "grxcp: building test_npu_rtl against ${GRXCP_C930_RTL_DIR}")
+    else()
+      message(STATUS "grxcp: verilator found but no CMake package; skipping test_npu_rtl")
+    endif()
+  else()
+    message(STATUS "grxcp: no verilator or no c930_npu_top.sv; skipping test_npu_rtl")
+  endif()
+endif()

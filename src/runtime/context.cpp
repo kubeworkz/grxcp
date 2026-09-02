@@ -213,6 +213,9 @@ struct PendingNpuModel {
   npu_c930_mem_read_fn  mem_read  = nullptr;
   npu_c930_mem_write_fn mem_write = nullptr;
   void*                 mem_ctx   = nullptr;
+  // What the attached model IS. Defaults to a software register model; a
+  // Verilator harness driving the RTL says so and gets RTLSIM. Never SILICON.
+  grxBackend_t          backend   = GRX_BACKEND_MODEL;
 };
 static PendingNpuModel g_npu_model;
 static bool            g_npu_enumerated = false;
@@ -291,10 +294,12 @@ static void populate_npu_properties(Device& d) {
   // predicate, it is the same one probe_npu_device used to decide what to
   // detect through, and a model cannot be attached without it moving.
   const bool via_model = g_npu_model.read32 || g_npu_model.write32;
-  p.backend = via_model ? GRX_BACKEND_MODEL : GRX_BACKEND_SILICON;
+  p.backend = via_model ? g_npu_model.backend : GRX_BACKEND_SILICON;
   std::snprintf(p.name, sizeof(p.name), "GRX930 NPU (%s)",
-                via_model ? "software register model, NOT hardware"
-                          : "silicon");
+                !via_model ? "silicon"
+                : (g_npu_model.backend == GRX_BACKEND_RTLSIM)
+                    ? "RTL through Verilator, NOT hardware"
+                    : "software register model, NOT hardware");
 }
 
 void probe_npu_device(std::vector<Device>& devices) {
@@ -350,9 +355,10 @@ void probe_npu_device(std::vector<Device>& devices) {
       devices.push_back(d);
       std::fprintf(stderr, "grxcp: GRX930 NPU detected at 0x%08x"
                    " (device %d)%s\n", NPU_C930_MMIO_BASE, d.index,
-                   (g_npu_model.read32 || g_npu_model.write32)
-                       ? " -- THROUGH A REGISTER MODEL, not hardware"
-                       : "");
+                   !(g_npu_model.read32 || g_npu_model.write32) ? ""
+                   : (g_npu_model.backend == GRX_BACKEND_RTLSIM)
+                       ? " -- THROUGH THE RTL UNDER VERILATOR, not hardware"
+                       : " -- THROUGH A REGISTER MODEL, not hardware");
     } else {
       delete dev;
     }
@@ -461,6 +467,17 @@ int grxcp_npu_attach_memory_for_testing(npu_c930_mem_read_fn mem_read,
   grxcp::g_npu_model.mem_read  = mem_read;
   grxcp::g_npu_model.mem_write = mem_write;
   grxcp::g_npu_model.mem_ctx   = ctx;
+  return 1;
+}
+
+int grxcp_npu_set_model_backend(int backend) {
+  if (grxcp::g_npu_enumerated) return 0;
+  // NOTHING ATTACHED THROUGH THIS SEAM MAY CLAIM TO BE A CHIP. The seam exists
+  // so a model can stand in for hardware; letting it also SAY it is hardware
+  // would hand back the exact fabrication the derived backend field removed.
+  if (backend == GRX_BACKEND_SILICON) return 0;
+  if (backend != GRX_BACKEND_MODEL && backend != GRX_BACKEND_RTLSIM) return 0;
+  grxcp::g_npu_model.backend = (grxBackend_t)backend;
   return 1;
 }
 

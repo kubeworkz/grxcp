@@ -1423,6 +1423,80 @@ twenty cases, and not one of them had ever been evaluated.
    in all four elements, `K=1` wrong in twelve of sixteen. Now column-major
    throughout, matching the API it is testing.
 
+### 7.34 The shim's performance counters are not the RTL's — **CROSS-TEAM, do not quote them**
+
+The GRX930 team's software shim is register-model-accurate and we have said so
+repeatedly. Its **counters** are a different claim, and now that the same shapes
+have been run against the RTL under Verilator, the two can be compared. At the
+engine's M=4 N=4 K=8 INT8:
+
+| register | shim | c930 RTL | |
+|---|---|---|---|
+| `CYCLE_LO` `0x24` | 22 | **224** | 10.2x |
+| `OP_COUNT` `0x2c` | 256 | **1280** | 5x |
+| `STALL_CT` `0x30` | 0 | **64** | the shim declares no stalls |
+| `DMA_CT` `0x34` | 22 | **320** | 14.5x |
+
+Three of the four disagree by an order of magnitude, and they do not merely
+disagree in scale — they count different things. `OP_COUNT` in the shim is
+`M*N*K*2`, a property of the problem; the RTL's rises with the tiling, not with
+the element count (1x1x1 gives 160, 4x4x4 gives 640, 8x8x8 gives 5120). And the
+RTL's `DMA_CT` **exceeds its own `CYCLE_LO`** on every shape measured (320 vs
+224; 3077 vs 2592), which means the two counters do not share a time base.
+
+The shim's own header is careful — "NOT cycle-accurate" — so this is not a
+defect in it. It is a boundary worth naming, because the numbers are readable
+through the same register at the same address and nothing at the call site says
+which kind of device answered. **A cycle count read from a model is a model of
+a model.** `grxDeviceProp_t.backend` is the discriminator, and it is derived
+rather than asserted precisely so a caller can tell.
+
+Nothing in grxcp reads these counters today. The rule this records is for when
+something does: a performance number is only reportable alongside the backend it
+came from, and `GRX_BACKEND_MODEL` numbers are not the device's.
+
+### 7.35 `grxblasGemmEx` runs on the c930 RTL — **OURS, done; still not silicon**
+
+`tests/rtl/test_npu_rtl.cpp`, built only with `-DGRXCP_C930_RTL_DIR=<path>`.
+The whole stack in one test: `grxMalloc` carves the DDR window, `grxMemcpy`
+moves A and B into it, `grxblasGemmEx` routes to the NPU engine and programs the
+CSRs, the Verilated RTL runs the GEMM through its own AXI master, and
+`grxMemcpy` reads C back. Ten shapes, all matching a column-major host
+reference.
+
+**No DPI, no CPU, no firmware.** Every port of `c930_npu_top` is top-level, so
+Verilator hands them to C++ as plain members: the harness drives the AXI4-Lite
+slave for CSRs and services the AXI4 master against a C++ DDR array. That
+sidesteps the GRX930 tree's `verilate-npu` target (whose DPI bridge is not
+connected in either direction) and `verilate-grxcp` (which stops on three
+Verilator errors in the rv64imac core), neither of which we need.
+
+Two things it settles that no model could:
+
+- **The transposed operands are right on the design, not just on our
+  arithmetic.** 7.32's swap was derived from the layout conventions; the RTL
+  agrees with a column-major host reference on every legal shape.
+- **The crossed bounds are the RTL's, not ours.** The caller's `n = 9` makes the
+  engine's `M = 9`, and the library refuses it; the caller's `m = 12, n = 8` is
+  accepted and computes correctly. The wall is where 7.32 said it was.
+
+It also confirms, from the RTL rather than from a header, that `0x28` reads 0 —
+`ADDR_CYCLE_HI` is declared and never decoded.
+
+**The parameters are passed explicitly and this matters.** `c930_npu_top`
+declares `NUM_ROWS=8, NUM_COLS=8, MAX_M=64, MAX_K=256, MAX_N=8` — the "core
+defaults" of 7.26. `c930_soc_top` instantiates `4/4/8/16/12`. Verilating with
+the defaults builds a different machine than the one `NPU_C930_MAX_*` describes,
+which is 7.26 in live form; the build passes `-GNUM_ROWS=4 -GNUM_COLS=4
+-GMAX_M=8 -GMAX_K=16 -GMAX_N=12`.
+
+**A simulation is not silicon.** The device reports `GRX_BACKEND_RTLSIM` and
+names itself "RTL through Verilator, NOT hardware"; the seam refuses to let
+anything attached through it claim `GRX_BACKEND_SILICON` at all. Executing the
+design is a real step past executing a model of its interface, and it is not
+timing closure, a physical DDR, a clock domain crossing, or a part in a socket.
+The phase 7 exit gate is unchanged.
+
 ## 8. Where GRX-G100 is *ahead* of the reference
 
 Worth recording, because the platform should expose these rather than

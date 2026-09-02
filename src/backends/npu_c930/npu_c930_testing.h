@@ -62,6 +62,21 @@ int grxcp_npu_attach_memory_for_testing(npu_c930_mem_read_fn mem_read,
                                         npu_c930_mem_write_fn mem_write,
                                         void* ctx);
 
+// Declare what KIND of model is attached, so the device can report it.
+//
+// A model defaults to GRX_BACKEND_MODEL: a software register model, executing
+// nothing of the device. A harness that drives the actual RTL through Verilator
+// is a different claim and gets GRX_BACKEND_RTLSIM, which the enum already has.
+// The distinction is not cosmetic -- it is the difference between "our host
+// matches our idea of the register map" and "our host matches the RTL" -- and a
+// caller reading grxDeviceProp_t.backend is entitled to know which.
+//
+// Neither is hardware. Pass GRX_BACKEND_SILICON here and it is refused,
+// returning 0: nothing attached through this seam may claim to be a chip.
+//
+// Same rule as above: before enumeration, or it returns 0.
+int grxcp_npu_set_model_backend(int backend);
+
 // True once a model has been installed through the seam above. The runtime
 // uses it to decide what the device says about itself; a test can use it to
 // assert that it is talking to a model and not to hardware.
