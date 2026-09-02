@@ -1547,6 +1547,81 @@ design is a real step past executing a model of its interface, and it is not
 timing closure, a physical DDR, a clock domain crossing, or a part in a socket.
 The phase 7 exit gate is unchanged.
 
+### 7.36 `rtlsim` was never blocked — it was unbuilt, in the other checkout — **OURS, gates closed**
+
+The roadmap said `rtlsim` "cannot be run from this checkout", because the
+grxgpu working copy in the build container has exactly two files under `hw/`.
+That was accurate about the container and wrong about the platform: the GRXGPU
+tree on the development machine carries 404 RTL files, `hw/dpi/dpi_util.cpp`,
+`sim/rtlsim/` and `sw/runtime/rtlsim/` — 3.9 MB, sitting there the whole time.
+Staged across and built with the system Verilator 5.020, `librtlsim.so` and
+`libvortex-rtlsim.so` link on the first clean attempt.
+
+**A claim about a checkout had been standing in for a claim about the
+platform.** Nobody had looked in the other tree, and the sentence was true
+enough to survive being read. It cost four exit-gate clauses.
+
+Two are now closed. The same binaries, `VORTEX_DRIVER=rtlsim` and nothing else
+changed:
+
+| gate | result |
+|---|---|
+| phase 0 — `grx-smi` on real `rtlsim` | correct, non-fabricated properties from a Verilated GRX-G100 |
+| phase 1 — `vecadd` on `simx` **and** `rtlsim` | 64/64 elements correct on both |
+| phase 1 — `sgemm` | `test_grxblas` 0 failures on `rtlsim`, batched cases and argument validation included |
+
+### And the honesty machinery is visibly doing its job
+
+This is the first time two *genuinely different* GRX-G100s have been put in
+front of the same `populate_properties`, and the capability lists differ
+correctly:
+
+```
+simx     capabilities   launch streams events memcpy gemm tensor async-copy cooperative
+rtlsim   capabilities   launch streams events memcpy cooperative
+```
+
+Because this RTL is built with `VX_CFG_EXT_TCU_ENABLED=0` and
+`VX_CFG_EXT_DXA_ENABLED=0`, and the runtime derives those bits rather than
+asserting them. Confirmed at the source rather than inferred from the printout —
+`VX_CAPS_ISA_FLAGS` reads `0x63380901128` on simx (TCU and DXA set) and
+`0x3380901128` on rtlsim (both clear). Warp geometry differs too: 16 warps per
+SM on simx, 4 on rtlsim.
+
+A device that had claimed a tensor unit its RTL does not contain would have been
+the phase 0 gate failing while printing green, and it did not.
+
+### The near-miss, because it is the same shape as everything else this week
+
+The first `grx-smi` run against `rtlsim` printed `tensor async-copy` and 4 warps
+per SM. That reading was **the mock**: the binary came from
+`build-mock/cmake-npu`, built with `-DGRXCP_USE_MOCK_DRIVER=ON`, so it never
+opened either driver. `detect_backend()` reads `$VORTEX_DRIVER`, so the header
+still said "(rtlsim)" — the one field that does not need a device to answer.
+
+It was caught by asking the driver directly for `VX_CAPS_ISA_FLAGS` and finding
+TCU clear on the backend that had just claimed a tensor unit. **A mock answers
+every question you ask it, including questions about a backend it has never
+heard of**, and the name of the backend is exactly the field that stays
+plausible. Anything claiming to measure a backend has to be built against that
+backend's driver; `build-real` exists for this and was not used first.
+
+### What this does not close
+
+This `rtlsim` configuration is **not the same machine as `simx`** — no TCU, no
+DXA, 4 warps per SM instead of 16. So:
+
+- Phase 3's tensor gate cannot run here at all: `grxblasGemmEx`'s fp16 path
+  needs a TCU this build does not have, and the honest device correctly refuses
+  it rather than pretending.
+- Phase 2's and phase 4's `rtlsim` clauses are separate runs and have not been
+  made. Phase 4's row now says the platform runs there rather than that it
+  cannot.
+- Nothing here says anything about silicon. `rtlsim` executes the RTL, which is
+  a real step past `simx` executing a functional model of it, and it is still a
+  simulation. Every timing claim in this project already carries its backend for
+  this reason.
+
 ## 8. Where GRX-G100 is *ahead* of the reference
 
 Worth recording, because the platform should expose these rather than

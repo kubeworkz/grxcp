@@ -72,7 +72,7 @@ both `simx` and `rtlsim`, in CI, from a clean checkout.
 | `grx-smi` v0 (human + `--json`) | done |
 | Mock driver fixture + unit tests + `ci/build_mock.sh` (tier 1) | done |
 | Exit gate: `grx-smi` on real `simx` | **MET** — real device enumerated through the actual driver |
-| Exit gate: `grx-smi` on real `rtlsim` | pending — needs Verilator and the `hw/dpi` sources |
+| Exit gate: `grx-smi` on real `rtlsim` | **MET** — a real Verilated GRX-G100, reporting a NARROWER capability set than `simx` because this RTL is built without the TCU and DXA. See cuda_mapping.md 7.36 |
 
 Tier-1 CI passes against the mock driver, and **tier 2 now passes against a
 real SimX device**: `ci/build_sysroot.sh` builds the GRX-G100 driver and SimX
@@ -132,7 +132,8 @@ it here — Phase 1's job is the host runtime, not kernel expressiveness.
 | Conformance harness + published coverage number | done — 50 of 82 entry points (61%), published in [docs/conformance.md](../conformance.md) |
 | Data plane verified on a real `simx` device | **MET** — allocator, memcpy family, streams and events all pass through the real command processor |
 | Exit gate: `vecadd` numerically correct on `simx` | **MET** — kernel built with VOLT from GRXCP's own device header, launched through `grxLaunchFunction`, correct at 1/64/70/255 elements including partial warps |
-| `sgemm` | pending — belongs with grxBLAS in phase 3 |
+| Exit gate: `vecadd` and `sgemm` on real `rtlsim` | **MET** — the same binaries, `VORTEX_DRIVER=rtlsim` and nothing else changed. `vecadd` 64/64 correct; `test_grxblas` (the sgemm gate, including batched and argument validation) 0 failures. See cuda_mapping.md 7.36 |
+| `sgemm` tuning | belongs with grxBLAS in phase 3 |
 
 Four test binaries pass against the mock: `test_device_props`, `test_memory`,
 `test_stream_event`, `test_launch`. They verify data correctness through real
@@ -1039,16 +1040,23 @@ and the second silently did not. `cuda_mapping.md` section 7.23.
 | clause | state |
 |---|---|
 | a single `.grx.cpp` with `__global__` and `<<<>>>` compiles with `grxcc` and runs correctly on `simx` | **met** — PHASE 4 GATE |
-| ...and on `rtlsim` | **not run** — see below |
+| ...and on `rtlsim` | **the platform runs there now** (7.36); this phase's own samples have not been re-run on it — see below |
 | at least ten CUDA samples compile unmodified except for the `grx_cuda_compat.h` include | **met** — eleven do, and run |
 | the conformance rate improves measurably over phase 1's published number | **met** — 61% to 65% |
 
-**`rtlsim` has not been run, and cannot be from this checkout.** It is not a
-matter of wall-clock or of a `VORTEX_DRIVER` setting: `sw/runtime/rtlsim` needs
-`hw/dpi/dpi_util.cpp` and the RTL it wraps, and this grxgpu working copy
-contains two files under `hw/` — `VX_define.vh` and `VX_gpu_pkg.sv`. Verilator
-was installed and the build stops at the missing DPI source, so what is absent
-is the hardware description, not the tool.
+**`rtlsim` HAS NOW BEEN RUN.** This paragraph used to read "has not been run,
+and cannot be from this checkout" — the grxgpu working copy in the build
+container has two files under `hw/`, `VX_define.vh` and `VX_gpu_pkg.sv`, and the
+build stopped at the missing DPI source.
+
+That was true of *a* checkout and false of the project. The GRXGPU tree on the
+development machine has the whole thing: 404 RTL files, `hw/dpi/dpi_util.cpp`,
+`sim/rtlsim/` and `sw/runtime/rtlsim/`. Staged across and built with the system
+Verilator 5.020, `librtlsim.so` and `libvortex-rtlsim.so` link and run.
+
+The blocker was a claim about a checkout that read like a claim about the
+platform, and it stood for as long as nobody looked in the other tree. See
+cuda_mapping.md 7.36 for what it then found.
 
 Worth being clear about what running it would add. GRXCP's code path is
 identical on either backend — the driver is selected by `VORTEX_DRIVER` and the
