@@ -2146,9 +2146,51 @@ H=2, F=64, simx.
 | mlp GEMM 2 | 36574 | 13565 | **2.70×** |
 | **TOTAL** | **328987** | **166577** | **1.97×** |
 
-**4 SMs buys 1.97× — about half of linear.** The differential control passes on
+**4 SMs buys 1.97× on the summed spans.** The differential control passes on
 both configurations (attention's share rises 13.7% → 19.8% at 1 SM and
 13.8% → 19.9% at 4), so the instrument still responds to its input.
+
+### And the summed spans are not the block
+
+A span runs from the first warp starting to the last warp finishing. The cycles
+between the launch and that first warp are **outside every span in the table** —
+and since MCYCLE is zeroed at the launch, the first warp's own reading *is* that
+interval, measured on the device. Summing spans and calling it "the block"
+drops one preamble per launch, and at 23 launches that is not a rounding error.
+
+Measured, S=16, all 23 launches now accounted (three composite stages were
+dropping theirs until this was checked):
+
+| SMs | summed spans | preamble | per launch | block | preamble share | span speedup | **true speedup** |
+|---|---|---|---|---|---|---|---|
+| 1 | 328987 | 216621 | 9418 | 545608 | 39.7% | 1.00× | **1.00×** |
+| 2 | 208987 | 250687 | 10899 | 459674 | 54.5% | 1.57× | **1.19×** |
+| 4 | 166577 | 261831 | 11383 | 428408 | 61.1% | 1.97× | **1.27×** |
+
+**The headline 1.97× is the speedup of the part that scales. End to end it is
+1.27×**, because the block is 40% launch preamble at one SM and 61% at four —
+and the per-launch preamble itself *grows* with core count, 9418 → 11383.
+
+That is step 2's argument, measured rather than modelled, and it is stronger
+than the argument was: fusion is not a prerequisite for multi-SM paying off
+merely in the sense of being tidy first. At four SMs, **three quarters of the
+theoretical gain is already being eaten by launches**, and adding SMs makes the
+per-launch cost worse.
+
+*Two predictions, both wrong, both low.* Before the 2-SM run this section
+predicted 1.41× from a √N fit and 1.49× from Amdahl with the serial fraction
+implied by the 4-SM point. Measured 1.57× on spans — above both. And neither
+model predicted the thing that actually matters, because both were fitted to
+span totals that omit the preamble entirely. Fitting a curve to the wrong
+quantity produces a confident answer about nothing.
+
+*What this does NOT overturn.* `developer_interface.md` §3 measures 2776 cycles
+of fixed cost per launch by sweeping `grxdnnAddBiasForward` over column counts,
+and puts the block at 21.1% launch overhead. That number is not wrong — it is
+the fixed cost visible INSIDE a span, and the preamble above is the part
+outside it. They add: 23 × 2776 = 63848 inside, 216621 outside, **280469 of
+545608 — 51.4% of the block is per-launch fixed cost.** The strategy document
+understated its own case by half.
 
 *A prediction that was wrong, recorded because it was wrong in an instructive
 direction.* Before measuring, this section argued from warp counts that only

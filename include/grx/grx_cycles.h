@@ -175,6 +175,17 @@ typedef struct {
   // it: nothing that reads `span` today starts believing a cross-core number
   // by accident.
   uint64_t crossCoreSpan;
+
+  // The earliest MCYCLE any warp of this launch read. Since the counter is
+  // zeroed at the launch, this IS the launch preamble measured on the device:
+  // reset to the first warp reaching its probe.
+  //
+  // It is reported because every span in this file EXCLUDES it. A span runs
+  // from the first warp starting to the last warp finishing, so a caller that
+  // adds up stage spans and calls the total "what the workload costs" has
+  // silently dropped one preamble per launch. On a workload of many small
+  // launches that is not a rounding error.
+  uint64_t firstStart;
 } grxCycleSummary;
 
 
@@ -260,6 +271,7 @@ inline void grxCycleSummarize(const grxCycleSlot* slots, int n,
   out->coreSkew         = skew;
   out->spanCrossesCores = one_core ? 0 : 1;
   out->crossCoreSpan    = combined;
+  out->firstStart       = first_start;
 }
 
 #endif  // __cplusplus && !__VORTEX__

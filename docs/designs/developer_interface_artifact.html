@@ -361,7 +361,7 @@
       <div class="rail">
         <div class="param"><span class="val">2776</span><span class="key k-meas">cycles / launch</span></div>
         <div class="param"><span class="val">23</span><span class="key k-meas">launches / block</span></div>
-        <div class="param"><span class="val">21.1%</span><span class="key k-est">block spent on setup</span></div>
+        <div class="param"><span class="val">51.4%</span><span class="key k-meas">block spent on setup</span></div>
       </div>
       <div class="body">
         <h2><span class="num">03</span><span>Graph-first is forced by the machine, not preferred on taste</span></h2>
@@ -383,10 +383,25 @@
           </div>
           <figcaption>
             One transformer block at S=16 — 302,961 cycles total.<br>
-            Amber: 23 launches × 2776 cycles fixed cost = 63,848 (21.1%), spent before any element is touched.
+            Amber: 23 launches × 2776 cycles fixed cost = 63,848 (21.1%), spent before any element is touched.<br>
+            <strong>This bar shows the visible half.</strong> See below.
           </figcaption>
         </figure>
 
+        <div class="escalate">
+          <h3>The real figure is 51%, not 21% — the rest had never been read</h3>
+          <p>2776 is the fixed cost inside a stage's measured <em>span</em>, and a span begins at the
+            first warp's probe. Everything between the launch and that first warp is outside every
+            number in this section. MCYCLE is zeroed at the launch, so the first warp's own reading
+            <em>is</em> that interval — it had simply never been looked at. Measured across all 23
+            launches at S=16: <strong>216,621 cycles of preamble</strong>, 9418 each, against 328,987
+            of spans. Together, <strong>280,469 of 545,608 — 51.4% of the block is per-launch fixed
+            cost.</strong></p>
+          <p>And it worsens with parallelism rather than improving: at 1, 2 and 4 SMs the preamble
+            per launch grows — 9418, 10899, 11383 — so a 1.97× speedup on the work is
+            <strong>1.27× end to end</strong>. The case below was right and understated by a factor
+            of two.</p>
+        </div>
         <p>An eager operator-by-operator backend does not issue 23 launches per block. It issues far
           more, far smaller ones — that is what the decomposed graph in section 2 looks like before
           fusion. <strong>So eager dispatch is not a slower option for this machine, it is a

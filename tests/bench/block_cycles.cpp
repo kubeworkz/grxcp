@@ -115,6 +115,11 @@ struct StageCost {
   int         cores = 0;
   uint64_t    coreSkew = 0;
   uint64_t    skewSpan = 0;        // the span the skew was judged against
+  // Summed launch preamble: reset to first warp, once per launch. EVERY span
+  // below excludes it, so a total built from spans alone is not what the block
+  // costs -- see the accounting under the table.
+  uint64_t    preamble = 0;
+  int         launches = 0;
 };
 
 // Why a stage has no number. THREE reasons now, and the first version of this
@@ -181,6 +186,8 @@ struct Probe {
       c->valid = false;
       return;
     }
+    c->preamble += s.firstStart;
+    c->launches += 1;
     if (s.cores > c->cores) c->cores = s.cores;
     if (s.coreSkew > c->coreSkew) c->coreSkew = s.coreSkew;
     // On a backend whose per-core counters share an origin, crossCoreSpan is
@@ -290,6 +297,8 @@ bool profile(grxblasHandle_t bh, grxdnnHandle_t dh, const Shape& sh,
     struct P { Buf* w; Buf* b; Buf* o; };
     const P ps[3] = {{Wq, bq, &q}, {Wk, bk, &k}, {Wv, bv, &v}};
     uint64_t total = 0, bias_total = 0;
+    uint64_t pre = 0, bias_pre = 0;
+    int launches = 0, bias_launches = 0;
     bool valid = true, bias_valid = true;
     int warps = 0, qkv_live = 0, bias_warps = 0, bias_live = 0;
     for (const P& pr : ps) {
@@ -298,6 +307,7 @@ bool profile(grxblasHandle_t bh, grxdnnHandle_t dh, const Shape& sh,
                                  &zero, pr.o->f(), Dh, (long long)S * Dh, H);
       const StageCost c = probe.take("qkv");
       total += c.span; valid = valid && c.valid; warps = c.warps;
+      pre += c.preamble; launches += c.launches;
       if (c.maxLive > qkv_live) qkv_live = c.maxLive;
 
       // THESE SIX LAUNCHES WERE THROWN AWAY, and the comment that threw them
@@ -322,6 +332,7 @@ bool profile(grxblasHandle_t bh, grxdnnHandle_t dh, const Shape& sh,
                              pr.o->f() + (size_t)hh * S * Dh, Dh);
         const StageCost bc = probe.take("qkv bias");
         bias_total += bc.span;
+        bias_pre += bc.preamble; bias_launches += bc.launches;
         bias_valid = bias_valid && bc.valid;
         bias_warps = bc.warps;
         if (bc.maxLive > bias_live) bias_live = bc.maxLive;
@@ -329,6 +340,7 @@ bool profile(grxblasHandle_t bh, grxdnnHandle_t dh, const Shape& sh,
     }
     StageCost c; c.name = "qkv proj (3 GEMMs)"; c.span = total;
     c.valid = valid; c.warps = warps; c.maxLive = qkv_live;
+    c.preamble = pre; c.launches = launches;
     out->push_back(c);
 
     // Its own stage rather than folded into the GEMM it follows: it is a
@@ -336,6 +348,7 @@ bool profile(grxblasHandle_t bh, grxdnnHandle_t dh, const Shape& sh,
     // bias-into-GEMM-epilogue fusion candidate. A fusion cannot be priced
     // against a cost nobody records.
     StageCost b; b.name = "qkv bias (3 x H)"; b.span = bias_total;
+    b.preamble = bias_pre; b.launches = bias_launches;
     b.valid = bias_valid; b.warps = bias_warps; b.maxLive = bias_live;
     out->push_back(b);
   }
@@ -384,6 +397,7 @@ bool profile(grxblasHandle_t bh, grxdnnHandle_t dh, const Shape& sh,
       c.warps = one_head.warps;
       if (one_head.maxLive > c.maxLive) c.maxLive = one_head.maxLive;
       c.overOccupancy |= one_head.overOccupancy;
+      c.preamble += one_head.preamble; c.launches += one_head.launches;
       if (!one_head.valid) c.valid = false;
     }
     out->push_back(c);
@@ -455,9 +469,11 @@ double report(const Shape& sh, const std::vector<StageCost>& stages,
                   c.name.c_str(), (unsigned long long)c.span, share, c.warps,
                   c.maxLive, c.cores, (unsigned long long)c.coreSkew);
     else
-      std::printf("  %-26s %10llu cycles  %5.1f%%  (%d warps, %d live)\n",
+      std::printf("  %-26s %10llu cycles  %5.1f%%  (%d warps, %d live, "
+                  "%d launch%s, preamble %llu)\n",
                   c.name.c_str(), (unsigned long long)c.span, share, c.warps,
-                  c.maxLive);
+                  c.maxLive, c.launches, c.launches == 1 ? "" : "es",
+                  (unsigned long long)c.preamble);
     if (c.name.rfind("attention", 0) == 0) attn += share;
   }
   std::printf("  %-26s %10llu cycles\n", "TOTAL (measured stages)",
@@ -465,6 +481,33 @@ double report(const Shape& sh, const std::vector<StageCost>& stages,
   if (any_invalid)
     std::printf("  note: some stages produced no valid span and are excluded "
                 "from the total.\n");
+
+  // WHAT THE TOTAL ABOVE LEAVES OUT, and it is not small.
+  //
+  // A span runs from the FIRST WARP STARTING to the last warp finishing. The
+  // cycles between the launch and that first warp are outside every span in the
+  // table -- and MCYCLE is zeroed at the launch, so the first warp's own
+  // reading IS that interval, measured on the device.
+  //
+  // Summing spans and calling the result "the block" therefore drops one
+  // preamble per launch. This prints it rather than leaving the reader to
+  // assume the table is the whole story.
+  uint64_t preamble = 0;
+  int launches = 0;
+  for (const StageCost& c : stages) {
+    if (!c.valid) continue;
+    preamble += c.preamble;
+    launches += c.launches;
+  }
+  if (launches > 0) {
+    const uint64_t wall = total + preamble;
+    std::printf("  %-26s %10llu cycles  over %d launches (%llu each)\n",
+                "launch preamble", (unsigned long long)preamble, launches,
+                (unsigned long long)(preamble / (uint64_t)launches));
+    std::printf("  %-26s %10llu cycles  -- preamble is %.1f%% of it\n",
+                "BLOCK, preamble included", (unsigned long long)wall,
+                100.0 * (double)preamble / (double)wall);
+  }
   *attention_share = attn;
   return (double)total;
 }

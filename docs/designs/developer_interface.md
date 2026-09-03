@@ -76,6 +76,28 @@ credible for the other fourteen.
 At 2776 cycles each, 23 launches is **63848 cycles of fixed cost against a
 302961-cycle block at S=16 — 21% spent before any element is touched.**
 
+**That was the visible half, and the real figure is 51%.** The 2776 is the fixed
+cost inside a stage's measured *span*, and a span begins at the first warp's
+probe — so everything between the launch and that first warp sits outside every
+number above. MCYCLE is zeroed at the launch, so the first warp's own reading is
+exactly that interval, and it had simply never been read. Measured across all 23
+launches at S=16: **216621 cycles of preamble**, 9418 each, against 328987 of
+spans. Adding the two kinds of fixed cost together:
+
+| | cycles | share of the block |
+|---|---|---|
+| fixed cost inside spans (23 × 2776) | 63848 | 11.7% |
+| launch preamble, outside every span | 216621 | 39.7% |
+| **per-launch fixed cost, total** | **280469** | **51.4%** |
+| work | 265139 | 48.6% |
+| block | 545608 | |
+
+**Just over half of a transformer block is per-launch fixed cost.** The
+conclusion below was right and understated by a factor of two, and it gets
+worse with parallelism rather than better: measured at 1, 2 and 4 SMs the
+preamble per launch *grows* — 9418, 10899, 11383 — so a 1.97× speedup on the
+work becomes **1.27× end to end** (see `grxcp_roadmap.md`, phase 8).
+
 An eager operator-by-operator backend does not issue 23 launches per block. It
 issues far more, far smaller ones — that is what the decomposed graph in section
 2 looks like before fusion. **So eager dispatch is not a slower option for this
