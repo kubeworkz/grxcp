@@ -1,0 +1,670 @@
+<title>GRXCP Developer Interface</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Serif:ital,wght@0,400;0,500;1,400&display=swap">
+
+<style>
+  :root {
+    --paper:      #F6F7F8;
+    --raised:     #FFFFFF;
+    --ink:        #14181D;
+    --muted:      #5A6673;
+    --faint:      #8C97A3;
+    --rule:       #DADEE3;
+    --accent:     #0B6B62;
+    --accent-bg:  #E4F0EE;
+    --signal:     #A8600B;
+    --signal-bg:  #FBF0DF;
+    --signal-rule:#E0B978;
+
+    --sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+    --serif:"IBM Plex Serif", Georgia, "Times New Roman", serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+
+    --measure: 66ch;
+    --rail: 8.5rem;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:      #10141A;
+      --raised:     #161C24;
+      --ink:        #E4E9EF;
+      --muted:      #97A3B1;
+      --faint:      #6B7885;
+      --rule:       #253039;
+      --accent:     #4FBFAF;
+      --accent-bg:  #122C2A;
+      --signal:     #E0A257;
+      --signal-bg:  #2A2013;
+      --signal-rule:#6B4E23;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper:      #10141A;
+    --raised:     #161C24;
+    --ink:        #E4E9EF;
+    --muted:      #97A3B1;
+    --faint:      #6B7885;
+    --rule:       #253039;
+    --accent:     #4FBFAF;
+    --accent-bg:  #122C2A;
+    --signal:     #E0A257;
+    --signal-bg:  #2A2013;
+    --signal-rule:#6B4E23;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--serif);
+    font-size: 16.5px;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .sheet {
+    max-width: 62rem;
+    margin: 0 auto;
+    padding: 3.25rem 1.75rem 6rem;
+  }
+
+  /* ---- masthead ------------------------------------------------------- */
+  .masthead { border-bottom: 2px solid var(--ink); padding-bottom: 1.1rem; }
+  .stamp {
+    font-family: var(--mono);
+    font-size: .7rem;
+    letter-spacing: .13em;
+    text-transform: uppercase;
+    color: var(--accent);
+    display: flex;
+    flex-wrap: wrap;
+    gap: .4rem 1.4rem;
+    margin-bottom: 1.1rem;
+  }
+  .stamp b { color: var(--muted); font-weight: 500; }
+  h1 {
+    font-family: var(--sans);
+    font-weight: 600;
+    font-size: clamp(2rem, 5.2vw, 2.9rem);
+    line-height: 1.08;
+    letter-spacing: -.021em;
+    margin: 0 0 .55rem;
+    text-wrap: balance;
+  }
+  .standfirst {
+    font-size: 1.09rem;
+    color: var(--muted);
+    max-width: var(--measure);
+    margin: 0;
+  }
+  .status {
+    margin-top: 1.5rem;
+    border-left: 3px solid var(--accent);
+    background: var(--accent-bg);
+    padding: .85rem 1.1rem;
+    max-width: var(--measure);
+    font-size: .95rem;
+  }
+  .status strong { font-family: var(--sans); font-weight: 600; }
+
+  /* ---- the parameter rail --------------------------------------------- */
+  section { margin-top: 3.1rem; }
+
+  .row { display: grid; grid-template-columns: var(--rail) minmax(0, 1fr); gap: 0 2.1rem; }
+  @media (max-width: 44rem) { .row { grid-template-columns: 1fr; gap: 0; } }
+
+  .rail { padding-top: .3rem; }
+  @media (max-width: 44rem) {
+    .rail { display: flex; flex-wrap: wrap; gap: .45rem .9rem; margin-bottom: .9rem; }
+  }
+  .param { margin-bottom: 1rem; }
+  .param .val {
+    font-family: var(--mono);
+    font-size: 1.02rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    color: var(--ink);
+    display: block;
+    line-height: 1.25;
+  }
+  .param .key {
+    font-family: var(--mono);
+    font-size: .64rem;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    display: block;
+    margin-top: .12rem;
+  }
+  .k-meas { color: var(--accent); }
+  .k-est  { color: var(--faint); }
+  .k-risk { color: var(--signal); }
+
+  .body { max-width: var(--measure); min-width: 0; }
+
+  h2 {
+    font-family: var(--sans);
+    font-weight: 600;
+    font-size: 1.3rem;
+    letter-spacing: -.012em;
+    line-height: 1.25;
+    margin: 0 0 .85rem;
+    text-wrap: balance;
+    display: flex;
+    gap: .7rem;
+    align-items: baseline;
+  }
+  h2 .num {
+    font-family: var(--mono);
+    font-size: .78rem;
+    font-weight: 500;
+    color: var(--accent);
+    flex: none;
+    padding-top: .1rem;
+  }
+  h3 {
+    font-family: var(--sans);
+    font-weight: 600;
+    font-size: .98rem;
+    margin: 1.7rem 0 .5rem;
+    letter-spacing: -.004em;
+  }
+  p { margin: 0 0 .95rem; }
+  .body > p:last-child { margin-bottom: 0; }
+  strong { font-weight: 600; }
+  em { font-style: italic; }
+  code {
+    font-family: var(--mono);
+    font-size: .87em;
+    background: var(--raised);
+    border: 1px solid var(--rule);
+    border-radius: 2px;
+    padding: .04em .3em;
+  }
+
+  ul { margin: 0 0 .95rem; padding-left: 1.15rem; }
+  li { margin-bottom: .5rem; }
+  li::marker { color: var(--faint); }
+
+  /* ---- tables ---------------------------------------------------------- */
+  .tw { overflow-x: auto; margin: 0 0 1.15rem; }
+  table { border-collapse: collapse; width: 100%; font-size: .89rem; }
+  th, td { text-align: left; padding: .46rem .8rem .46rem 0; border-bottom: 1px solid var(--rule); }
+  th {
+    font-family: var(--mono);
+    font-size: .64rem;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 500;
+    border-bottom: 1px solid var(--ink);
+    white-space: nowrap;
+  }
+  td { font-family: var(--sans); }
+  td.n { font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  tr:last-child td { border-bottom: none; }
+  .none { color: var(--signal); font-weight: 500; }
+
+  /* ---- the one chart --------------------------------------------------- */
+  figure { margin: 1.4rem 0 1.3rem; }
+  .bar {
+    display: flex;
+    height: 2.6rem;
+    border: 1px solid var(--rule);
+    background: var(--raised);
+    overflow: hidden;
+  }
+  .bar .fixed {
+    width: 21.1%;
+    background: var(--signal);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .bar .work { flex: 1; display: flex; align-items: center; padding-left: .7rem; }
+  .bar span {
+    font-family: var(--mono);
+    font-size: .7rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+  .bar .fixed span { color: #fff; }
+  .bar .work span { color: var(--muted); }
+  figcaption {
+    font-family: var(--mono);
+    font-size: .7rem;
+    color: var(--muted);
+    margin-top: .5rem;
+    line-height: 1.5;
+  }
+
+  /* ---- the single escalation ------------------------------------------- */
+  .escalate {
+    border: 1px solid var(--signal-rule);
+    border-left: 3px solid var(--signal);
+    background: var(--signal-bg);
+    padding: 1.15rem 1.3rem;
+    margin-bottom: 1.1rem;
+  }
+  .escalate h3 { margin-top: 0; color: var(--signal); }
+  .escalate p:last-child { margin-bottom: 0; }
+
+  .verdict {
+    font-family: var(--sans);
+    font-weight: 600;
+    font-size: 1.02rem;
+    line-height: 1.45;
+    border-top: 1px solid var(--rule);
+    border-bottom: 1px solid var(--rule);
+    padding: .9rem 0;
+    margin: 1.2rem 0;
+  }
+
+  .quiet { color: var(--muted); font-size: .93rem; }
+
+  footer {
+    margin-top: 4rem;
+    border-top: 2px solid var(--ink);
+    padding-top: 1rem;
+    font-family: var(--mono);
+    font-size: .7rem;
+    letter-spacing: .04em;
+    color: var(--faint);
+    display: flex;
+    flex-wrap: wrap;
+    gap: .4rem 1.6rem;
+  }
+</style>
+
+<div class="sheet">
+
+  <header class="masthead">
+    <div class="stamp">
+      <span>GRXCP</span>
+      <span><b>DOC</b> designs/developer_interface.md</span>
+      <span><b>REV</b> 2026-09-03</span>
+      <span><b>STATUS</b> proposal — not built</span>
+    </div>
+    <h1>The GRXCP Developer Interface</h1>
+    <p class="standfirst">Who the developer is, why the launch cost forces a graph-level backend
+      rather than an eager one, and the hardware decision with the least schedule slack.</p>
+
+    <div class="status">
+      <strong>This is the case for a decision that has not been made.</strong> Every figure below is
+      marked <span class="k-meas" style="font-family:var(--mono);font-size:.78rem">MEASURED</span> or
+      <span class="k-est" style="font-family:var(--mono);font-size:.78rem">ESTIMATED</span> in the
+      margin. The recommendation is separable from the arithmetic — if section 3 is wrong, the
+      recommendation should change.
+    </div>
+  </header>
+
+  <section>
+    <div class="row">
+      <div class="rail">
+        <div class="param"><span class="val">6</span><span class="key k-meas">tools shipped</span></div>
+        <div class="param"><span class="val">3</span><span class="key k-est">candidate audiences</span></div>
+      </div>
+      <div class="body">
+        <h2><span class="num">01</span><span>The toolkit mostly exists, which is not the interesting part</span></h2>
+        <div class="tw">
+          <table>
+            <thead><tr><th>GRXCP</th><th>CUDA equivalent</th></tr></thead>
+            <tbody>
+              <tr><td><code>grxcc</code></td><td>nvcc</td></tr>
+              <tr><td><code>grx-smi</code></td><td>nvidia-smi</td></tr>
+              <tr><td><code>grx-prof</code></td><td>Nsight Compute / Systems</td></tr>
+              <tr><td><code>grx-sanitize</code></td><td>Compute Sanitizer</td></tr>
+              <tr><td><code>grxblas</code> / <code>grxdnn</code></td><td>cuBLAS / cuDNN</td></tr>
+              <tr><td><code>grxify</code></td><td>hipify</td></tr>
+              <tr><td><code>grx-conform</code></td><td class="none">none — NVIDIA is the specification</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>The question is not which components to build. It is who the developer is, and the three
+          candidates want almost disjoint things: someone <strong>porting existing CUDA</strong>,
+          someone <strong>writing new kernels</strong>, and someone who <strong>never writes a
+          kernel</strong> and just wants their model to land on our silicon.</p>
+        <p class="verdict">This document proposes the third, keeps the second in reserve on the
+          reasoning in section 8, and does not pursue the first.</p>
+        <p>The porting audience is a bet that developers have CUDA they want to move. That bet ages
+          badly, and it anchors us to a 2007 execution model that is specifically bad for this
+          machine — which is section 3.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="row">
+      <div class="rail">
+        <div class="param"><span class="val">~10s</span><span class="key k-est">primitives needed</span></div>
+        <div class="param"><span class="val">6</span><span class="key k-meas">already built</span></div>
+      </div>
+      <div class="body">
+        <h2><span class="num">02</span><span>What that audience requires, and the trap in it</span></h2>
+        <p>Implementing PyTorch's operator set directly is not the shape of this work. There are
+          thousands of ATen operators and nobody implements them. The route is to ingest
+          <em>below</em> the framework, where the set is already decomposed — a
+          <code>torch.compile</code> backend receives a graph reduced to a few hundred core ops and
+          mostly pointwise, reduction and matmul; StableHLO or ONNX give a closed set. Either way the
+          primitive count is tens.</p>
+        <p><strong>We have most of those primitives already.</strong> grxBLAS gives GEMM in fp32,
+          fp16 via the tensor unit, and int8 via the NPU. grxDNN gives softmax, layer norm, gelu,
+          add-bias and fused attention. That is not a coincidence — it is the transformer's
+          primitive set, arrived at by building a transformer block.</p>
+        <p><strong>What is missing is not compute. It is ingestion.</strong></p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="row">
+      <div class="rail">
+        <div class="param"><span class="val">2776</span><span class="key k-meas">cycles / launch</span></div>
+        <div class="param"><span class="val">23</span><span class="key k-meas">launches / block</span></div>
+        <div class="param"><span class="val">21.1%</span><span class="key k-est">block spent on setup</span></div>
+      </div>
+      <div class="body">
+        <h2><span class="num">03</span><span>Graph-first is forced by the machine, not preferred on taste</span></h2>
+        <p><strong>A launch costs 2776 cycles before it touches an element.</strong> Measured by
+          sweeping <code>grxdnnAddBiasForward</code> over column counts at the block's own row count,
+          least squares over nine points: <code>cycles = 2776 + 4.33 × elements</code>. An
+          independent two-point fit from the block's own bias stages gave <code>2716 + 4.25</code>
+          and predicted a held-out third shape to 1.5%. The two agree.</p>
+        <p>One transformer block is <strong>23 launches</strong> at <code>H=2</code> — layer norms,
+          three qkv projections, six qkv biases, four inside attention, two out projections, the
+          mlp pair, and the elementwise stages between them. Nine of those are GEMMs, and that half
+          is measured: <code>GRXBLAS_SGEMM_TRACE</code> on a block run reports exactly nine, which
+          is what makes the structural count credible for the other fourteen.</p>
+
+        <figure>
+          <div class="bar">
+            <div class="fixed"><span>63,848</span></div>
+            <div class="work"><span>239,113 cycles doing work</span></div>
+          </div>
+          <figcaption>
+            One transformer block at S=16 — 302,961 cycles total.<br>
+            Amber: 23 launches × 2776 cycles fixed cost = 63,848 (21.1%), spent before any element is touched.
+          </figcaption>
+        </figure>
+
+        <p>An eager operator-by-operator backend does not issue 23 launches per block. It issues far
+          more, far smaller ones — that is what the decomposed graph in section 2 looks like before
+          fusion. <strong>So eager dispatch is not a slower option for this machine, it is a
+          non-starter</strong>, and the conclusion survives any plausible error in the launch count:
+          at 2776 cycles fixed, any design whose unit of work is one operator loses.</p>
+        <p>Two consequences. The ingestion layer must take a <strong>graph</strong> and fuse it, not
+          a stream of ops. And the fusion work already in the gap register stops being an
+          optimisation — the qkv bias fusion blocked by gap 7.27 is worth 5.9% of a block as a point
+          improvement, but as the mechanism this strategy rests on it is worth considerably more,
+          which is a reason to weight the VOLT compiler report accordingly.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="row">
+      <div class="rail">
+        <div class="param"><span class="val">2</span><span class="key k-est">candidate routes</span></div>
+        <div class="param"><span class="val">1 day</span><span class="key k-est">to settle it</span></div>
+      </div>
+      <div class="body">
+        <h2><span class="num">04</span><span>Which ingestion point</span></h2>
+        <p><strong><code>torch.compile</code> / Inductor.</strong> Meets developers where they are,
+          needs no conversion step, inherits PyTorch's decompositions. Costs a dependency on a
+          fast-moving internal interface, and graphs arrive with dynamic shapes.</p>
+        <p><strong>StableHLO or ONNX ingest.</strong> A closed, versioned op set and a stable
+          contract, which suits a platform that wants to publish coverage honestly. Costs the
+          developer a conversion step and loses eager-mode debugging.</p>
+        <p>What settles it is not argument but a survey: take three or four models the company
+          actually intends to run and count how many primitives each route needs that we do not
+          have. That is a day of work, and it replaces a design meeting.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="row">
+      <div class="rail">
+        <div class="param"><span class="val">yes</span><span class="key k-meas">bf16 in RTL, ungated</span></div>
+        <div class="param"><span class="val">0</span><span class="key k-risk">config knobs needed</span></div>
+      </div>
+      <div class="body">
+        <h2><span class="num">05</span><span>bf16 is plumbing, not silicon — corrected</span></h2>
+        <div class="escalate">
+          <h3>This section originally said the opposite, and the correction is good news</h3>
+          <p>It claimed the GPU tensor unit had no bf16 and that the strategy would have to route
+            bf16 through the NPU before tape-out. That was wrong. It is left visible rather than
+            rewritten away, because the mistake is instructive: <code>grxblas.h</code> stated bf16 was
+            “not a type this tensor unit has, in any configuration” — a sentence sourced from the
+            configuration schema, which lists what can be <em>asked for</em> and is silent about what
+            is <em>built</em>. It was read as a statement about the hardware. That comment has since
+            been corrected in the header itself.</p>
+        </div>
+        <p>Prompted by the grxgpu team, the datapath was checked directly:</p>
+        <div class="tw">
+          <table>
+            <thead><tr><th>layer</th><th>bf16?</th><th>evidence</th></tr></thead>
+            <tbody>
+              <tr><td>SimX functional model</td><td class="n">yes</td><td><code>FEDP&lt;bf16,fp32&gt;</code>, <code>FEDP&lt;bf16,bf16&gt;</code></td></tr>
+              <tr><td>RTL tensor unit (TFR)</td><td class="n">yes, ungated</td><td><code>TCU_BF16_ID</code> case arm, behind no <code>ifdef</code></td></tr>
+              <tr><td>RTL tensor unit (fpnew)</td><td class="n">yes</td><td><code>mult_result_bf16</code></td></tr>
+              <tr><td>c930 NPU</td><td class="n">yes</td><td><code>i_precision</code> mode 3</td></tr>
+              <tr><td>configuration schema</td><td class="n">no knob — none needed</td><td>the bf16 arms sit inside <code>VX_tcu_tfr_mul_f16.sv</code>, instantiated under <code>VX_CFG_TCU_FP16_ENABLE</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="escalate">
+          <h3>The correction needed a correction, which is the more useful half</h3>
+          <p>The repair above went on to say bf16 “needs a config knob, a bit in the reported type
+            set, and a path through <code>grxblasGemmEx</code>”. The knob was a residue of the
+            original error: having concluded <em>no switch, therefore no hardware</em>, the fix kept
+            the switch and moved it into the to-do list. There is nothing to switch. bf16 is present
+            in every build where fp16 is, and grxgpu has since run a bf16 SGEMM end to end
+            (<code>05a3d84c0</code>, K=64 and K=512) with no bf16 flag of any kind.</p>
+        </div>
+        <p>The multiplier is synthesized into every build we make and <strong>nothing on our side
+          asks for it</strong>. The device reports <code>fp16</code> and nothing else — not because
+          it lacks bf16, but because <code>hgemm_tcu.cpp</code> never sets a bit our enum does not
+          have.</p>
+        <p class="verdict">bf16 needs a bit in the reported type set and a path through
+          grxblasGemmEx — two pieces of our own software, neither on the tape-out critical path.</p>
+        <p>Two things survive the correction. The NPU's bf16 is still bounded at
+          <code>MAX_M=8, MAX_N=12, MAX_K=16</code> with a command queue that cannot pipeline two
+          commands, so it is not an escape hatch if the GPU path stalls. And the general lesson
+          outlasts the specific fact: <strong>a capability can be absent from the product while
+          present in the silicon, and those are not the same finding.</strong> The honest instrument
+          would have been to ask the device — which this project does elsewhere, and did not do
+          here.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="row">
+      <div class="rail">
+        <div class="param"><span class="val">57/83</span><span class="key k-meas">API coverage, 69%</span></div>
+        <div class="param"><span class="val">0</span><span class="key k-meas">kernels it executes</span></div>
+      </div>
+      <div class="body">
+        <h2><span class="num">06</span><span>The metric is replaced, not dropped</span></h2>
+        <p><code>grx-conform</code> publishes coverage of the CUDA runtime surface — 57 of 83 tracked
+          entry points, 69%. That is the right honesty instrument for the porting audience, and if we
+          are not pursuing it, the number measures something nobody is buying.</p>
+        <p>The report says so itself: <em>“This is an API coverage number. It is not a conformance
+          pass rate: nothing in this report executes a kernel.”</em> That caveat is the argument for
+          replacing it rather than a defect in it.</p>
+        <p>Its successor is a <strong>numerics contract</strong>: this model produces the same answers
+          as the reference, within a stated tolerance, and here is the fraction of models for which
+          that holds. We already do this per kernel — grxDNN is gated against PyTorch-generated
+          vectors, and gelu carries a measured 5.36e-07 rather than a quoted one. Scaling it to whole
+          models keeps the posture and changes the subject to one the buyer cares about. It is also a
+          better gate: coverage counts entry points that exist; a numerics contract fails when an
+          answer is wrong.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="row">
+      <div class="rail">
+        <div class="param"><span class="val">3</span><span class="key k-est">things declined</span></div>
+      </div>
+      <div class="body">
+        <h2><span class="num">07</span><span>What this proposal does not build</span></h2>
+        <ul>
+          <li><strong>Training and autograd.</strong> Doubles the operator surface. The original
+            second reason — “and needs the bf16 we do not have” — was withdrawn in section 5; bf16 is
+            there. Inference first on operator-surface grounds alone.</li>
+          <li><strong>An eager dispatch backend.</strong> Section 3.</li>
+          <li><strong>A CUDA porting story.</strong> <code>grxify</code> and the compat header stay
+            because they cost nothing to keep; they stop being a roadmap item.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="row">
+      <div class="rail">
+        <div class="param"><span class="val">22 → 0</span><span class="key k-meas">split/join lost</span></div>
+      </div>
+      <div class="body">
+        <h2><span class="num">08</span><span>Why AI-authored kernels invert what the second audience needs</span></h2>
+        <p>The kernel-writing audience is small, and there is a plausible argument that assistants
+          make it larger. If they do, what changes is not the volume of kernels but the ratio:
+          <strong>more kernels, less scrutiny per kernel.</strong> That inverts what the toolkit owes
+          them. Authoring ergonomics matter less when authoring is cheap; what matters is whether
+          anyone can tell a kernel is wrong.</p>
+        <p>This is not speculative. On 2026-09-02 a correct-looking fused epilogue was added to
+          <code>micro_tile_body</code> and the compiler emitted <strong>zero</strong>
+          <code>vx_split</code>/<code>vx_join</code> for one instantiation — the kernel was exactly
+          right on uniform shapes and silently wrong the moment a branch diverged. No diagnostic, at
+          any warning level. Reading the source would not have found it; counting instructions in the
+          emitted binary did.</p>
+        <p>So the deliverables are oracles and structural checks by default, not a nicer
+          <code>grxcc</code>: <strong>differential testing as the default</strong>, the way the
+          grxBLAS oracle compares every tiling against the reference kernel over identical operands;
+          <strong>structural verification of emitted code</strong>, so every kernel is checked to have
+          reconvergence, no inner loop has stack traffic, and entry points resolve; and the standing
+          rule that <strong>silence is a bug</strong> — a fallback that cannot fail is a fallback that
+          cannot report.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="row">
+      <div class="rail">
+        <div class="param"><span class="val">2010</span><span class="key k-meas">deviceemu removed</span></div>
+        <div class="param"><span class="val">4</span><span class="key k-meas">measured disagreements</span></div>
+      </div>
+      <div class="body">
+        <h2><span class="num">09</span><span>If the product is an SDK on a simulator</span></h2>
+
+        <h3>The precedent that says don't</h3>
+        <p>NVIDIA shipped a GPU simulator and killed it. <code>nvcc -deviceemu</code> was deprecated
+          at CUDA 3.0 and gone shortly after, around 2010, replaced by debugging on real hardware.
+          Developers petitioned against the removal and lost.</p>
+        <p>The reason it deserved to die is the one that matters here. Device emulation ran kernels
+          as host threads — it could not model warps, divergence, coalescing or occupancy. So it told
+          you your program was <strong>correct</strong> and misled you about everything else. A model
+          that validates function while lying about cost is worse than no model, because people quote
+          its numbers. NVIDIA could also afford to kill it: they always have silicon, and every CUDA
+          developer owns a GPU.</p>
+
+        <h3>The precedent that says do</h3>
+        <p>Neither of those is our situation, and the industry that shares our situation ships
+          simulators as product. Arm sells Fixed Virtual Platforms as supported, versioned models
+          precisely so software can be written before parts exist; Siemens PAVE360 builds pre-silicon
+          environments around Arm cores. Automotive drives it because a vehicle program cannot wait
+          for tape-out — the same arithmetic as a software schedule that has to overlap a hardware
+          one.</p>
+        <p class="verdict">We are in Arm's position, not NVIDIA's. What separates the two precedents
+          is not fidelity but disclosure: whether the model tells you what it is.</p>
+        <p>That part we already do, and not by accident. Every bench prints the backend that produced
+          its cycles. <code>grx-smi</code> reports a <em>narrower</em> capability set on a TCU-less
+          <code>rtlsim</code> build rather than the one the header advertises. The perf baselines are
+          per-backend files, and the device seam refuses to let a model claim to be silicon.</p>
+
+        <h3>The fidelity contract</h3>
+        <p>What we do not yet publish is where the two simulators disagree — and they do, materially:</p>
+        <div class="tw">
+          <table>
+            <thead><tr><th>behaviour</th><th>simx</th><th>rtlsim</th><th>gap</th></tr></thead>
+            <tbody>
+              <tr><td>tensor unit, second CTA</td><td class="none">deadlocks</td><td class="n">completes</td><td class="n">7.12</td></tr>
+              <tr><td>kernel args at NUM_CORES &gt; 1</td><td class="n">8 of 8 delivered</td><td>4 of 8 → <strong>8 of 8, closed</strong></td><td class="n">7.37</td></tr>
+              <tr><td>misaligned 4-byte access</td><td class="none">silent, no diagnostic</td><td class="n">assertion, stops</td><td class="n">7.27</td></tr>
+              <tr><td>capability set, TCU-less build</td><td class="n">n/a</td><td class="n">reports the narrower set</td><td class="n">7.36</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>A developer who only ever runs <code>simx</code> ships kernels that break on RTL. One who
+          only runs <code>rtlsim</code> chases defects that are not in the design. Three rules follow:</p>
+        <ul>
+          <li><strong>Agreement is evidence; a <code>simx</code>-only pass is not a pass.</strong>
+            Everything in that table was found by running both.</li>
+          <li><strong>Disagreement resolves toward <code>rtlsim</code></strong>, because it executes
+            the design rather than a model of it — but an <code>rtlsim</code> defect is not thereby a
+            silicon defect. This line previously said 7.37's mechanism was open and “may live in the
+            shim”. It did: <code>Processor::run()</code> sampled <code>busy</code> before the
+            one-cycle dip that follows the start pulse, ended the frame after a single tick, and the
+            host then read the previous frame's buffer. Thirteen lines, and <code>test_grxblas</code>
+            passes on four cores.</li>
+          <li><strong>Neither is authoritative for time.</strong> Every cycle count names its backend,
+            and no cycle count in this project is a hardware claim.</li>
+        </ul>
+        <p>The practical shape that falls out: <strong>develop on <code>simx</code>, gate on
+          <code>rtlsim</code></strong>. One is fast enough to iterate against; the other is strict
+          enough to be worth the wait — it is the backend that complains loudest, and gap 7.27 was
+          found because it complained.</p>
+
+        <h3>What the FVP precedent says we would still owe</h3>
+        <p>Arm's model is a supported binary you install. Ours is <em>clone three repositories and
+          build a custom LLVM at a pin nothing enforces</em> — the pin in grxgpu's toolchain doc names
+          one commit and the toolchain in use is a different one, because the clone tracks a branch.
+          If the product is a developer preview on a simulator, the on-ramp stops being cosmetic and
+          becomes the product: one installable, a pinned toolchain, and a fidelity statement shipped
+          beside the model.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="row">
+      <div class="rail">
+        <div class="param"><span class="val">2.51×</span><span class="key k-meas">phase 3, vs 5× gate</span></div>
+        <div class="param"><span class="val">4</span><span class="key k-est">open questions</span></div>
+      </div>
+      <div class="body">
+        <h2><span class="num">10</span><span>Open questions</span></h2>
+        <ul>
+          <li>Which ingestion point, settled by the model survey rather than by discussion.</li>
+          <li><s>Whether bf16 can reach the GPU tensor unit.</s> <strong>Answered: it can</strong>,
+            with no knob and no NPU (section 5). What remains is ours — an enum bit, a reporting line,
+            and a path through <code>grxblasGemmEx</code>.</li>
+          <li>What “a model runs” means as a gate. Suggested: end to end against a PyTorch reference
+            at a stated tolerance, on a named backend, with the backend printed beside every number —
+            the discipline the cycle benches already use.</li>
+          <li>Whether any of this precedes hardware. Phase 7 is unmet, multi-core is broken, and phase
+            3's tensor gate reads 2.51× against a 5× threshold. A developer preview on a simulator and
+            an SDK for a part you can buy are different products with different bars, and this
+            document does not say which one is being built — section 9 sets out what the first one
+            would owe. (“Multi-core is broken” was true when this was written; it is fixed, see
+            section 9.)</li>
+          <li>Whether the fidelity contract in section 9 should be published rather than kept
+            internal. The argument for publishing is the one that governs the conformance number: the
+            disagreements exist whether or not we name them, and a developer who finds them unaided
+            concludes something worse than what the table says.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <span>GRXCP — docs/designs/developer_interface.md</span>
+    <span>SIMX cycles, one SM, 4-lane warp</span>
+    <span>Proposal — nothing here is built</span>
+  </footer>
+
+</div>

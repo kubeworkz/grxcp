@@ -168,9 +168,19 @@ grxblasStatus_t grxblasGetGemmEngine(grxblasHandle_t handle,
 // hardware can differ. The value comes from the loaded kernel module, which is
 // the only thing that knows -- see src/libs/grxblas/hgemm_abi.h.
 //
-// bf16 is not in this enum. It is not a type this tensor unit has, in any
-// configuration, so a bit for it would be a bit that is always zero and reads
-// like a build option somebody forgot to turn on. See
+// bf16 is not in this enum yet, and the reason this comment used to give was
+// wrong. It said bf16 "is not a type this tensor unit has, in any
+// configuration". Measured since: the tensor unit has it. `TCU_BF16_ID` is a
+// case arm in `hw/rtl/tcu/tfr/VX_tcu_tfr_mul_f16.sv` — the same 16-bit
+// multiplier `VX_CFG_TCU_FP16_ENABLE` instantiates — and SimX dispatches
+// `FEDP<bf16,fp32>` and `FEDP<bf16,bf16>` from the same format field. There is
+// no `VX_CFG_TCU_BF16_ENABLE` knob because none is needed: bf16 is present in
+// every build where fp16 is, including this one.
+//
+// So the bit is missing from the enum, `hgemm_tcu.cpp` does not report it, and
+// `grxblasGemmEx` has no path for it — all three on our side of the line, none
+// of it hardware. Until those exist this library cannot do bf16, which is why
+// there is no bit to return; but the absence is ours, not the silicon's. See
 // docs/designs/cuda_mapping.md section 7.19.
 typedef enum {
   GRXBLAS_TENSOR_FP16 = 0x01,

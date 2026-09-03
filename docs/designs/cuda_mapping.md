@@ -772,18 +772,47 @@ argument is required rather than defaulted.
 The fix is a one-register addition on the device side: expose the per-CTA LMEM
 stride the way `VX_CSR_CTA_LMEM_ADDR` exposes the base.
 
-### 7.19 The tensor unit has no bf16, and its type set is a build option — **HW / CONFIG**
+### 7.19 The tensor unit's type set is a build option — and this entry was wrong about bf16 — **CONFIG / SW**
 
-The roadmap's phase 3 line says "GEMM (fp32/fp16/bf16/int8)". Two thirds of that
-turned out to be wrong about this hardware, and the difference between the two
-wrong parts matters.
+The roadmap's phase 3 line says "GEMM (fp32/fp16/bf16/int8)". This entry used to
+say two thirds of that was wrong about the hardware. One third of *that* was
+wrong, and the error is worth keeping visible because of how it was made.
 
-**bf16 does not exist.** There is no `VX_CFG_TCU_BF16` knob to enable, in any
-configuration — the tensor unit's type list is fp16, tf32, fp8, fp4, int8, int4
-and the MX formats. bf16 is not switched off, it is absent. So `grxblas` has no
-bf16 entry point and `grxblasTensorType_t` has no bit for one: a bit that is
-always zero reads like a build option somebody forgot to turn on, which is the
-opposite of the truth.
+**bf16 exists. This entry said it did not.** The original claim was:
+
+> **bf16 does not exist.** There is no `VX_CFG_TCU_BF16` knob to enable, in any
+> configuration — the tensor unit's type list is fp16, tf32, fp8, fp4, int8,
+> int4 and the MX formats. bf16 is not switched off, it is absent.
+
+The evidence for that was the absence of a knob in `VX_config.toml`, and the
+inference from "no switch" to "no thing" is the entire mistake. Measured since,
+in both models:
+
+| layer | bf16 | evidence |
+|---|---|---|
+| SimX | yes | `FEDP<vt::bf16, vt::fp32>` and `FEDP<vt::bf16, vt::bf16>`, reached from the format dispatch in `sim/simx/tcu/tcu_unit.cpp` on `vt::bf16::id`, behind no `ifdef` |
+| RTL, TFR | yes | `TCU_BF16_ID` case arms in `VX_tcu_tfr_mul_f16.sv`, `VX_tcu_tfr_lane_mask.sv`, `VX_tcu_tfr_mul_join.sv` |
+| RTL, fpnew | yes | `mult_result_bf16` in `VX_tcu_fedp_fpnew.sv` |
+| c930 NPU | yes | `i_precision` mode 3 |
+
+There is no `VX_CFG_TCU_BF16_ENABLE` **because none is needed**. The bf16 case
+arms live inside `VX_tcu_tfr_mul_f16.sv`, which is the module
+`VX_tcu_tfr_shared_mul.sv` instantiates under `` `ifdef VX_CFG_TCU_FP16_ENABLE ``.
+bf16 is therefore present in every build where fp16 is — including every build
+this project makes, which pass `-DVX_CFG_TCU_FP16_ENABLE`. grxgpu has since run
+a bf16 SGEMM end to end (`05a3d84c0`, K=64 and K=512) with no knob and no NPU.
+
+What is actually missing is three pieces of our own software: a bit in
+`grxblasTensorType_t`, a line in `hgemm_tcu.cpp` reporting it, and a path
+through `grxblasGemmEx`. None of it is hardware and none of it is on anyone's
+critical path.
+
+**The method failure, since it is the reusable part.** The instrument used was
+the configuration schema, and a schema lists what can be *asked for*, not what
+is *built*. The project already owns the right instrument for this exact
+question — `hgemm_tcu_shape` asks the device — and it was not used. A capability
+can be absent from the product while present in the silicon; those are two
+different findings and this entry collapsed them.
 
 **int8 exists but is a build-time choice.** `VX_CFG_TCU_INT8_ENABLE` is off in
 the sysroot this project builds against, along with tf32, fp8, fp4, int4,
@@ -798,8 +827,11 @@ rather than only "not supported", because a caller told "no" without being told
 what "yes" would look like tends to conclude the whole tensor path is missing.
 
 The consequence for the roadmap: int8 GEMM is implementable but needs a sysroot
-built with the flag, and it cannot be gated until one exists. bf16 GEMM is not
-implementable at all and has been struck rather than deferred.
+built with the flag, and it cannot be gated until one exists. **bf16 GEMM is
+implementable today** on the sysroot we already build, and is un-struck — open
+and unimplemented, not absent. It stays unimplemented in this entry rather than
+being claimed, because nothing here has yet watched a bf16 GEMM produce a
+correct answer through `grxblasGemmEx`; the enum bit goes in when that runs.
 
 ### 7.20 `__syncthreads()` does not survive divergence — **TOOLCHAIN, silent deadlock**
 
@@ -1789,7 +1821,51 @@ dependent, which is what this entry does.
   simulation. Every timing claim in this project already carries its backend for
   this reason.
 
-### 7.37 With more than one core, `rtlsim` delivers kernel arguments on every *other* launch — **reproduced at 2 and 4 cores, absent on `simx`, mechanism still open**
+### 7.37 With more than one core, `rtlsim` delivers kernel arguments on every *other* launch — **CLOSED: `Processor::run()` samples `busy` before the post-start transient**
+
+**Resolved.** It was never an argument path defect. `Processor::run()` in
+grxgpu's `sim/rtlsim/processor.cpp` ends the frame on the wrong edge, so on
+alternate launches the kernel executes for one cycle instead of ~2300 and
+writes nothing; the host then reads a buffer that the *previous* frame filled,
+which is what made it look like arguments arriving on every other launch.
+
+The `busy` waveform is identical on every launch, including the first:
+
+```
+t=0 busy=1 | t=1 busy=0 | t=2 busy=1 | t=2318 busy=0
+```
+
+`busy` is already high on entry — out of reset, and again at the end of every
+frame — and dips low for exactly one cycle after the start pulse before the new
+frame asserts it. Against that, `run()`'s "wait for device to go busy" loop
+never executes (busy is already high, measured `wait_i = 0`) and its drain loop
+takes its first tick onto the dip and exits (measured `busy_ticks = 1`).
+
+The fix is thirteen lines: wait out the dip before sampling, which restores the
+intent the file already documents. Measured with the loop compiled in and
+switchable, so the control is the same binary:
+
+| | `test_grxblas`, rtlsim, 4 cores | `sgemm_shape` × 8 |
+|---|---|---|
+| without | args never arrive, then `VX_lsu_slice.sv:233` misaligned abort at `addr=0x100000001` | 4/8 |
+| with | **PASSED (0 failures)** | **8/8** |
+
+Sent to grxgpu with the patch. Two things this closes out of the account below.
+**The "wait for busy" hypothesis was never tested here** — the entry looked at
+the argument path because that is where the symptom pointed, and the symptom
+was two layers downstream of the cause. And the entry's suspicion of the
+`std::async` asymmetry, recorded below as "present in the backend that works",
+was **correct**: grxgpu's `b09ca185e` closes that race and does not change this
+result. It was briefly recorded as too strong an elimination when that commit
+arrived, and that retraction was the actual error — a measurement was discarded
+because someone with more context asserted otherwise. The measurement was right.
+
+What follows is the investigation as it stood before the mechanism was found.
+It is kept because the eliminations in it are still valid and because the
+misdirection is instructive: every candidate below is downstream of a
+simulation-shim handshake that nothing in the list even names.
+
+---
 
 This entry was first written with the confound unresolved and a misaligned
 pointer as its headline. Both have moved. The confound is isolated, the

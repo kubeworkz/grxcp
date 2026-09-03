@@ -113,10 +113,11 @@ that we do not have. That is a day of work and it replaces a design meeting.
 **This section originally said the GPU tensor unit had no bf16 and that the
 strategy would have to route bf16 through the NPU before tape-out. That was
 wrong, and the correction is good news.** It is left visible rather than
-rewritten away, because the mistake is instructive: `grxblas.h` states bf16 is
-"not a type this tensor unit has, in any build, with no knob to enable", and
-that sentence is true about what is *reachable* while saying nothing about what
-is *built*. It was read as a statement about the hardware.
+rewritten away, because the mistake is instructive: `grxblas.h` stated bf16 was
+"not a type this tensor unit has, in any configuration", a sentence sourced
+from the configuration schema — which lists what can be *asked for* and says
+nothing about what is *built*. It was read as a statement about the hardware.
+That comment has since been corrected in the header itself.
 
 Prompted by the grxgpu team, the datapath was checked directly:
 
@@ -126,14 +127,24 @@ Prompted by the grxgpu team, the datapath was checked directly:
 | RTL tensor unit (TFR) | **yes, and ungated** | `TCU_BF16_ID` is a case arm in `hw/rtl/tcu/tfr/VX_tcu_tfr_mul_f16.sv` behind no `ifdef` |
 | RTL tensor unit (fpnew) | yes | `mult_result_bf16` in `VX_tcu_fedp_fpnew.sv` |
 | c930 NPU | yes | `i_precision` mode 3, `c930_bf16_mul.sv` |
-| **configuration schema** | **no** | `VX_config.toml` defines TCU enable knobs for TF32, FP16, FP8, FP4, INT8, INT4, MX, MXFP4, NVFP4, SPARSE, DSM and WGMMA. There is no `TCU_BF16_ENABLE`. |
+| configuration schema | no knob — **and none is needed** | `VX_config.toml` has no `TCU_BF16_ENABLE`, because the bf16 case arms live inside `VX_tcu_tfr_mul_f16.sv`, the module instantiated under `` `ifdef VX_CFG_TCU_FP16_ENABLE ``. bf16 is present wherever fp16 is. |
 
-So the multiplier is synthesized into every build we make and nothing can ask
-for it. The device consequently reports `fp16, int8` and nothing else, which is
-what `test_grxblas_ex` prints and what `grxblasGetTensorTypes` returns.
+**The correction needed a correction, which is the more useful half of this
+section.** The first version of this page said the tensor unit had no bf16. The
+second said bf16 "needs a config knob, a bit in the reported type set, and a
+path through `grxblasGemmEx`". The knob was a residue of the original error —
+having concluded "no switch, therefore no hardware", the repair kept the switch
+and moved it into the to-do list. Measured: there is nothing to switch. grxgpu
+ran a bf16 SGEMM end to end (`05a3d84c0`) with `-DITYPE=bf16 -DOTYPE=fp32` and
+no bf16 flag of any kind.
 
-**What bf16 actually needs is a config knob, a bit in the reported type set, and
-a path through `grxblasGemmEx`** — all software, none of it on the tape-out
+So the multiplier is synthesized into every build we make and **nothing on our
+side asks for it**. The device reports `fp16` and nothing else, which is what
+`grxblasGetTensorTypes` returns — not because the device lacks bf16 but because
+`hgemm_tcu.cpp` never sets a bit it has no enum value for.
+
+**What bf16 actually needs is a bit in the reported type set and a path through
+`grxblasGemmEx`** — two pieces of our own software, neither on the tape-out
 critical path. That moves it from the item on this page with the least schedule
 slack to an ordinary piece of enabling work, and it removes the argument that
 bf16 forces matmul through the NPU.
