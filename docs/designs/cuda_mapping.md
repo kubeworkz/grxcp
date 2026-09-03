@@ -1828,8 +1828,9 @@ grxgpu's `sim/rtlsim/processor.cpp` ends the frame on the wrong edge, so on
 alternate launches the kernel executes for one cycle instead of ~2300 and
 writes nothing — and is never made up later: with a distinct output buffer per
 launch, 4 of 8 are written at read time and **4 of 8 at the end of the run**, so
-no work is carried over. The host then reads a buffer that the *previous*
-successful frame filled and left there,
+no work is carried over. Nor is anything stale: the probe memsets before every
+launch, so a launch that does not run reads zeros. The plain statement is that
+half the launches do not execute at all,
 which is what made it look like arguments arriving on every other launch.
 
 The `busy` waveform is identical on every launch, including the first:

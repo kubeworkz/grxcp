@@ -53,15 +53,23 @@ launch, re-read at the end — is what caught it. On the unfixed build:*
 ```
 
 **Zero buffers filled late.** The work of a failing launch is not deferred, it
-is never done. What produced the "wrote" on launches 1, 3, 5, 7 in the
-one-buffer probe was the *shared buffer still holding the last successful
-launch's output* — a stale read, not a carried-over frame. The distinction
-matters: there is no silent wrong answer here, there are launches that do not
-execute, and half a shared buffer's readings are stale.
+is never done. The whole truth is that plain: launches 0, 2, 4, 6 do not
+execute, and 1, 3, 5, 7 execute and write their own output.
 
-The carry-over story was inferred from an instrument that could not see the
-difference, and it was inferred twice — once here and once in the report sent to
-grxgpu, who had it in hand before it was corrected.
+*A second wrong explanation, corrected the same day.* The first version of this
+correction said the "wrote" readings came from the shared buffer still holding
+the previous launch's output — a stale read. **That is also wrong.**
+`parity_probe.cpp` calls `grxMemset` on the buffer before every launch (line
+22), so a launch that does not run reads zeros and correctly reports silent.
+There was never any staleness to explain. The passing launches genuinely ran.
+
+What `parity_probe2.cpp` legitimately established is narrower than first
+claimed, and still worth the file: the memset rules out a **stale** read, but
+not a **late** one — work from launch N landing in the shared buffer while
+launch N+1 is running would still read as N+1 succeeding. Per-launch buffers
+rule that out, and did. The error was not in building the probe; it was in
+inventing a story about what the old probe had been showing, twice, without
+reading it.
 
 ## The measurements
 
@@ -153,6 +161,9 @@ Run against that same build it reported **zero buffers filled late** — which
 refuted the explanation we had already sent grxgpu, that results were one launch
 behind. They are not. The pre-pulse drain breaks exactly launch 0, and launch 0
 is the one `grxblas` uses to read tile geometry.
+
+Note what it did NOT show: that the one-buffer probe was misleading. It was not.
+It memsets before every launch, so its readings were honest all along.
 
 The probe was built to remove luck from a finding and its first act was to
 correct the finding. That is the argument for building it.
