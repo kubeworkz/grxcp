@@ -541,65 +541,59 @@
   <section>
     <div class="row">
       <div class="rail">
-        <div class="param"><span class="val">22 → 0</span><span class="key k-meas">split/join lost</span></div>
+        <div class="param"><span class="val">1</span><span class="key k-meas">env var to A/B the machine</span></div>
+        <div class="param"><span class="val">3</span><span class="key k-risk">wrong mechanisms, one week</span></div>
       </div>
       <div class="body">
-        <h2><span class="num">08</span><span>Why AI-authored kernels invert what the second audience needs</span></h2>
-        <p>The kernel-writing audience is small, and there is a plausible argument that assistants
-          make it larger. If they do, what changes is not the volume of kernels but the ratio:
-          <strong>more kernels, less scrutiny per kernel.</strong> That inverts what the toolkit owes
-          them. Authoring ergonomics matter less when authoring is cheap; what matters is whether
-          anyone can tell a kernel is wrong.</p>
-        <p>This is not speculative. On 2026-09-02 a correct-looking fused epilogue was added to
-          <code>micro_tile_body</code> and the compiler emitted <strong>zero</strong>
-          <code>vx_split</code>/<code>vx_join</code> for one instantiation — the kernel was exactly
-          right on uniform shapes and silently wrong the moment a branch diverged. No diagnostic, at
-          any warning level. Reading the source would not have found it; counting instructions in the
-          emitted binary did.</p>
-        <p>So the deliverables are oracles and structural checks by default, not a nicer
-          <code>grxcc</code>: <strong>differential testing as the default</strong>, the way the
-          grxBLAS oracle compares every tiling against the reference kernel over identical operands;
-          <strong>structural verification of emitted code</strong>, so every kernel is checked to have
-          reconvergence, no inner loop has stack traffic, and entry points resolve; and the standing
-          rule that <strong>silence is a bug</strong> — a fallback that cannot fail is a fallback that
-          cannot report.</p>
-      </div>
-    </div>
-  </section>
+        <h2><span class="num">08</span><span>The differentiator is not the simulator — it is that the machine is debuggable</span></h2>
+        <p>NVIDIA's posture toward its own hardware is <em>trust the silicon, here is a profiler</em>.
+          The counter set was fixed at tape-out, the signals do not leave the die, and no developer
+          will ever run the same binary twice with the hardware behaving two different ways.</p>
+        <p>Ours does not have to be that. The model <strong>is</strong> the machine, so the machine is
+          an artifact you can instrument, bisect and A/B. <strong>That — rather than “we ship a
+          simulator” — is what NVIDIA's toolkit structurally cannot offer.</strong></p>
 
-  <section>
-    <div class="row">
-      <div class="rail">
-        <div class="param"><span class="val">2010</span><span class="key k-meas">deviceemu removed</span></div>
-        <div class="param"><span class="val">4</span><span class="key k-meas">measured disagreements</span></div>
-      </div>
-      <div class="body">
-        <h2><span class="num">09</span><span>If the product is an SDK on a simulator</span></h2>
+        <h3>What it bought this week, measured rather than argued</h3>
+        <div class="tw">
+          <table>
+            <thead><tr><th>what was done</th><th>why silicon cannot</th></tr></thead>
+            <tbody>
+              <tr><td>Ran a fix and its control <strong>one environment variable apart in the same binary</strong> — 4/8 and an abort, versus 8/8 and PASSED</td><td>the machine's behaviour is not a runtime switch</td></tr>
+              <tr><td>Answered a driver-shaped question with a <strong>hardware waveform</strong>: <code>t=0 busy=1 | t=1 busy=0 | t=2 busy=1 | t=2318 busy=0</code></td><td>the signal does not exist outside the die</td></tr>
+              <tr><td><strong>Added counters to the device</strong> in an afternoon — drain iterations, a cross-core clock probe, a per-launch preamble reading</td><td>the counter set is frozen at tape-out</td></tr>
+              <tr><td>Rebuilt the same design at 1, 2 and 4 SMs and compared</td><td>you cannot buy a 2-SM part</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="verdict">The 51% launch-cost figure in section 3 exists only because of this. It sat
+          in plain view for months, it doubled the strength of this document's central argument, and
+          it is not obtainable on hardware at all.</p>
+        <p>Two more follow from the same property and are worth naming as product:
+          <strong>deterministic replay</strong> — every figure here reproduces exactly, so a
+          regression is a diff rather than a statistical argument — and <strong>bisecting the
+          hardware</strong>, since a config knob is a rebuild rather than a purchase order.</p>
 
         <h3>The precedent that says don't</h3>
-        <p>NVIDIA shipped a GPU simulator and killed it. <code>nvcc -deviceemu</code> was deprecated
-          at CUDA 3.0 and gone shortly after, around 2010, replaced by debugging on real hardware.
-          Developers petitioned against the removal and lost.</p>
-        <p>The reason it deserved to die is the one that matters here. Device emulation ran kernels
-          as host threads — it could not model warps, divergence, coalescing or occupancy. So it told
-          you your program was <strong>correct</strong> and misled you about everything else. A model
-          that validates function while lying about cost is worse than no model, because people quote
-          its numbers. NVIDIA could also afford to kill it: they always have silicon, and every CUDA
-          developer owns a GPU.</p>
+        <p>NVIDIA shipped a GPU simulator and killed it. <code>nvcc -deviceemu</code> was deprecated at
+          CUDA 3.0 and gone by about 2010. Developers petitioned against the removal and lost.</p>
+        <p>It deserved to die for the reason that matters here. Device emulation ran kernels as host
+          threads — it could not model warps, divergence, coalescing or occupancy. So it told you your
+          program was <strong>correct</strong> and misled you about everything else. A model that
+          validates function while lying about cost is worse than no model, because people quote its
+          numbers. NVIDIA could also afford to kill it: they always have silicon.</p>
 
         <h3>The precedent that says do</h3>
-        <p>Neither of those is our situation, and the industry that shares our situation ships
-          simulators as product. Arm sells Fixed Virtual Platforms as supported, versioned models
-          precisely so software can be written before parts exist; Siemens PAVE360 builds pre-silicon
-          environments around Arm cores. Automotive drives it because a vehicle program cannot wait
-          for tape-out — the same arithmetic as a software schedule that has to overlap a hardware
-          one.</p>
+        <p>Neither is our situation, and the industry that shares our situation ships simulators as
+          product. Arm sells Fixed Virtual Platforms as supported, versioned models precisely so
+          software can be written before parts exist; Siemens PAVE360 builds pre-silicon environments
+          around Arm cores. Automotive drives it because a vehicle program cannot wait for tape-out —
+          the same arithmetic as a software schedule overlapping a hardware one.</p>
         <p class="verdict">We are in Arm's position, not NVIDIA's. What separates the two precedents
           is not fidelity but disclosure: whether the model tells you what it is.</p>
         <p>That part we already do, and not by accident. Every bench prints the backend that produced
           its cycles. <code>grx-smi</code> reports a <em>narrower</em> capability set on a TCU-less
-          <code>rtlsim</code> build rather than the one the header advertises. The perf baselines are
-          per-backend files, and the device seam refuses to let a model claim to be silicon.</p>
+          <code>rtlsim</code> build than the header advertises. Baselines are per-backend files, and
+          the device seam refuses to let a model claim to be silicon.</p>
 
         <h3>The fidelity contract</h3>
         <p>What we do not yet publish is where the two simulators disagree — and they do, materially:</p>
@@ -608,39 +602,76 @@
             <thead><tr><th>behaviour</th><th>simx</th><th>rtlsim</th><th>gap</th></tr></thead>
             <tbody>
               <tr><td>tensor unit, second CTA</td><td class="none">deadlocks</td><td class="n">completes</td><td class="n">7.12</td></tr>
-              <tr><td>kernel args at NUM_CORES &gt; 1</td><td class="n">8 of 8 delivered</td><td>4 of 8 → <strong>8 of 8, closed</strong></td><td class="n">7.37</td></tr>
-              <tr><td>misaligned 4-byte access</td><td class="none">silent, no diagnostic</td><td class="n">assertion, stops</td><td class="n">7.27</td></tr>
+              <tr><td>kernel args at NUM_CORES &gt; 1</td><td class="n">8 of 8</td><td>4 of 8 → <strong>8 of 8, closed</strong></td><td class="n">7.37</td></tr>
+              <tr><td>misaligned 4-byte access</td><td class="none">silent, no diagnostic</td><td class="n">assertion, stops</td><td class="n">7.37</td></tr>
+              <tr><td>per-core cycle counters</td><td class="n">share an origin, skew 365</td><td class="n">share an origin, skew 470</td><td class="n">7.25</td></tr>
               <tr><td>capability set, TCU-less build</td><td class="n">n/a</td><td class="n">reports the narrower set</td><td class="n">7.36</td></tr>
             </tbody>
           </table>
         </div>
-        <p>A developer who only ever runs <code>simx</code> ships kernels that break on RTL. One who
-          only runs <code>rtlsim</code> chases defects that are not in the design. Three rules follow:</p>
         <ul>
           <li><strong>Agreement is evidence; a <code>simx</code>-only pass is not a pass.</strong>
             Everything in that table was found by running both.</li>
           <li><strong>Disagreement resolves toward <code>rtlsim</code></strong>, because it executes
             the design rather than a model of it — but an <code>rtlsim</code> defect is not thereby a
-            silicon defect. This line previously said 7.37's mechanism was open and “may live in the
-            shim”. It did: <code>Processor::run()</code> sampled <code>busy</code> before the
-            one-cycle dip that follows the start pulse, ended the frame after a single tick, and the
-            host then read the previous frame's buffer. Thirteen lines, and <code>test_grxblas</code>
-            passes on four cores.</li>
+            silicon defect. 7.37 lived in the simulation shim, not the RTL, and saying so was part of
+            closing it.</li>
           <li><strong>Neither is authoritative for time.</strong> Every cycle count names its backend,
             and no cycle count in this project is a hardware claim.</li>
         </ul>
-        <p>The practical shape that falls out: <strong>develop on <code>simx</code>, gate on
-          <code>rtlsim</code></strong>. One is fast enough to iterate against; the other is strict
-          enough to be worth the wait — it is the backend that complains loudest, and gap 7.27 was
-          found because it complained.</p>
+        <p><strong>Develop on <code>simx</code>, gate on <code>rtlsim</code>.</strong> One is fast
+          enough to iterate against; the other is strict enough to be worth waiting for — it is the
+          backend that complains loudest, and it complained its way into both 7.27 and 7.37.</p>
+
+        <div class="escalate">
+          <h3>The counterweight, which is the same product requirement</h3>
+          <p>Observability is not understanding, and this is not balance added for form — it is the
+            sharpest lesson of the week. Closing 7.37 produced <strong>one correct root cause and
+            three wrong explanations of it</strong>, sent to another team in sequence: work carried
+            over to the next launch, then stale reads from a shared buffer, then a claim that the old
+            probe had been misleading.</p>
+          <p>The root cause survived from the first report because it came from a waveform that was
+            actually captured. All three failures were narrative built on top of it, from data nobody
+            went back and read — one refuted by an instrument built to remove luck from the previous
+            one, and one refuted by opening the probe and finding a <code>grxMemset</code> on line 22.</p>
+          <p><strong>A machine this observable makes confident wrong answers cheaper, not dearer.</strong></p>
+        </div>
+
+        <p>And audience (2) is where that bites hardest. The kernel-writing audience is small, and
+          assistants plausibly make it larger. What changes is not the volume of kernels but the
+          ratio: <strong>more kernels, less scrutiny per kernel.</strong> Authoring ergonomics matter
+          less when authoring is cheap; what matters is whether anyone can tell a kernel is wrong.</p>
+        <p>Not speculative. A correct-looking fused epilogue was added to <code>micro_tile_body</code>
+          and the compiler emitted <strong>zero</strong> <code>vx_split</code>/<code>vx_join</code>
+          for one instantiation — exactly right on uniform shapes, silently wrong the moment a branch
+          diverged, no diagnostic at any warning level. Reading the source would not have found it;
+          counting instructions in the emitted binary did.</p>
+        <p>So the deliverables are oracles and structural checks by default, not a nicer
+          <code>grxcc</code> — and they are the same three things that would have caught this week's
+          wrong answers:</p>
+        <ul>
+          <li><strong>Differential testing as the default</strong>, the way the grxBLAS oracle
+            compares every tiling against the reference kernel over identical operands. A new kernel
+            arrives with a reference and a comparison, or it does not arrive.</li>
+          <li><strong>Structural verification of emitted code</strong> — every kernel has
+            reconvergence, no inner loop has stack traffic, entry points resolve, ABI versions match.
+            A class of defect CUDA developers do not see, because nvcc is eighteen years old and ours
+            is not.</li>
+          <li><strong>A control in the same binary.</strong> Two builds differ in more ways than you
+            listed; a claim about a change should be demonstrable by toggling it.</li>
+        </ul>
+        <p>And underneath all three, the standing rule: <strong>silence is a bug</strong> — a fallback
+          that cannot fail is a fallback that cannot report.</p>
 
         <h3>What the FVP precedent says we would still owe</h3>
         <p>Arm's model is a supported binary you install. Ours is <em>clone three repositories and
-          build a custom LLVM at a pin nothing enforces</em> — the pin in grxgpu's toolchain doc names
-          one commit and the toolchain in use is a different one, because the clone tracks a branch.
-          If the product is a developer preview on a simulator, the on-ramp stops being cosmetic and
-          becomes the product: one installable, a pinned toolchain, and a fidelity statement shipped
-          beside the model.</p>
+          build a custom LLVM at a pin nothing enforces</em> — the pin names one commit and the
+          toolchain in use is another, because the clone tracks a branch. We also found this week that
+          a clean configure of grxgpu HEAD does not build <code>simx</code> at all, because a CSR went
+          into a checked-in generated header rather than the generator input.</p>
+        <p class="verdict">If the product is a developer preview on a simulator, the on-ramp stops
+          being cosmetic and becomes the product: one installable, a pinned toolchain, a build that
+          works from a clean checkout, and a fidelity statement shipped beside the model.</p>
       </div>
     </div>
   </section>
@@ -652,7 +683,7 @@
         <div class="param"><span class="val">4</span><span class="key k-est">open questions</span></div>
       </div>
       <div class="body">
-        <h2><span class="num">10</span><span>Open questions</span></h2>
+        <h2><span class="num">09</span><span>Open questions</span></h2>
         <ul>
           <li>Which ingestion point, settled by the model survey rather than by discussion.</li>
           <li><s>Whether bf16 can reach the GPU tensor unit.</s> <strong>Answered: it can</strong>,
@@ -664,10 +695,10 @@
           <li>Whether any of this precedes hardware. Phase 7 is unmet, multi-core is broken, and phase
             3's tensor gate reads 2.51× against a 5× threshold. A developer preview on a simulator and
             an SDK for a part you can buy are different products with different bars, and this
-            document does not say which one is being built — section 9 sets out what the first one
+            document does not say which one is being built — section 8 sets out what the first one
             would owe. (“Multi-core is broken” was true when this was written; it is fixed, see
-            section 9.)</li>
-          <li>Whether the fidelity contract in section 9 should be published rather than kept
+            section 8.)</li>
+          <li>Whether the fidelity contract in section 8 should be published rather than kept
             internal. The argument for publishing is the one that governs the conformance number: the
             disagreements exist whether or not we name them, and a developer who finds them unaided
             concludes something worse than what the table says.</li>
