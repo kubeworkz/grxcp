@@ -2091,16 +2091,77 @@ differing:
 Not some stages. Every stage, at both shapes. The CTAs distribute across cores
 even at these small grids, so nothing survives.
 
-**So the position today is: multi-SM correctness is established and multi-SM
-performance is unmeasurable.** `test_grxblas` passes at 4 SMs on rtlsim as of
-gap 7.37's fix; the block bench reports nothing there. Building a device-side
-clock that survives a core boundary — or a host-side one that does not need to
-— is step 0 of this phase, ahead of everything in the ordering above.
+**Step 0 is now done, and the refusal turned out to be unnecessary.** The
+claim that per-core counters are independent was never measured — it was
+inferred from MCYCLE being per-core *storage*, and storage being per core does
+not make *time* per core. Asked directly
+(`tests/repro/cross_core_clock/align_probe`), simx at 4 SMs over one launch and
+64 warps:
 
-Two candidate shapes, neither costed yet: sum per-core spans with a
-core-id-tagged probe and report per-core rather than per-stage, or take the
-duration from the simulator's own global tick rather than from a device CSR and
-accept that it is not available on silicon.
+| core | warps | first start | last end |
+|---|---|---|---|
+| 0 | 16 | 32434 | 69274 |
+| 1 | 16 | 32488 | 67960 |
+| 2 | 16 | 32592 | 69613 |
+| 3 | 16 | 32523 | 70165 |
+
+**158 cycles of spread against a 37731-cycle span — 0.42%.** The cores share an
+origin: every `Core` is a `SimObject` ticked once per simulated cycle and
+`Core::reset()` zeroes `perf_stats_` for all of them at the launch. One clock
+wearing four hats.
+
+`grxCycleSummarize` now reports `crossCoreSpan` and `coreSkew` and leaves the
+decision to the caller — the same division of labour it already uses for
+`maxLive`, since the header cannot ask the device. **Alignment is established
+once per backend by that probe, not re-derived per stage.**
+
+*A design that was tried and was wrong, kept because the reasoning is the trap.*
+The first version accepted a cross-core span when the skew was a small fraction
+of it, as though skew measured clock error. It does not. Once the counters are
+known aligned, a core whose first warp starts 3014 cycles after another's
+**really did start 3014 cycles later** — that is dispatch ramp, it is part of
+what the stage costs, and the span including it is the right number. Start skew
+cannot separate "the clocks disagree" from "the cores began at different
+times", so it cannot be the test for the first. It threw away five of twelve
+stages for being honestly staggered.
+
+### The first multi-SM scaling measurement
+
+Same binary, same tree, same kernels; only `NUM_CORES` differs. S=16, D=16,
+H=2, F=64, simx.
+
+| stage | 1 SM | 4 SMs | ratio |
+|---|---|---|---|
+| layernorm 1 | 13657 | 9710 | 1.41× |
+| qkv proj (3 GEMMs) | 40344 | 22338 | 1.81× |
+| qkv bias (3 × H) | 19272 | 12108 | 1.59× |
+| attention | 65264 | 33154 | 1.97× |
+| out proj | 19447 | 11667 | 1.67× |
+| bias | 3804 | 2385 | 1.60× |
+| residual (saxpy) | 7057 | 4733 | 1.49× |
+| layernorm 2 | 13501 | 9866 | 1.37× |
+| mlp GEMM 1 | 51212 | 24303 | 2.11× |
+| bias | 7068 | 5439 | 1.30× |
+| gelu | 51787 | 17309 | **2.99×** |
+| mlp GEMM 2 | 36574 | 13565 | **2.70×** |
+| **TOTAL** | **328987** | **166577** | **1.97×** |
+
+**4 SMs buys 1.97× — about half of linear.** The differential control passes on
+both configurations (attention's share rises 13.7% → 19.8% at 1 SM and
+13.8% → 19.9% at 4), so the instrument still responds to its input.
+
+*A prediction that was wrong, recorded because it was wrong in an instructive
+direction.* Before measuring, this section argued from warp counts that only
+the three stages requesting more than 16 warps could use a second SM, and
+predicted **1.39×** at four. The measurement is 1.97×, and the two best scalers
+— gelu at 2.99× and mlp GEMM 2 at 2.70× — are both **16-warp** stages, exactly
+the ones predicted to gain nothing. The error was treating warp slots as the
+only thing an SM supplies. Sixteen warps on one SM contend for four ALU lanes;
+four warps on each of four SMs do not. More SMs buy execution resources per
+resident warp, not only residency.
+
+**What is still unmeasured:** 2 SMs (the curve has two points), rtlsim and
+silicon clock alignment (simx only), and anything above the tiny bench shapes.
 
 **One defect fixed on the way.** When *every* stage was invalid the bench
 printed `(no cycles recorded)` and returned before the loop that prints why —

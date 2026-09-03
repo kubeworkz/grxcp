@@ -110,6 +110,11 @@ struct StageCost {
   // more than one launch -- see grx_cycles.h and `occupancy` below.
   int         maxLive = 0;
   int         overOccupancy = 0;   // maxLive exceeded what the device holds
+  // Cross-core evidence, carried so a refusal can say WHY rather than just
+  // that. A stage that spans cores is not thereby invalid -- see grx_cycles.h.
+  int         cores = 0;
+  uint64_t    coreSkew = 0;
+  uint64_t    skewSpan = 0;        // the span the skew was judged against
 };
 
 // Why a stage has no number. THREE reasons now, and the first version of this
@@ -121,7 +126,7 @@ const char* why_no_span(const StageCost& c) {
   if (c.overOccupancy)
     return "more warps live at once than the device holds: these slots come "
            "from more than one launch, and MCYCLE restarts at every launch";
-  return "the warps spanned cores; a span across two counters means nothing";
+  return "no span: the slots did not form one";
 }
 
 // One probe buffer, reused, and it lives on the DEVICE.
@@ -176,6 +181,16 @@ struct Probe {
       c->valid = false;
       return;
     }
+    if (s.cores > c->cores) c->cores = s.cores;
+    if (s.coreSkew > c->coreSkew) c->coreSkew = s.coreSkew;
+    // On a backend whose per-core counters share an origin, crossCoreSpan is
+    // the stage's wall clock and the stagger between cores is part of what the
+    // stage costs. Alignment is NOT re-derived here from the skew -- skew
+    // cannot see it (grx_cycles.h). It is established once per backend by
+    // tests/repro/cross_core_clock/align_probe, which measured 158 cycles of
+    // spread against a 37731-cycle span on simx at 4 SMs. Run it before
+    // trusting these numbers on a backend it has not been run on.
+    if (s.spanCrossesCores) { c->span += s.crossCoreSpan; return; }
     if (s.spanIsValid == 0) { c->valid = false; return; }
     c->span += s.span;
   }
@@ -434,9 +449,15 @@ double report(const Shape& sh, const std::vector<StageCost>& stages,
       continue;
     }
     const double share = 100.0 * (double)c.span / (double)total;
-    std::printf("  %-26s %10llu cycles  %5.1f%%  (%d warps, %d live)\n",
-                c.name.c_str(), (unsigned long long)c.span, share, c.warps,
-                c.maxLive);
+    if (c.cores > 1)
+      std::printf("  %-26s %10llu cycles  %5.1f%%  (%d warps, %d live, "
+                  "%d cores, skew %llu)\n",
+                  c.name.c_str(), (unsigned long long)c.span, share, c.warps,
+                  c.maxLive, c.cores, (unsigned long long)c.coreSkew);
+    else
+      std::printf("  %-26s %10llu cycles  %5.1f%%  (%d warps, %d live)\n",
+                  c.name.c_str(), (unsigned long long)c.span, share, c.warps,
+                  c.maxLive);
     if (c.name.rfind("attention", 0) == 0) attn += share;
   }
   std::printf("  %-26s %10llu cycles\n", "TOTAL (measured stages)",

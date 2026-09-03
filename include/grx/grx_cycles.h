@@ -20,9 +20,43 @@
 // once per cycle by hardware and once per simulated tick by SimX. So:
 //
 //   * Within one core AND ONE LAUNCH, differences are real cycle counts.
-//   * ACROSS cores the counters are independent and a span computed from two
-//     different cores means nothing. grxCycleSummarize refuses to produce one
-//     and says why -- it does not quietly return a plausible number.
+//   * ACROSS cores -- this said, for as long as the file existed, that "the
+//     counters are independent and a span computed from two different cores
+//     means nothing", and grxCycleSummarize refused to produce one. THAT WAS
+//     NEVER MEASURED. It was inferred from MCYCLE being per-core storage, and
+//     storage being per core does not make TIME per core.
+//
+//     Measured (tests/repro/cross_core_clock/): on simx at 4 SMs, one launch,
+//     64 warps evenly spread, the four cores' first reads are 32434, 32488,
+//     32592, 32523 -- a spread of 158 cycles against a 37731-cycle span, 0.42%.
+//     They share an origin. In simx every Core is a SimObject ticked once per
+//     simulated cycle and Core::reset() zeroes perf_stats_ for all of them at
+//     the launch, so there is one clock wearing four hats.
+//
+//     The cost of the wrong claim was the whole instrument: the transformer
+//     block bench reported 0 of 12 stages on a 4-SM device, because at 4 SMs
+//     every stage spreads across cores. A refusal is not free just because it
+//     is conservative -- this one made the machine unmeasurable exactly where
+//     measurement was about to matter.
+//
+//     So `crossCoreSpan` is now produced unconditionally and `coreSkew` ships
+//     beside it. Whether the span MEANS anything is a fact about a BACKEND --
+//     simx has been measured, rtlsim and silicon have not -- and this header
+//     cannot ask the device, so it reports and the caller decides. Same
+//     division of labour as `maxLive`.
+//
+//     A DESIGN THAT WAS TRIED AND WAS WRONG, kept because the reasoning is the
+//     trap: the first version accepted a cross-core span when coreSkew was a
+//     small fraction of it, as if skew measured clock error. It does not.
+//     Once the counters are known aligned, a core whose first warp starts 3014
+//     cycles after another's REALLY DID START 3014 CYCLES LATER -- that is
+//     dispatch ramp, it is part of what the stage costs, and the span
+//     including it is the right number. Start skew cannot separate "the clocks
+//     disagree" from "the cores began at different times", so it cannot be the
+//     test for the first. It threw away five of twelve stages for being
+//     honestly staggered. Alignment is established ONCE per backend by
+//     tests/repro/cross_core_clock/align_probe, not re-derived per stage from
+//     a quantity that cannot see it.
 //   * ACROSS LAUNCHES they are independent too, and this one is easy to get
 //     wrong because nothing about the numbers looks unusual. On SimX the
 //     counter RESTARTS AT ZERO for every launch: ProcessorImpl::run() opens
@@ -64,7 +98,7 @@ typedef struct {
   int      warps;        // slots actually written
   int      cores;        // distinct cores that wrote one
   int      spanIsValid;  // 0 when the warps did not share a core
-  uint64_t span;         // last end minus first start, in cycles
+  uint64_t span;         // last end minus first start, in cycles; 0 if invalid
   uint64_t busyMin;      // shortest per-warp end - start
   uint64_t busyMedian;
   uint64_t busyMax;      // longest
@@ -89,7 +123,34 @@ typedef struct {
   // grxCycleSummarize therefore reports maxLive and leaves spanIsValid alone;
   // the caller that owns a grxDeviceProp_t is the one that can refuse.
   int      maxLive;
+
+  // THE CROSS-CORE EVIDENCE. See the "ACROSS cores" note at the top of this
+  // file, which used to say a cross-core span "means nothing" and was wrong.
+  //
+  // coreSkew is the spread of per-core FIRST STARTS: the largest minus the
+  // smallest, over the cores that wrote a slot. It is the whole question. If
+  // each core's counter began when that core got work, a core that started
+  // later reads a smaller number and the skew is on the order of the span. If
+  // the cores were reset together and tick together, they agree on the origin
+  // and the skew is small.
+  //
+  // Measured on simx at 4 SMs, 64 warps: skew 158 cycles against a span of
+  // 37731 -- 0.42%. The cores share an origin there. That is a fact about a
+  // backend, not about the architecture, so it is reported rather than
+  // assumed, and rtlsim and silicon each have to answer for themselves.
+  uint64_t coreSkew;
+  int      spanCrossesCores;   // 1 when more than one core wrote a slot
+
+  // Last end minus first start over ALL cores, always computed. On a backend
+  // whose per-core counters share an origin this is the stage's wall clock,
+  // dispatch ramp included. On one whose counters do not, it is meaningless --
+  // which is why it is a separate field from `span` rather than a widening of
+  // it: nothing that reads `span` today starts believing a cross-core number
+  // by accident.
+  uint64_t crossCoreSpan;
 } grxCycleSummary;
+
+
 
 #ifdef __cplusplus
 }  // extern "C"
@@ -114,16 +175,27 @@ inline void grxCycleSummarize(const grxCycleSlot* slots, int n,
   // before starts at equal cycles so that a warp finishing exactly as another
   // begins is not counted as two live at once.
   std::vector<std::pair<uint64_t, int> > edges;
+  // Per core: its own earliest start. The spread of these is the evidence for
+  // or against the cores sharing a clock, and it is the only thing here that
+  // cannot be recovered from the aggregate.
+  std::vector<std::pair<uint32_t, uint64_t> > core_first;
   uint64_t first_start = UINT64_MAX, last_end = 0;
-  uint32_t core = 0;
-  bool     one_core = true, seen = false;
 
   for (int i = 0; i < n; ++i) {
     // A slot no warp reached stays zero. Counting it would drag the span back
     // to cycle 0 and report a kernel that ran since the machine booted.
     if (slots[i].end == 0 && slots[i].start == 0) continue;
-    if (!seen) { core = slots[i].core; seen = true; }
-    else if (slots[i].core != core) one_core = false;
+
+    bool found = false;
+    for (size_t c = 0; c < core_first.size(); ++c) {
+      if (core_first[c].first == slots[i].core) {
+        core_first[c].second = std::min(core_first[c].second, slots[i].start);
+        found = true;
+        break;
+      }
+    }
+    if (!found)
+      core_first.push_back(std::make_pair(slots[i].core, slots[i].start));
 
     first_start = std::min(first_start, slots[i].start);
     last_end    = std::max(last_end, slots[i].end);
@@ -133,6 +205,15 @@ inline void grxCycleSummarize(const grxCycleSlot* slots, int n,
   }
   if (busy.empty()) return;
 
+  uint64_t skew_lo = UINT64_MAX, skew_hi = 0;
+  for (size_t c = 0; c < core_first.size(); ++c) {
+    skew_lo = std::min(skew_lo, core_first[c].second);
+    skew_hi = std::max(skew_hi, core_first[c].second);
+  }
+  const uint64_t skew = skew_hi - skew_lo;
+  const uint64_t combined = last_end - first_start;
+  const bool one_core = (core_first.size() == 1);
+
   std::sort(edges.begin(), edges.end());
   int live = 0, max_live = 0;
   for (size_t e = 0; e < edges.size(); ++e) {
@@ -141,14 +222,17 @@ inline void grxCycleSummarize(const grxCycleSlot* slots, int n,
   }
 
   std::sort(busy.begin(), busy.end());
-  out->warps       = (int)busy.size();
-  out->cores       = one_core ? 1 : 2;   // "more than one" is all that matters
-  out->spanIsValid = one_core ? 1 : 0;
-  out->span        = one_core ? (last_end - first_start) : 0;
-  out->busyMin     = busy.front();
-  out->busyMedian  = busy[busy.size() / 2];
-  out->busyMax     = busy.back();
-  out->maxLive     = max_live;
+  out->warps            = (int)busy.size();
+  out->cores            = (int)core_first.size();
+  out->spanIsValid      = one_core ? 1 : 0;
+  out->span             = one_core ? combined : 0;
+  out->busyMin          = busy.front();
+  out->busyMedian       = busy[busy.size() / 2];
+  out->busyMax          = busy.back();
+  out->maxLive          = max_live;
+  out->coreSkew         = skew;
+  out->spanCrossesCores = one_core ? 0 : 1;
+  out->crossCoreSpan    = combined;
 }
 
 #endif  // __cplusplus && !__VORTEX__
