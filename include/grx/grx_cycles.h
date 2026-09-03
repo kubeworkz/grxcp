@@ -40,10 +40,34 @@
 //     measurement was about to matter.
 //
 //     So `crossCoreSpan` is now produced unconditionally and `coreSkew` ships
-//     beside it. Whether the span MEANS anything is a fact about a BACKEND --
-//     simx has been measured, rtlsim and silicon have not -- and this header
-//     cannot ask the device, so it reports and the caller decides. Same
-//     division of labour as `maxLive`.
+//     beside it. Whether the span MEANS anything is a fact about a BACKEND, and
+//     this header cannot ask the device, so it reports and the caller decides.
+//     Same division of labour as `maxLive`.
+//
+//     BOTH SIMULATOR BACKENDS HAVE NOW BEEN MEASURED, same shape (16x16
+//     layernorm), one-core run first to establish what the launch preamble
+//     costs:
+//
+//       backend  cores  per-core first reads          baseline  skew
+//       simx       1     9477                            --       0
+//       simx       4     8554 8563 8580 8919            9477     365
+//       rtlsim     1     8633                            --       0
+//       rtlsim     4     8372 8456 8456 8842            8633     470
+//
+//     On both, the four-core readings sit ON the one-core preamble rather than
+//     collapsing toward zero -- rtlsim's 8372 against a baseline of 8633 is
+//     within 3%. Aligned on both. SILICON IS STILL UNMEASURED and gets no
+//     assumption either way.
+//
+//     THE TEST ITSELF WAS WRONG FIRST, and the error is the interesting part.
+//     The probe originally concluded "small skew => aligned". That is backwards.
+//     If each core's counter were reset when THAT CORE got work, every core
+//     would read a small number from its own reset and the cores would AGREE --
+//     independent counters produce a TINY skew. Aligned counters carry the whole
+//     preamble, so their readings are large and any spread between them is
+//     genuine dispatch stagger. The discriminator is the MAGNITUDE of the first
+//     reads against a one-core baseline, not the spread between them, and one
+//     run cannot settle it.
 //
 //     A DESIGN THAT WAS TRIED AND WAS WRONG, kept because the reasoning is the
 //     trap: the first version accepted a cross-core span when coreSkew was a
@@ -134,10 +158,13 @@ typedef struct {
   // the cores were reset together and tick together, they agree on the origin
   // and the skew is small.
   //
-  // Measured on simx at 4 SMs, 64 warps: skew 158 cycles against a span of
-  // 37731 -- 0.42%. The cores share an origin there. That is a fact about a
-  // backend, not about the architecture, so it is reported rather than
-  // assumed, and rtlsim and silicon each have to answer for themselves.
+  // Measured aligned on simx and on rtlsim (see the table at the top of this
+  // file). That is a fact about a backend, not about the architecture, so it is
+  // reported rather than assumed and silicon has to answer for itself.
+  //
+  // Note what skew is NOT: it is not clock error. On a backend whose counters
+  // share an origin it is how far apart the cores actually started, which is
+  // dispatch ramp and is part of what the stage costs.
   uint64_t coreSkew;
   int      spanCrossesCores;   // 1 when more than one core wrote a slot
 

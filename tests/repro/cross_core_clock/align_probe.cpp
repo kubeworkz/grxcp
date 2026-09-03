@@ -1,18 +1,31 @@
 // Do the per-core MCYCLE counters share a time origin?
 //
-// grx_cycles.h states that "across cores the counters are independent and a
-// span computed from two different cores means nothing", and grxCycleSummarize
-// refuses such a span. That claim was never measured -- it was inferred from
-// MCYCLE being per-core storage. Storage being per core does not make TIME per
-// core.
+// grx_cycles.h used to say "across cores the counters are independent and a
+// span computed from two different cores means nothing", and refused such a
+// span. That was never measured -- it was inferred from MCYCLE being per-core
+// STORAGE, and storage being per core does not make TIME per core.
 //
-// This asks the device. One instrumented grxDNN launch wide enough to spread
-// warps over every SM, then the RAW slots: which core each warp ran on, and
-// what it read at entry and exit. If the cores were started together and tick
-// together, their entry readings cluster; if each counter began whenever its
-// core got work, they do not.
+// THE TEST, AND WHY THE OBVIOUS ONE IS BACKWARDS. The first version of this
+// file concluded "small skew between per-core first reads => aligned". That is
+// the wrong way round and it reached the right answer by luck:
 //
-// Prints the per-core extent so the answer is visible rather than asserted.
+//   * If each core's counter were reset when THAT CORE got work, every core's
+//     first warp would read a SMALL number -- the few cycles between its own
+//     reset and its own probe. All cores would agree, and the skew would be
+//     tiny. Small skew is what INDEPENDENT counters look like.
+//   * If the counters are reset together at the launch and tick together, each
+//     core's first read carries the whole launch preamble, and the readings are
+//     LARGE. Any spread between them is genuine dispatch stagger, not clock
+//     error.
+//
+// So the discriminator is the MAGNITUDE of the first reads, against the same
+// figure from a ONE-CORE run of the same shape. One core establishes what the
+// preamble costs. If the N-core first reads are of that order, the counters
+// have been running since a common origin. If they collapse toward zero, each
+// core started its own clock.
+//
+// One run cannot settle it. Pass the one-core baseline as argv[3] to get a
+// verdict; without it this prints the readings and says what to compare.
 
 #include <cstdio>
 #include <cstdlib>
@@ -28,6 +41,8 @@
 int main(int argc, char** argv) {
   const int rows = (argc > 1) ? std::atoi(argv[1]) : 64;
   const int cols = (argc > 2) ? std::atoi(argv[2]) : 16;
+  // The one-core first read for this same shape and backend. 0 = not supplied.
+  const uint64_t baseline = (argc > 3) ? std::strtoull(argv[3], nullptr, 10) : 0;
 
   grxDeviceProp_t p{};
   if (grxGetDeviceProperties(&p, 0) != grxSuccess) {
@@ -109,18 +124,43 @@ int main(int argc, char** argv) {
   if (combined)
     std::printf("skew / span      %.4f\n", (double)skew / (double)combined);
 
-  // The question this program exists to answer, stated as a verdict rather
-  // than left to the reader. A skew that is a small fraction of the span is
-  // consistent with one shared origin; a skew comparable to the span is what
-  // independent per-core clocks would produce.
   if (per_core.size() < 2) {
-    std::printf("\nONE CORE -- says nothing about alignment. Raise NUM_CORES.\n");
-  } else if (skew * 20 < combined) {
-    std::printf("\nCOUNTERS LOOK ALIGNED: entry skew is under 5%% of the span.\n"
-                "A combined cross-core span is meaningful on THIS backend.\n");
+    std::printf("\nONE CORE. This run cannot say anything about alignment, but\n"
+                "it IS the baseline the multi-core run needs. Pass %llu as the\n"
+                "third argument to a run with more cores.\n",
+                (unsigned long long)gmin_start);
+    grxdnnSetCycleProbe(dh, nullptr, 0);
+    grxdnnDestroy(dh);
+    return 0;
+  }
+
+  if (baseline == 0) {
+    std::printf("\nNO BASELINE GIVEN, so no verdict. Run this same shape on the\n"
+                "same backend at NUM_CORES=1 and pass its first read as argv[3].\n"
+                "Aligned counters put these readings at that order of magnitude;\n"
+                "independent ones collapse them toward zero.\n");
   } else {
-    std::printf("\nCOUNTERS LOOK INDEPENDENT: entry skew is not small against\n"
-                "the span. Cross-core spans must stay refused.\n");
+    // Aligned: every core carries the preamble, so the smallest first read is
+    // of the baseline's order. Independent: each core reads from its own reset,
+    // so the readings fall far below it. A half-baseline floor separates the
+    // two by a wide margin -- this is not a tuned threshold, the predictions
+    // differ by orders of magnitude.
+    std::printf("\none-core baseline %llu\n", (unsigned long long)baseline);
+    if (gmin_start * 2 >= baseline) {
+      std::printf("\nCOUNTERS SHARE AN ORIGIN. The smallest first read (%llu) is\n"
+                  "of the one-core preamble's order (%llu), so every core's\n"
+                  "counter has been running since the launch. The %llu-cycle\n"
+                  "spread is dispatch stagger, and it is part of what a stage\n"
+                  "costs -- a cross-core span is a real duration on this backend.\n",
+                  (unsigned long long)gmin_start, (unsigned long long)baseline,
+                  (unsigned long long)skew);
+    } else {
+      std::printf("\nCOUNTERS ARE INDEPENDENT. The smallest first read (%llu) has\n"
+                  "collapsed far below the one-core preamble (%llu): each core is\n"
+                  "counting from its own reset. Cross-core spans mean nothing on\n"
+                  "this backend and grxCycleSummarize's `span` must stay refused.\n",
+                  (unsigned long long)gmin_start, (unsigned long long)baseline);
+    }
   }
 
   grxdnnSetCycleProbe(dh, nullptr, 0);

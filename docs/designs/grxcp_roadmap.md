@@ -2160,8 +2160,45 @@ only thing an SM supplies. Sixteen warps on one SM contend for four ALU lanes;
 four warps on each of four SMs do not. More SMs buy execution resources per
 resident warp, not only residency.
 
-**What is still unmeasured:** 2 SMs (the curve has two points), rtlsim and
-silicon clock alignment (simx only), and anything above the tiny bench shapes.
+### rtlsim agrees, and controlling the shape killed a claim
+
+Alignment is a per-backend fact, so `rtlsim` — the backend this project gates
+on — had to answer for itself. Same shape on both, one-core run first to
+establish what the launch preamble costs:
+
+| backend | cores | per-core first reads | baseline | skew |
+|---|---|---|---|---|
+| simx | 1 | 9477 | — | 0 |
+| simx | 4 | 8554 8563 8580 8919 | 9477 | 365 |
+| rtlsim | 1 | 8633 | — | 0 |
+| rtlsim | 4 | 8372 8456 8456 8842 | 8633 | 470 |
+
+**Aligned on both**, and rtlsim's is the cleaner demonstration: 8372 against a
+baseline of 8633 is within 3%. Independent counters would have collapsed those
+readings toward zero. Silicon is still unmeasured and gets no assumption.
+
+*The test was wrong before it was right.* The probe first concluded "small skew
+⇒ aligned", which is backwards: if each core's counter reset when that core got
+work, every core would read a small number from its own reset and they would
+AGREE — independent counters produce a tiny skew. The discriminator is the
+magnitude of the first reads against a one-core baseline, and one run cannot
+settle it, which is why the probe now refuses a verdict without one.
+
+*A claim that did not survive being controlled.* The 4-SM preamble looked like
+it grew 3.4× over 1 SM — 9477 to 32434 — which would have made launch cost a
+multi-core problem and gone straight into step 2's argument. Re-run at the same
+shape it is 9477 → 8554: **flat**. The 32434 came from a 64-row grid rather
+than from the core count, and the two runs being compared had different shapes.
+It was one command to check and it would have been a wrong entry in this
+document.
+
+What the controlled numbers do show is the launch cost argument from the other
+side: at 16 rows the stage goes 13647 → 9591 cycles on 4 SMs, **1.42×**, and
+roughly 8500 of what remains is preamble. Small stages are preamble-bound, and
+no number of SMs touches that. Step 2 stands on its own evidence.
+
+**What is still unmeasured:** 2 SMs (the curve has two points), silicon clock
+alignment, and anything above the tiny bench shapes.
 
 **One defect fixed on the way.** When *every* stage was invalid the bench
 printed `(no cycles recorded)` and returned before the loop that prints why —
