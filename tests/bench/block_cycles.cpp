@@ -416,7 +416,16 @@ double report(const Shape& sh, const std::vector<StageCost>& stages,
     if (c.valid) total += c.span;
     else any_invalid = true;
   }
-  if (total == 0) { std::printf("  (no cycles recorded)\n"); return 0.0; }
+  // When EVERY stage is invalid this used to print "(no cycles recorded)" and
+  // return, which skipped the per-stage reasons below -- so the one diagnostic
+  // written for this exact case was unreachable in it. Measured at 4 SMs on
+  // simx: twelve stages, all invalid, and the output said nothing about why.
+  if (total == 0) {
+    std::printf("  (no cycles recorded)\n");
+    for (const StageCost& c : stages)
+      std::printf("  %-26s   -- %s\n", c.name.c_str(), why_no_span(c));
+    return 0.0;
+  }
 
   double attn = 0.0;
   for (const StageCost& c : stages) {

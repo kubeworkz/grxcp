@@ -2035,6 +2035,163 @@ The seam the device table needs in order to hold both is written up in
 
 ---
 
+## Phase 8 — Multi-SM on GRX-G100 (≈4 engineer-months, sequenced)
+
+**Scope.** Take GRXCP from one SM to many, in an order chosen so that each step
+is measurable when it happens.
+
+The ordering below is the phase. It is not a list of independent work items —
+steps 1 and 2 are what make step 4 worth doing, and step 3 is what makes it
+correct. Doing them out of order produces a machine that is faster on paper and
+unmeasurable in practice.
+
+1. **Widen one SM.** `SIMD_WIDTH` 4 → 32, `NUM_WARPS` 16 → 64,
+   `NUM_TCU_BLOCKS` 1 → 4. This is 32× more resident threads per SM and 4×
+   the tensor throughput, and it breaks no software contract in this repo.
+   Phase 3's tensor gate — 2.51× against a 5× threshold — is a *within-SM*
+   shortfall and nothing in this phase's later steps moves it.
+2. **Land graph ingestion and fusion** (`developer_interface.md` §3). A launch
+   costs 2776 cycles before it touches an element and a transformer block is 23
+   launches — 21.1% of the block. More SMs shorten the *work* half of each
+   launch and leave the fixed half alone, so the fixed fraction gets **worse**,
+   not better. Fusion is a prerequisite for multi-SM paying off, not a
+   follow-on.
+3. **Enable L2, and `VX_CFG_EXT_A_ENABLE`, before raising `NUM_CORES`.** See
+   "Coherence" below — both for the reason and for why they go together.
+4. **Then `NUM_CORES` 2, then 4, inside one cluster.** Re-measure every
+   grxBLAS threshold; see "Nothing is calibrated for it" below.
+5. **Multi-cluster last.** It removes `this_grid().sync()` (gap 7.17) and there
+   is nothing in the hardware to replace it with.
+
+**Exit gate.** *Not* a speedup number — a measurement. The transformer block
+bench reports a per-stage cycle figure on a 4-SM device, and the block's total
+at 1, 2 and 4 SMs is recorded with the speedup stated and the backend named.
+A scaling claim cannot be gated before it can be read, and today it cannot be
+read at all.
+
+### The prerequisite nobody had noticed: there is no clock above one SM
+
+This is the finding that reorders the phase, and it was invisible until a
+4-SM device was run.
+
+`tests/bench/block_cycles.cpp` — the instrument behind every cycle number this
+project publishes — measures spans from per-warp `VX_CSR_MCYCLE` probes. MCYCLE
+is **per core** and restarts at zero at every launch (gap 7.25), so a stage
+whose warps land on more than one core produces a span across two independent
+counters. `grx_cycles.h` has refused that case since it was written.
+
+Measured, same binary, same tree, same kernels, only `VX_CFG_NUM_CORES`
+differing:
+
+| | stages reporting cycles |
+|---|---|
+| simx, **1 SM** | **12 of 12** — layernorm 7385, qkv proj 21333, … total 161364 at S=8 |
+| simx, **4 SMs** | **0 of 12** — every one: *"the warps spanned cores; a span across two counters means nothing"* |
+
+Not some stages. Every stage, at both shapes. The CTAs distribute across cores
+even at these small grids, so nothing survives.
+
+**So the position today is: multi-SM correctness is established and multi-SM
+performance is unmeasurable.** `test_grxblas` passes at 4 SMs on rtlsim as of
+gap 7.37's fix; the block bench reports nothing there. Building a device-side
+clock that survives a core boundary — or a host-side one that does not need to
+— is step 0 of this phase, ahead of everything in the ordering above.
+
+Two candidate shapes, neither costed yet: sum per-core spans with a
+core-id-tagged probe and report per-core rather than per-stage, or take the
+duration from the simulator's own global tick rather than from a device CSR and
+accept that it is not available on silicon.
+
+**One defect fixed on the way.** When *every* stage was invalid the bench
+printed `(no cycles recorded)` and returned before the loop that prints why —
+so `why_no_span()`, written for exactly this case, was unreachable in it. The
+first 4-SM run said nothing at all about the cause. Now it prints the reason
+for every stage, which is how the table above exists.
+
+### Coherence, which changes under you
+
+Crossing 1 → 2 cores changes the machine silently. Measured from the build
+logs of three real builds:
+
+| | 1 core | 2 cores | 4 cores |
+|---|---|---|---|
+| `VX_CFG_DCACHE_WRITEBACK` | **1** | 0 | 0 |
+| `VX_CFG_AMO_RS_SIZE` | 16 | 32 | 64 |
+| `VX_CFG_L2_ENABLED` | 0 | 0 | 0 |
+
+`VX_CFG_DCACHE_WRITEBACK` is `int($dcache_is_llc and $single_core)` — nobody
+sets it; it flips because the core count changed.
+
+There is **no cache coherence protocol in the RTL**. Write-through above the
+last-level cache is the substitute, and `Vortex.sv` states the reason: *"A WB
+intermediate could absorb a hart-B store without the LLC seeing it; a later SC
+from hart-A on the same line would spuriously succeed."* Two consequences:
+
+- **The static assert that enforces it is inside `` `ifdef VX_CFG_EXT_A_ENABLE ``**,
+  which is off in this configuration (gap 7.16). On our builds nothing checks
+  the invariant at all. Turning on `EXT_A` is what makes the guard compile,
+  which is why step 3 pairs it with L2 rather than leaving it to the atomics
+  work.
+- **`L2_ENABLED=0` at 4 cores means N private write-through L1s with no shared
+  level beneath them.** Every kernel we run touches disjoint data per core, so
+  this has never mattered. It starts mattering at the first kernel where one
+  core must read what another core wrote — a cross-core reduction, a grid-wide
+  softmax denominator, a split-K GEMM. Ask grxgpu what the visibility rule is
+  before writing that kernel, not after.
+
+### Nothing is calibrated for more than one SM
+
+grxBLAS chooses its kernel on `outputs >= resident / 2`, where
+
+    resident = warpSize × maxWarpsPerMultiProcessor × multiProcessorCount
+
+which is **64** on the configuration every measurement in this repo was taken
+on, and 262,144 at the flagship preset. That is a 4096× move in a decision
+boundary that was bracketed empirically between 24 and 32 outputs. Every tiling
+choice — including `sgemm_2d_i`, added 2026-09-02 — sits on it.
+
+This is a re-measurement bill, not a blocker, and it grows with accumulated
+tuning. It is an argument for raising the core count **earlier** rather than
+later, once steps 1–3 are done: the longer single-SM tuning accumulates, the
+more of it has to be redone.
+
+### What the grid can and cannot use today
+
+At S=16 the block already asks for more warps than one SM holds — attention
+requests 112 against 16 live, mlp GEMM 1 and the residual request 64. Those
+stages have real parallelism waiting. The other nine stages request exactly 16,
+because the grid is one warp per row and the row count happens to equal one
+SM's warp slots at this shape. **That coincidence is a property of the bench
+shapes, not of the architecture**: at any production sequence length and hidden
+size every stage oversubscribes heavily. The small shapes are what make one SM
+look sufficient.
+
+### Two structural caps to plan around
+
+- **The cooperative grid narrows to one legal band.** Gap 7.17: the barrier
+  releases per cluster, a core with no active warps never forwards an arrival,
+  so `grxLaunchCooperativeKernel` refuses a grid smaller than the machine as
+  well as one too large to be resident. At 128 SMs that band is ≥128 blocks and
+  ≤ residency, and everything outside it is an error rather than a slow path.
+- **DSMEM is dead silicon at one core per cluster.** grxgpu now defaults
+  `VX_CFG_EXT_DSMEM_ENABLE = true` alongside `NUM_CORES=16`. Distributed shared
+  memory is a cluster feature; if it is on the tape-out then multi-SM is not
+  optional, it is the thing DSMEM exists for. Gap 7.18 (`map_shared_rank` has
+  no stride) is already open against it.
+
+### Cross-team item found while setting this up
+
+**grxgpu HEAD (`5253957`) does not build simx from a clean configure.**
+`sim/simx/csr_unit.cpp` uses `VX_CSR_MAILBOX`, added by `ccc3f363b`. The
+definition went into `sw/VX_types.h` — a checked-in copy of a **generated**
+header that is not on any include path — and not into `VX_types.toml`, which is
+what `configure` regenerates `build/sw/VX_types.h` from. The generated copy has
+zero occurrences; the build fails with `'VX_CSR_MAILBOX' was not declared in
+this scope`. It works wherever `build/` predates the regeneration, which is the
+"works on my machine" failure mode in its purest form. Reported.
+
+---
+
 ## Parallel track — `WSHFL` ISA RFC
 
 Not a GRXCP phase; a proposal into the GRX-G100 repo, filed at Phase 0 and
@@ -2065,6 +2222,8 @@ ideally landed before Phase 3.
 | Scope creep into graphics/ray tracing | Medium | RTU and TEX exposure are explicitly deferred to P6+; GRXCP v1 is compute |
 | rv32 doubles the test matrix | Low | rv64 only for v1; rv32 kept compiling, not tested |
 | Emulating hardware features silently | High, insidious | Banned by architecture §10 rule 5 — every emulation is reported through a device property |
+| No cycle instrument survives a core boundary | High | MCYCLE is per core and restarts per launch (7.25); measured at 4 SMs the block bench reports **0 of 12** stages. Phase 8 step 0 builds the clock before any scaling claim is made — a speedup that cannot be read cannot be gated |
+| Single-SM tuning accumulates against a threshold that moves 4096× | Medium | grxBLAS's `resident` is 64 today and 262,144 at the flagship. Argues for raising core count early, once Phase 8 steps 1–3 are done, rather than banking more tuning first |
 
 ---
 
@@ -2083,4 +2242,6 @@ GRXCP v1 is complete when a developer who knows CUDA can:
    not work.
 
 Phases 0–4 deliver 1, 2, 3 and 4. Phase 6 raises the number in 5. Phase 7
-makes it heterogeneous.
+makes it heterogeneous. Phase 8 makes it more than one SM — and note that none
+of the five clauses above mentions performance, which is deliberate: v1 is
+"works and says what it does", not "is fast".
