@@ -1826,7 +1826,10 @@ dependent, which is what this entry does.
 **Resolved.** It was never an argument path defect. `Processor::run()` in
 grxgpu's `sim/rtlsim/processor.cpp` ends the frame on the wrong edge, so on
 alternate launches the kernel executes for one cycle instead of ~2300 and
-writes nothing; the host then reads a buffer that the *previous* frame filled,
+writes nothing — and is never made up later: with a distinct output buffer per
+launch, 4 of 8 are written at read time and **4 of 8 at the end of the run**, so
+no work is carried over. The host then reads a buffer that the *previous*
+successful frame filled and left there,
 which is what made it look like arguments arriving on every other launch.
 
 The `busy` waveform is identical on every launch, including the first:
@@ -1850,7 +1853,37 @@ switchable, so the control is the same binary:
 | without | args never arrive, then `VX_lsu_slice.sv:233` misaligned abort at `addr=0x100000001` | 4/8 |
 | with | **PASSED (0 failures)** | **8/8** |
 
-Sent to grxgpu with the patch. Two things this closes out of the account below.
+**Closed upstream.** grxgpu carried it as `3d8785f11`, whose
+`sim/rtlsim/processor.cpp` is byte-identical to what was measured here
+(md5 `e3fd5b67…`); verified on that commit: probe 8/8 by both instruments,
+`test_grxblas` PASSED at 4 cores. `5325b06a7` adds the drain-iteration
+diagnostic so the placement can be checked from a build rather than read off a
+diff.
+
+**It took two rounds, and both of the wrong turns are worth keeping.**
+
+*Their first fix put the drain BEFORE the start pulse* (`506e21321`), which is
+where we tried it first too. Measured on their commit verbatim: probe **7/8**,
+`test_grxblas` still aborting on the same misaligned dereference. The dip is one
+cycle *after* the pulse, so draining beforehand does not make the pulse land on
+a low `busy`. Only launch 0 fails — at reset the pre-drain runs 1 tick against
+roughly 1650 on every later launch — and launch 0 is the launch `grxblas` uses
+to read the kernel's tile geometry, so everything downstream falls over. Moving
+the block seven lines down is the entire difference between 7/8-and-aborting and
+8/8-and-passing.
+
+*And we sent them a mechanism for that which was wrong.* We said the 7/8 was
+results landing one launch late, invisible to a regression test reusing one
+buffer. To remove the luck from having caught it at all we built
+`parity_probe2.cpp` — a distinct output buffer per launch, checked right after
+each sync and re-read at the end, which detects work arriving in a later call.
+**It refuted our own story**: zero buffers filled late, every launch after the
+first writing its own buffer in its own call. The hazard is narrower than we
+claimed — the first launch, and only the first — and we had shipped an
+explanation that fit the symptom as though it had been tested. Corrected with
+them the same day.
+
+Two things this closes out of the account below.
 **The "wait for busy" hypothesis was never tested here** — the entry looked at
 the argument path because that is where the symptom pointed, and the symptom
 was two layers downstream of the cause. And the entry's suspicion of the

@@ -39,12 +39,29 @@ while (device_->busy) { this->tick(); ... }                        // (b)
 * (b) takes its first tick onto `t=1`, finds busy low, and exits.
   Measured `busy_ticks = 1`.
 
-`run()` therefore executes **one cycle of a ~2300-cycle frame** and returns. The
-work is not lost; it is still pending, and the next `run()`'s ticks carry it out.
-That is the whole of the alternation — launch N's work completes during launch
-N+1, so odd launches read a correct-looking buffer and even ones read nothing.
-With an identical argument blob every launch this is invisible. With differing
-arguments it is a silent wrong answer.
+`run()` therefore executes **one cycle of a ~2300-cycle frame** and returns.
+
+*This paragraph used to continue: "the work is not lost; it is still pending,
+and the next `run()`'s ticks carry it out … with differing arguments it is a
+silent wrong answer." **That was wrong**, and `parity_probe2.cpp` — buffer per
+launch, re-read at the end — is what caught it. On the unfixed build:*
+
+```
+4/8 written by the time the host read them
+4/8 written by the end of the run
+4 launches did not run at all.
+```
+
+**Zero buffers filled late.** The work of a failing launch is not deferred, it
+is never done. What produced the "wrote" on launches 1, 3, 5, 7 in the
+one-buffer probe was the *shared buffer still holding the last successful
+launch's output* — a stale read, not a carried-over frame. The distinction
+matters: there is no silent wrong answer here, there are launches that do not
+execute, and half a shared buffer's readings are stale.
+
+The carry-over story was inferred from an instrument that could not see the
+difference, and it was inferred twice — once here and once in the report sent to
+grxgpu, who had it in hand before it was corrected.
 
 ## The measurements
 
@@ -118,3 +135,27 @@ cluster, core and warp counts.
 
 A negative result about someone else's fix is worth exactly as much as the
 provenance of the tree it was measured on.
+
+## Postscript: the second probe, and why it exists
+
+`parity_probe.cpp` reuses one output buffer. That is enough to detect a launch
+that does not run, and not enough to detect work that lands in a later call —
+launch N-1's output goes into the buffer launch N was going to write, and the
+host reads a correct-looking value either way.
+
+grxgpu's first fix (`506e21321`) drained residual busy *before* the start pulse
+rather than after. Against the one-buffer probe it scored **7/8** and read as
+very nearly right; `test_grxblas` still aborted. `parity_probe2.cpp` gives every
+launch its own buffer, checks it immediately after that launch's sync, and
+re-reads every buffer at the end.
+
+Run against that same build it reported **zero buffers filled late** — which
+refuted the explanation we had already sent grxgpu, that results were one launch
+behind. They are not. The pre-pulse drain breaks exactly launch 0, and launch 0
+is the one `grxblas` uses to read tile geometry.
+
+The probe was built to remove luck from a finding and its first act was to
+correct the finding. That is the argument for building it.
+
+Final state: `3d8785f11` upstream, byte-identical to what is measured here,
+8/8 on both probes and `test_grxblas` PASSED at 4 cores.
