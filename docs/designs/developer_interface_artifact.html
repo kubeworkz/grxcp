@@ -282,7 +282,7 @@
     <div class="stamp">
       <span>GRXCP</span>
       <span><b>DOC</b> designs/developer_interface.md</span>
-      <span><b>REV</b> 2026-09-03</span>
+      <span><b>REV</b> 2026-09-04</span>
       <span><b>STATUS</b> proposal — not built</span>
     </div>
     <h1>The GRXCP Developer Interface</h1>
@@ -392,15 +392,36 @@
           <h3>The real figure is 51%, not 21% — the rest had never been read</h3>
           <p>2776 is the fixed cost inside a stage's measured <em>span</em>, and a span begins at the
             first warp's probe. Everything between the launch and that first warp is outside every
-            number in this section. MCYCLE is zeroed at the launch, so the first warp's own reading
-            <em>is</em> that interval — it had simply never been looked at. Measured across all 23
-            launches at S=16: <strong>216,621 cycles of preamble</strong>, 9418 each, against 328,987
-            of spans. Together, <strong>280,469 of 545,608 — 51.4% of the block is per-launch fixed
-            cost.</strong></p>
+            number in this section. <code>simx</code> zeroes MCYCLE at the launch, so the first
+            warp's own reading <em>is</em> that interval — it had simply never been looked at.
+            Measured across all 23 launches at S=16: <strong>216,621 cycles of preamble</strong>,
+            9418 each, against 328,987 of spans. Together, <strong>280,469 of 545,608 — 51.4% of the
+            block is per-launch fixed cost.</strong></p>
           <p>And it worsens with parallelism rather than improving: at 1, 2 and 4 SMs the preamble
             per launch grows — 9418, 10899, 11383 — so a 1.97× speedup on the work is
             <strong>1.27× end to end</strong>. The case below was right and understated by a factor
             of two.</p>
+        </div>
+        <div class="escalate">
+          <h3>A second finding grew out of this one and was wrong — the scaling wall does not exist</h3>
+          <p>A kernel that timestamps itself, swept across grid sizes, showed the <em>earliest</em>
+            block's entry climbing from 2,910 cycles at one block to 100,774 at 64 with no sign of
+            stopping. That became a per-CTA dispatch cost, a multi-SM scaling wall in the roadmap —
+            a 128-SM part wants thousands of CTAs and nothing in software amortises a serial per-CTA
+            term — and a question to the grxgpu team about which of the two backends was right.</p>
+          <p><strong>The sweep was measuring itself.</strong> It ran seven grid sizes in one process
+            in ascending order, and MCYCLE does not restart between launches on <code>rtlsim</code>:
+            the RTL counter free-runs per core, gated on that core's <code>busy</code>, and only
+            <code>simx</code> resets the device at every launch. Run the sweep descending and the
+            one-block case reports 122,873 instead of 2,910. Six identical launches climb by a
+            constant 8,917.</p>
+          <p>Measured one launch per process, <strong>both backends plateau at residency</strong> —
+            17,687 on <code>rtlsim</code> and 26,414 on <code>simx</code> from 32 blocks up. The
+            preamble scales with occupancy, which the machine bounds, not with the grid, which it
+            does not. There is no scaling wall and no fidelity disagreement. <strong>The 51.4% above
+            is unaffected</strong>: it is a sum of per-launch readings on <code>simx</code>, where
+            the counter does restart, and spans are subtractions on which the offset cancels either
+            way.</p>
         </div>
         <p>An eager operator-by-operator backend does not issue 23 launches per block. It issues far
           more, far smaller ones — that is what the decomposed graph in section 2 looks like before
@@ -542,7 +563,7 @@
     <div class="row">
       <div class="rail">
         <div class="param"><span class="val">1</span><span class="key k-meas">env var to A/B the machine</span></div>
-        <div class="param"><span class="val">3</span><span class="key k-risk">wrong mechanisms, one week</span></div>
+        <div class="param"><span class="val">4</span><span class="key k-risk">wrong claims, one week</span></div>
       </div>
       <div class="body">
         <h2><span class="num">08</span><span>The differentiator is not the simulator — it is that the machine is debuggable</span></h2>
@@ -568,6 +589,13 @@
         <p class="verdict">The 51% launch-cost figure in section 3 exists only because of this. It sat
           in plain view for months, it doubled the strength of this document's central argument, and
           it is not obtainable on hardware at all.</p>
+        <p>It cuts the other way too, which is the half worth keeping. The same convenience that made
+          that number readable — <code>simx</code> zeroing the counter at each launch — is not what
+          the other backend does, and reading a <em>grid sweep</em> through it produced a scaling
+          wall that did not exist. What caught it was the same property: two backends to run against
+          each other, a config rebuilt at will, and a kernel small enough to launch six times and
+          watch a number that should not move. <strong>A machine you can interrogate is one that can
+          mislead you and then be made to say so.</strong> Silicon offers neither half.</p>
         <p>Two more follow from the same property and are worth naming as product:
           <strong>deterministic replay</strong> — every figure here reproduces exactly, so a
           regression is a diff rather than a statistical argument — and <strong>bisecting the
@@ -635,6 +663,12 @@
             went back and read — one refuted by an instrument built to remove luck from the previous
             one, and one refuted by opening the probe and finding a <code>grxMemset</code> on line 22.</p>
           <p><strong>A machine this observable makes confident wrong answers cheaper, not dearer.</strong></p>
+          <p>A fourth followed, and it was the worse kind. The other three explained a symptom that
+            had been measured; the scaling wall in section 3 <em>was</em> the measurement, and it had
+            never been run against a case where it must report no change. Six identical launches
+            would have caught it in ninety seconds. The rule that came out of the first three — a
+            symptom explained is not a symptom measured — did not cover it, so: <strong>an instrument
+            that has never been shown reporting “nothing happened” has not been calibrated.</strong></p>
         </div>
 
         <p>And audience (2) is where that bites hardest. The kernel-writing audience is small, and
