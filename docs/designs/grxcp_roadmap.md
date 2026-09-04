@@ -2239,8 +2239,50 @@ side: at 16 rows the stage goes 13647 → 9591 cycles on 4 SMs, **1.42×**, and
 roughly 8500 of what remains is preamble. Small stages are preamble-bound, and
 no number of SMs touches that. Step 2 stands on its own evidence.
 
+### What the preamble actually is: CTA dispatch, unoverlapped
+
+The 9418-cycle preamble looked like a fixed per-launch cost. It is not. A
+kernel that does nothing but timestamp itself, every block recording its own
+entry (`tests/repro/launch_preamble/`), rtlsim at 4 cores:
+
+| blocks | first block's entry | last | spread |
+|---|---|---|---|
+| 1 | 2910 | 2910 | 0 |
+| 4 | 7198 | 13453 | 6255 |
+| 16 | 45221 | 57615 | 12394 |
+| 64 | 100774 | 124372 | 23598 |
+
+**The first block's entry grows with the grid** — nothing runs until the grid is
+largely set up, at roughly 1500 cycles per CTA. Ruled out by the same run: the
+measuring fence costs 27 cycles at entry, and the first memory access 18. The
+one-block floor is 1828–2910, so device bring-up is real but small.
+
+**This is the mechanism behind everything above.** More SMs means the libraries
+size bigger grids, more CTAs, more serial dispatch — which is why the per-launch
+preamble grew 9418 → 10899 → 11383 with core count, and why a 1.97× span
+speedup is 1.27× end to end. **It is the multi-SM scaling wall**: a 128-SM part
+wants thousands of CTAs in flight, and at this rate a thousand-CTA launch spends
+over a million cycles before any work starts.
+
+It also bounds what step 2 can do. Fusion removes one dispatch per fused pair —
+the full per-launch cost — so it pays. But it does not reduce the CTA count of
+the remaining work, so **fusion cannot address the term that scales with the
+machine.** Making dispatch cheaper or overlapping it with execution is a
+hardware conversation, and on this evidence it belongs in the ordering ahead of
+widening the SM.
+
+**A fidelity disagreement worth resolving first.** simx plateaus at 16 blocks —
+26408, 26408, 26416 for 16, 32, 64 — which is exactly residency here (4 cores ×
+16 warps = 64 warps; 16 blocks × 4 warps = 64). Past residency, blocks queue
+behind retiring ones and first entry stops moving, which is the behaviour you
+would want. rtlsim does not plateau: 45221, 68872, 100774. Either its
+dispatcher genuinely serialises the whole grid or the shim does something simx
+does not, and no grid-sizing decision should be taken on simx numbers until
+that is settled.
+
 **What is still unmeasured:** 2 SMs (the curve has two points), silicon clock
-alignment, and anything above the tiny bench shapes.
+alignment, anything above the tiny bench shapes, and which backend is right
+about dispatch past residency.
 
 **One defect fixed on the way.** When *every* stage was invalid the bench
 printed `(no cycles recorded)` and returned before the loop that prints why —

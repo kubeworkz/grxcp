@@ -98,6 +98,36 @@ worse with parallelism rather than better: measured at 1, 2 and 4 SMs the
 preamble per launch *grows* — 9418, 10899, 11383 — so a 1.97× speedup on the
 work becomes **1.27× end to end** (see `grxcp_roadmap.md`, phase 8).
 
+**And the preamble is not a constant — it is CTA dispatch.** A kernel that does
+nothing but timestamp itself, launched at varying grid sizes, with every block
+recording its own entry (`tests/repro/launch_preamble/`):
+
+| blocks | first block's entry, rtlsim | simx |
+|---|---|---|
+| 1 | 2910 | 3030 |
+| 4 | 7198 | 6863 |
+| 16 | 45221 | 26408 |
+| 64 | 100774 | 26416 |
+
+It is the **first** block's entry that grows, not merely the last: **nothing
+begins executing until the grid has largely been set up**, at roughly 1500
+cycles per CTA. Two candidates are ruled out by the same run — the measuring
+fence costs 27 cycles at entry and the first memory access 18.
+
+So 9418 was the dispatch cost of the grids these kernels happen to launch at
+S=16, and 51.4% is a figure for this shape rather than a property. At
+production sequence lengths the grids are larger and this term grows with them.
+It is also a **multi-SM scaling wall**: a 128-SM part wants thousands of CTAs,
+and at 1500 cycles each, serial, before any work starts, a thousand-CTA launch
+spends over a million cycles dispatching.
+
+That sharpens what fusion is for. Fusing two kernels removes one dispatch of
+that grid — the full per-launch cost, so fusion pays. But it does not reduce
+the CTA count of the work that remains, so **fusion cannot address the term
+that grows with the machine.** Something has to make dispatch cheaper or
+overlap it with execution, and that is a hardware conversation rather than an
+ingestion one.
+
 An eager operator-by-operator backend does not issue 23 launches per block. It
 issues far more, far smaller ones — that is what the decomposed graph in section
 2 looks like before fusion. **So eager dispatch is not a slower option for this
