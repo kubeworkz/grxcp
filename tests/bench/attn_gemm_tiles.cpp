@@ -117,7 +117,7 @@ bool run_one(grxblasHandle_t blas, const Shape& sh, const char* env,
   grxCycleSummary sum{};
   grxCycleSummarize(host.data(), need, &sum);
   // Same two refusals attention_cycles makes, and for the same reason: MCYCLE
-  // restarts at every launch, so a span across two launches is meaningless and
+  // is not comparable across launches, so a span across two is meaningless and
   // more warps live than the device holds is how that shows up.
   if (!sum.spanIsValid) return false;
   if (sum.maxLive > occupancy) return false;

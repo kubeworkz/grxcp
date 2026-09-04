@@ -1422,7 +1422,8 @@ lost. Each launch now writes its own region of the probe buffer.
 
 Giving each launch its own region was still not enough, and the rest of that
 story is below under **the instrument was broken**: the four regions were then
-*spanned*, and `VX_CSR_MCYCLE` restarts at zero at every launch, so the result
+*spanned*, and `VX_CSR_MCYCLE` restarts at zero at every launch on simx, so
+the result
 was a maximum over four unrelated clocks. Each launch is now summarised against
 its own clock and the spans are added.
 
@@ -2076,7 +2077,8 @@ This is the finding that reorders the phase, and it was invisible until a
 
 `tests/bench/block_cycles.cpp` — the instrument behind every cycle number this
 project publishes — measures spans from per-warp `VX_CSR_MCYCLE` probes. MCYCLE
-is **per core** and restarts at zero at every launch (gap 7.25), so a stage
+is **per core** and, on simx, restarts at zero at every launch (gap 7.25 --
+rtlsim does not, which is a separate hazard), so a stage
 whose warps land on more than one core produces a span across two independent
 counters. `grx_cycles.h` has refused that case since it was written.
 
@@ -2154,8 +2156,9 @@ both configurations (attention's share rises 13.7% → 19.8% at 1 SM and
 
 A span runs from the first warp starting to the last warp finishing. The cycles
 between the launch and that first warp are **outside every span in the table** —
-and since MCYCLE is zeroed at the launch, the first warp's own reading *is* that
-interval, measured on the device. Summing spans and calling it "the block"
+and since simx zeroes MCYCLE at the launch, the first warp's own reading *is*
+that interval, measured on the device. (On rtlsim it is not -- see 7.25 and the
+calibration in `block_cycles`. Every preamble figure below is simx.) Summing spans and calling it "the block"
 drops one preamble per launch, and at 23 launches that is not a rounding error.
 
 Measured, S=16, all 23 launches now accounted (three composite stages were
@@ -2239,58 +2242,70 @@ side: at 16 rows the stage goes 13647 → 9591 cycles on 4 SMs, **1.42×**, and
 roughly 8500 of what remains is preamble. Small stages are preamble-bound, and
 no number of SMs touches that. Step 2 stands on its own evidence.
 
-### What the preamble actually is: CTA dispatch, unoverlapped
+### What the preamble is: bounded by occupancy, and NOT a scaling wall
 
-The 9418-cycle preamble looked like a fixed per-launch cost. It is not. A
-kernel that does nothing but timestamp itself, every block recording its own
-entry (`tests/repro/launch_preamble/`), rtlsim at 4 cores:
+The 9418-cycle preamble is not a flat per-launch constant — it grows with grid
+size up to the point the machine is full, and then stops. A kernel that does
+nothing but timestamp itself, every block recording its own entry
+(`tests/repro/launch_preamble/`), **one launch per process**, for the reason
+three paragraphs down:
 
-| blocks | first block's entry | last | spread |
+| blocks | rtlsim first entry | last | simx first entry |
 |---|---|---|---|
-| 1 | 2910 | 2910 | 0 |
-| 4 | 7198 | 13453 | 6255 |
-| 16 | 45221 | 57615 | 12394 |
-| 64 | 100774 | 124372 | 23598 |
+| 1 | 2910 | 2910 | 3030 |
+| 4 | 7195 | 7961 | 6865 |
+| 16 | 16467 | 28115 | 26414 |
+| 32 | **17687** | 33584 | **26414** |
+| 64 | **17687** | 34127 | **26414** |
 
-**The earliest block's entry grows with the grid.** Ruled out by the same run:
-the measuring fence costs 27 cycles at entry, and the first memory access 18.
-The one-block floor is 1828–2910, so device bring-up is real but small.
+Ruled out by the same run: the measuring fence costs 27 cycles at entry, and the
+first memory access 18. The one-block floor is 1828–2910, so device bring-up is
+real but small. Both backends flatten at residency — 4 cores × 16 warps = 64
+slots, 4 warps per block, sixteen resident blocks — which is the behaviour you
+would want and which they **agree** on.
 
-**The mechanism is NOT established, and the first draft of this entry named it
-wrongly.** It said "hardware CTA dispatch, ~1500 cycles per CTA". Block
-distribution is a **software loop** in grxgpu's CTA runtime
-(`sw/kernel/src/vx_spawn.c`): each warp group computes `start_group`,
-`group_stride` and iterates `callback(arg)` over its blocks in sequence. A warp
-running four blocks one after another produces later entry times with no
-hardware dispatch involved at all. What is not yet explained is why the
-*earliest* entry moves. Asked of grxgpu.
+**This entry has now been wrong twice, and the second time was worse.** The
+first draft called the growth "hardware CTA dispatch, ~1500 cycles per CTA".
+That label was retracted after reading grxgpu's CTA runtime, where block
+distribution is a **software loop** (`sw/kernel/src/vx_spawn.c`): each warp
+group computes `start_group`, `group_stride` and iterates `callback(arg)` over
+its blocks in sequence, which accounts for the spread with no hardware
+dispatcher involved. But the retraction kept the numbers — and the numbers were
+the artifact.
 
-**This is the mechanism behind everything above.** More SMs means the libraries
-size bigger grids, more CTAs, more serial dispatch — which is why the per-launch
-preamble grew 9418 → 10899 → 11383 with core count, and why a 1.97× span
-speedup is 1.27× end to end. **It is the multi-SM scaling wall**: a 128-SM part
-wants thousands of CTAs in flight, and at this rate a thousand-CTA launch spends
-over a million cycles before any work starts.
+**They came from a sweep that ran all seven grid sizes in one process, in
+ascending order.** MCYCLE does not restart between launches on rtlsim: the RTL
+counter in `VX_scheduler.sv` is zeroed only under `reset`, which rtlsim issues
+once in its constructor (`sim/rtlsim/processor.cpp` — `run()` pulses `start` and
+drains, and never resets), and it then free-runs per core gated on that core's
+`busy`. simx is the outlier: `ProcessorImpl::run()` opens with `this->reset()`.
+So on rtlsim every reading carried the launches before it. Three ways it was
+watched failing: six identical launches climb by a constant **8917**; the same
+sweep run descending reports **122873** for the one-block case that reads 2910
+when it runs first; and the first three ascending points looked clean only
+because MCYCLE is *per core* and cores 1–3 had not run yet.
 
-It also bounds what step 2 can do. Fusion removes one whole instance of this
-cost per fused pair, so it pays. But it does not reduce the CTA count of the
-remaining work, so **fusion cannot address the term that scales with the
-machine.** Whether that term is addressable at all depends on where it lives —
-software CTA runtime or hardware dispatcher — which is the open question above
-and should be answered before the phase 8 ordering is re-cut around it.
+**So there is no multi-SM scaling wall from this term.** The preamble scales
+with occupancy, which is bounded by the machine, not with the grid, which is
+not. A 128-SM part does not inherit a serial per-CTA cost here, and the phase 8
+ordering does not need re-cutting around one. This was the single largest risk
+this phase carried and it is now retired — by a measurement that says the risk
+was never there, which is a different and less satisfying thing than solving it.
 
-**A fidelity disagreement worth resolving first.** simx plateaus at 16 blocks —
-26408, 26408, 26416 for 16, 32, 64 — which is exactly residency here (4 cores ×
-16 warps = 64 warps; 16 blocks × 4 warps = 64). Past residency, blocks queue
-behind retiring ones and first entry stops moving, which is the behaviour you
-would want. rtlsim does not plateau: 45221, 68872, 100774. Either its
-dispatcher genuinely serialises the whole grid or the shim does something simx
-does not, and no grid-sizing decision should be taken on simx numbers until
-that is settled.
+What the preamble does still do is grow with **core count** at fixed shape:
+9418 → 10899 → 11383 across 1, 2 and 4 SMs, 21% over the range. That is why a
+1.97× span speedup is 1.27× end to end. The grid-scaling explanation for it is
+withdrawn; an occupancy-and-spawn reading is consistent with the table above but
+is **not established**, and three points do not make a curve.
 
-**What is still unmeasured:** 2 SMs (the curve has two points), silicon clock
-alignment, anything above the tiny bench shapes, and which backend is right
-about dispatch past residency.
+Fusion still pays — it removes one whole instance of the per-launch cost per
+fused pair — and the earlier claim that "fusion cannot address the term that
+scales with the machine" is moot, because that term does not exist.
+
+**What is still unmeasured:** the preamble-vs-core-count curve above 4 SMs,
+silicon clock alignment, anything above the tiny bench shapes, and what gates
+first entry between 1 block and residency (asked of grxgpu; the answer no longer
+changes the roadmap, only the explanation).
 
 **One defect fixed on the way.** When *every* stage was invalid the bench
 printed `(no cycles recorded)` and returned before the loop that prints why —
@@ -2412,7 +2427,8 @@ ideally landed before Phase 3.
 | Scope creep into graphics/ray tracing | Medium | RTU and TEX exposure are explicitly deferred to P6+; GRXCP v1 is compute |
 | rv32 doubles the test matrix | Low | rv64 only for v1; rv32 kept compiling, not tested |
 | Emulating hardware features silently | High, insidious | Banned by architecture §10 rule 5 — every emulation is reported through a device property |
-| No cycle instrument survives a core boundary | High | MCYCLE is per core and restarts per launch (7.25); measured at 4 SMs the block bench reports **0 of 12** stages. Phase 8 step 0 builds the clock before any scaling claim is made — a speedup that cannot be read cannot be gated |
+| No cycle instrument survives a core boundary | High | MCYCLE is per core, and restarts per launch on simx but not on rtlsim (7.25); measured at 4 SMs the block bench reported **0 of 12** stages. Phase 8 step 0 builds the clock before any scaling claim is made — a speedup that cannot be read cannot be gated |
+| The instrument reports a number where it should report `-1` | High, and it has happened twice | Cross-launch spans (7.25) and now cross-launch *absolutes*: the preamble sweep produced a multi-SM scaling wall that was its own sweep position. Neither invariant was checked against the backend it was false on. Standing rule: **an instrument that has never been run against a case where it must report "no change" has not been calibrated** — `block_cycles --calibrate-only` is that run |
 | Single-SM tuning accumulates against a threshold that moves 4096× | Medium | grxBLAS's `resident` is 64 today and 262,144 at the flagship. Argues for raising core count early, once Phase 8 steps 1–3 are done, rather than banking more tuning first |
 
 ---

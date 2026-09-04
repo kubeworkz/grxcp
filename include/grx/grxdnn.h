@@ -168,8 +168,8 @@ typedef struct {
 
 // Where each launch of the last instrumented call wrote.
 //
-// This exists because a grxDNN call is not always one launch and MCYCLE
-// restarts at zero at every launch. A caller holding one probe buffer after an
+// This exists because a grxDNN call is not always one launch and MCYCLE is not
+// comparable across launches (7.25). A caller holding one probe buffer after an
 // attention forward has four launches' slots in it on four different clocks;
 // summarising the buffer gives a number that looks like a duration and is not
 // one. So the library reports the boundaries rather than leaving the caller to
@@ -295,7 +295,7 @@ grxdnnStatus_t grxdnnAttentionWorkspaceSize(int batch, int heads, int seqLen,
 // SUMMARISE EACH REGION, NOT THE BUFFER. This comment used to end "summarising
 // the whole buffer afterwards therefore gives the span of all four, which is
 // attention's cost as a caller experiences it", and that was wrong. MCYCLE
-// restarts at zero at every launch (grx_cycles.h), so the four regions carry
+// is not comparable across launches (grx_cycles.h), so the four regions carry
 // four unrelated clocks and a span across them is a maximum, not a duration --
 // on a 1-SM device the combined buffer reports 64 warps live at once where the
 // machine holds 16. grxdnnGetCycleRegions says where each launch's slots are;

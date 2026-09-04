@@ -388,9 +388,9 @@ shapes each, and feeds the perf baseline gate. It exists because the hot-loop
 census ranks kernels by instructions per float op, and an instruction count is a
 prediction: it named sgemv the most expensive shipping kernel, and the cycles
 are what say by how much. Every span is refused if `maxLive` exceeds device
-occupancy, for the reason `block_cycles` refuses one — MCYCLE restarts at zero
-at every launch, so a span across two of them is a maximum over unrelated
-clocks.
+occupancy, for the reason `block_cycles` refuses one — MCYCLE is not comparable
+across launches (it restarts on simx and accumulates on rtlsim, 7.25), so a span
+across two of them is a maximum over unrelated clocks.
 
 `tests/libs/test_grxdnn.cpp` is the grxDNN gate: softmax and layer norm against
 a host reference on five shapes — rows shorter than a warp, rows longer than
@@ -596,7 +596,7 @@ and the difference was believed. The isolated sweep said blocking wins at
 attention's 8×8×8 batch-2 shape by 1.39×; the block profile said shipping that
 cost 3766 cycles; the losing rule was kept, and `ci/README.md` said in this
 paragraph that nobody knew why. **The block profile was wrong.** `VX_CSR_MCYCLE`
-restarts at zero at every launch, attention is four launches sharing one probe
+is not comparable across launches, attention is four launches sharing one probe
 buffer, and its "cost" was a maximum over four unrelated clocks — visible, had
 anyone looked, as 64 warps live at once on a device that holds 16. Measured per
 launch, flipping those two calls *saves* 5990 cycles. See `include/grx/grx_cycles.h`

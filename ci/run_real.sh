@@ -910,8 +910,8 @@ echo "==> ATTENTION, ONE LAUNCH AT A TIME: what the largest stage is made of"
 # float ops, because the kernel computed its exponential twice per element.
 #
 # Every region is summarised against its OWN clock and maxLive is checked
-# against occupancy, for the reason block_cycles does both: MCYCLE restarts at
-# zero at every launch.
+# against occupancy, for the reason block_cycles does both: MCYCLE is not
+# comparable across launches (7.25).
 #
 # ~2 minutes. Feeds the perf baseline gate below.
 if [[ -n "$GRXGPU" && -d "$TOOLDIR/llvm-vortex" ]]; then

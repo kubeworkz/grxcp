@@ -176,9 +176,24 @@ typedef struct {
   // by accident.
   uint64_t crossCoreSpan;
 
-  // The earliest MCYCLE any warp of this launch read. Since the counter is
-  // zeroed at the launch, this IS the launch preamble measured on the device:
-  // reset to the first warp reaching its probe.
+  // The earliest MCYCLE any warp of this launch read.
+  //
+  // ON A BACKEND THAT ZEROES THE COUNTER AT THE LAUNCH, this IS the launch
+  // preamble measured on the device: reset to the first warp reaching its
+  // probe. On one that does not, it is that preamble plus every launch that ran
+  // before it on the same core, and it is not a preamble at all.
+  //
+  // Both exist. simx resets the device at the top of every run(); rtlsim resets
+  // once at construction and the RTL counter free-runs per core thereafter,
+  // which is what silicon does. Nothing in the slots says which you have, so a
+  // caller reading this as an absolute must establish it first -- four
+  // identical launches, and if the reading climbs it is cumulative. See
+  // tests/bench/block_cycles.cpp, which does exactly that and reports -1 when
+  // it cannot, and cuda_mapping.md 7.25.
+  //
+  // `span` and `crossCoreSpan` above are unaffected on either: a span is a
+  // subtraction inside one launch and the offset cancels. That is why this went
+  // unnoticed long enough to reach a roadmap phase.
   //
   // It is reported because every span in this file EXCLUDES it. A span runs
   // from the first warp starting to the last warp finishing, so a caller that

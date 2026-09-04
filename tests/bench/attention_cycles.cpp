@@ -18,8 +18,8 @@
 // gone softmax is 41.3% at S = 8 falling to 39.3% at S = 64. It is still the
 // largest single part of attention, which is what the checks below pin.
 //
-// EACH REGION AGAINST ITS OWN CLOCK, NEVER A SPAN ACROSS TWO. VX_CSR_MCYCLE
-// restarts at zero at every launch, so a span taken across attention's four
+// EACH REGION AGAINST ITS OWN CLOCK, NEVER A SPAN ACROSS TWO. VX_CSR_MCYCLE is
+// not comparable across launches (7.25), so a span taken across attention's four
 // regions is a maximum over four unrelated counters. That is not a hypothetical
 // -- it was this project's largest measurement defect, it reported 64 warps live
 // on a device that holds 16, and a grxBLAS kernel-selection rule was reverted on

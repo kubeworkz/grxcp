@@ -130,9 +130,39 @@ const char* why_no_span(const StageCost& c) {
     return "no warp wrote a slot -- is the kernel's probe reaching finish()?";
   if (c.overOccupancy)
     return "more warps live at once than the device holds: these slots come "
-           "from more than one launch, and MCYCLE restarts at every launch";
+           "from more than one launch, and a span across launches is not a "
+           "duration on either backend";
   return "no span: the slots did not form one";
 }
+
+// DOES MCYCLE RESTART AT EVERY LAUNCH? On one of our two backends it does not,
+// and this file used to assert that it did -- in three comments, as a fact.
+//
+// simx resets the whole device at the top of `ProcessorImpl::run()`, so MCYCLE
+// starts from zero at every launch. rtlsim does not: the RTL counter in
+// `VX_scheduler.sv` is zeroed only under `reset`, which rtlsim issues once in
+// its constructor, and it then free-runs per core, gated on that core's `busy`.
+// On rtlsim a launch's firstStart therefore carries every earlier launch that
+// ran on that core, and a preamble total summed from it is the cost of the
+// whole run rather than of one launch.
+//
+// SPANS ARE SAFE ON BOTH. A span is a subtraction inside one launch and the
+// offset cancels, which is exactly why this hid for as long as it did. It is
+// only the ABSOLUTE readings -- the preamble total and its share of the block --
+// that it decides, so it decides whether they are printed at all.
+//
+// Silicon free-runs mcycle, so rtlsim is the faithful one here and simx's
+// per-launch reset is the convenience. That makes this a property of the
+// backend to be measured, not a bug to be fixed.
+//
+//   -1 not established   0 cumulative   1 restarts per launch
+int  g_mcycle_resets = -1;
+#define GRX_CALIB_N 4
+uint64_t g_calib[GRX_CALIB_N] = {0, 0, 0, 0};  // the readings the verdict used
+// --calibrate-only: establish the counter's behaviour and stop. The full block
+// takes hours on rtlsim, which is exactly the backend whose answer differs, so
+// the check has to be reachable without paying for the block.
+bool g_calibrate_only = false;
 
 // One probe buffer, reused, and it lives on the DEVICE.
 //
@@ -149,8 +179,9 @@ struct Probe {
   int   n   = 0;
   // How many warps this device can hold at once. A summary reporting more live
   // than this did not come from one launch, and a span over more than one
-  // launch is not a duration -- MCYCLE restarts at zero at every launch
-  // (grx_cycles.h). This is the whole reason the number is here.
+  // launch is not a duration -- the launches are separated by a preamble that
+  // is not part of either of them, whatever the counter does across the
+  // boundary. This is the whole reason the number is here.
   int   occupancy = 0;
   std::vector<grxCycleSlot> host;
 
@@ -288,6 +319,62 @@ bool profile(grxblasHandle_t bh, grxdnnHandle_t dh, const Shape& sh,
   grxblasSetCycleProbe(bh, (grxCycleSlot*)probe.dev, probe.n);
   probe.clear();
 
+  // Calibrate the counter before trusting an absolute reading from it.
+  //
+  // FOUR identical launches. Nothing varies between them, so a counter that
+  // restarts per launch reports the same firstStart four times; one that does
+  // not adds a frame's busy cycles at every step, and the readings climb by a
+  // near-constant increment.
+  //
+  // The test is the SHAPE of the series, not the size of one gap, and the first
+  // version of this check got that wrong: it compared two launches and asked
+  // whether the second was at least half again the first. On a four-block
+  // kernel that is a 124% step and it fires; on this layernorm the frame is
+  // only ~2268 cycles against a ~4900 preamble, a 46% step, and the guard
+  // reported "restarts per launch" on the backend that does not. It was written
+  // against the one measurement that happened to be in front of it.
+  //
+  // Monotonicity does not care about that ratio. A flat counter wobbles both
+  // ways -- simx reads 4727 then 4741 -- so three consecutive strict increases
+  // plus growth above a tenth separates them with room to spare either way.
+  //
+  // This is the check that was missing entirely. The grid sweep in
+  // tests/repro/launch_preamble/ ran without it and reported a per-CTA dispatch
+  // cost that was really its own position in the sweep.
+  if (g_mcycle_resets == -1) {
+    bool got_all = true;
+    for (int i = 0; i < GRX_CALIB_N && got_all; ++i) {
+      probe.clear();
+      grxdnnLayerNormForward(dh, S, D, x->f(), D, g1->f(), b1->f(), eps,
+                             h1.f(), D);
+      grxCycleSummary s{};
+      if (!probe.fetch()) { got_all = false; break; }
+      grxCycleSummarize(probe.host.data(), probe.n, &s);
+      if (s.warps == 0) { got_all = false; break; }
+      g_calib[i] = s.firstStart;
+    }
+    probe.clear();
+    if (got_all) {
+      bool climbing = true;
+      for (int i = 1; i < GRX_CALIB_N; ++i)
+        if (g_calib[i] <= g_calib[i - 1]) climbing = false;
+      const bool grew =
+          g_calib[GRX_CALIB_N - 1] > g_calib[0] + g_calib[0] / 10;
+      g_mcycle_resets = (climbing && grew) ? 0 : 1;
+    }
+    // Printed here, not at the end, so it is watchable on a backend where the
+    // rest of this run takes hours (--calibrate-only stops after it).
+    std::printf("MCYCLE restarts per launch: %s\n  %d identical launches read",
+                g_mcycle_resets == 1 ? "yes" :
+                g_mcycle_resets == 0 ? "NO -- absolute readings will report -1"
+                                     : "could not establish",
+                GRX_CALIB_N);
+    for (int i = 0; i < GRX_CALIB_N; ++i)
+      std::printf(" %llu", (unsigned long long)g_calib[i]);
+    std::printf("\n");
+    if (g_calibrate_only) return false;
+  }
+
   grxdnnLayerNormForward(dh, S, D, x->f(), D, g1->f(), b1->f(), eps, h1.f(), D);
   out->push_back(probe.take("layernorm 1"));
 
@@ -323,7 +410,7 @@ bool profile(grxblasHandle_t bh, grxdnnHandle_t dh, const Shape& sh,
       // denominator when both sides carry it. A share does not.
       //
       // Read after each head and SUMMED, for the reason the out projection is:
-      // MCYCLE restarts at zero at every launch, so one read after the loop
+      // MCYCLE is not comparable across launches, so one read after the loop
       // would be a maximum over H unrelated clocks with the smaller head
       // vanishing into the larger.
       for (int hh = 0; hh < H; ++hh) {
@@ -486,12 +573,18 @@ double report(const Shape& sh, const std::vector<StageCost>& stages,
   //
   // A span runs from the FIRST WARP STARTING to the last warp finishing. The
   // cycles between the launch and that first warp are outside every span in the
-  // table -- and MCYCLE is zeroed at the launch, so the first warp's own
-  // reading IS that interval, measured on the device.
+  // table -- and on a backend that zeroes MCYCLE at the launch, the first
+  // warp's own reading IS that interval, measured on the device.
   //
-  // Summing spans and calling the result "the block" therefore drops one
-  // preamble per launch. This prints it rather than leaving the reader to
-  // assume the table is the whole story.
+  // That conditional is the whole point. It is true on simx and false on
+  // rtlsim, and this block printed the number unconditionally until a run of
+  // six identical launches showed the reading climbing by a constant 8917 each
+  // time. Where the counter does not restart, there is no absolute preamble to
+  // report from this data and the honest output is -1.
+  //
+  // Summing spans and calling the result "the block" drops one preamble per
+  // launch. This prints it rather than leaving the reader to assume the table
+  // is the whole story.
   uint64_t preamble = 0;
   int launches = 0;
   for (const StageCost& c : stages) {
@@ -499,7 +592,7 @@ double report(const Shape& sh, const std::vector<StageCost>& stages,
     preamble += c.preamble;
     launches += c.launches;
   }
-  if (launches > 0) {
+  if (launches > 0 && g_mcycle_resets == 1) {
     const uint64_t wall = total + preamble;
     std::printf("  %-26s %10llu cycles  over %d launches (%llu each)\n",
                 "launch preamble", (unsigned long long)preamble, launches,
@@ -507,6 +600,18 @@ double report(const Shape& sh, const std::vector<StageCost>& stages,
     std::printf("  %-26s %10llu cycles  -- preamble is %.1f%% of it\n",
                 "BLOCK, preamble included", (unsigned long long)wall,
                 100.0 * (double)preamble / (double)wall);
+  } else if (launches > 0) {
+    std::printf("  %-26s %10d          -- %s\n", "launch preamble", -1,
+                g_mcycle_resets == 0
+                    ? "MCYCLE does not restart per launch on this backend"
+                    : "could not establish whether MCYCLE restarts per launch");
+    if (g_mcycle_resets == 0)
+      std::printf("  %-26s                     %d identical launches read "
+                  "%llu .. %llu\n", "", GRX_CALIB_N,
+                  (unsigned long long)g_calib[0],
+                  (unsigned long long)g_calib[GRX_CALIB_N - 1]);
+    std::printf("  %-26s %10d          -- spans above are unaffected: a span "
+                "is a subtraction\n", "BLOCK, preamble included", -1);
   }
   *attention_share = attn;
   return (double)total;
@@ -598,6 +703,8 @@ int main(int argc, char** argv) {
   for (int i = 1; i < argc; ++i) {
     if (std::strcmp(argv[i], "--out") == 0 && i + 1 < argc) {
       out_path = argv[++i];
+    } else if (std::strcmp(argv[i], "--calibrate-only") == 0) {
+      g_calibrate_only = true;
     } else if (std::strcmp(argv[i], "--sweep") == 0) {
       sweep_mode = true;
     } else if (std::strcmp(argv[i], "--only-shape") == 0 && i + 1 < argc) {
@@ -657,9 +764,13 @@ int main(int argc, char** argv) {
   for (int i = 0; i < 2; ++i) {
     if (only_shape >= 0 && i != only_shape) continue;
     if (!profile(bh, dh, shapes[i], &stages[i])) {
-      std::printf("could not size the probe; skipping\n");
+      // profile() also returns false on purpose under --calibrate-only, and
+      // saying "could not size the probe" there would be a lie about a run
+      // that did exactly what was asked.
+      std::printf(g_calibrate_only ? "calibration only; stopping here\n"
+                                   : "could not size the probe; skipping\n");
       grxdnnDestroy(dh); grxblasDestroy(bh);
-      return 77;
+      return g_calibrate_only ? 0 : 77;
     }
     totals[i] = report(shapes[i], stages[i], &attn_share[i]);
   }

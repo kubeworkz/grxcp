@@ -87,8 +87,8 @@ def flatten(doc):
                 out[key + " .span"] = st["span"]
                 out[key + " .warps"] = st["warps"]
                 # The most warps live at once. Pinned because it is what proves
-                # a span came from ONE launch: MCYCLE restarts at zero at every
-                # launch, so a stage that quietly starts spanning two moves its
+                # a span came from ONE launch: MCYCLE is not comparable across
+                # launches, so a stage that quietly starts spanning two moves its
                 # cycles and its maxLive together, and pinning only the cycles
                 # is how the last one went unnoticed for three commits.
                 if "maxLive" in st:

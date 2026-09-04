@@ -299,7 +299,7 @@ event elapsed time on a simulator.
 
 **And that counter has a scope, which is one launch.** See 7.25.
 
-### 7.25 `VX_CSR_MCYCLE` restarts at zero at every launch — **SIM, silent**
+### 7.25 `VX_CSR_MCYCLE` restarts at zero at every launch **on simx only** — **SIM, silent**
 
 The device's own cycle counter is the only clock that measures the device, and
 its readings are comparable **within one launch on one core**. Not across
@@ -331,11 +331,35 @@ that holds 16. The comparison is left to the caller, which is the one holding a
 `tests/unit/test_cycle_summary.cpp` gates the arithmetic in tier 1 where no
 simulator is present at all.
 
-This is a property of the SimX model and it has not been checked against
-hardware or rtlsim, neither of which this project can run yet (7.1). On silicon
-MCYCLE is a free-running counter and the question would not arise in this form —
-but a probe buffer holding two launches would still be two launches, and the
-`maxLive` check does not depend on which is true.
+**Checked against rtlsim, and it is the opposite.** This entry used to end "it
+has not been checked against hardware or rtlsim, neither of which this project
+can run yet (7.1)" — a caveat that went stale the moment rtlsim became runnable
+and that nobody went back to close. Measured now: rtlsim does **not** restart
+MCYCLE at a launch. `hw/rtl/core/VX_scheduler.sv` zeroes `cycles` only under
+`if (reset)` and increments it under `if (busy)`, and `sim/rtlsim/processor.cpp`
+issues `reset()` once from its constructor — `run()` pulses `start` and drains.
+The counter free-runs per core, gated on that core's `busy`, exactly as silicon
+would. **SimX is the outlier**, and the guess this entry closed with was right.
+
+That inverts what the gap is. It is not "simulators zero the counter"; it is
+**the two backends disagree about a counter neither of them announces**, and
+code written against either one silently produces nonsense on the other. It cost
+a second real decision: `tests/repro/launch_preamble/` swept seven grid sizes in
+one process on rtlsim and reported a per-CTA dispatch cost that was the sweep's
+own position, a multi-SM scaling wall was written into `grxcp_roadmap.md` phase
+8 on it, and a question built on it was sent to the grxgpu team.
+
+What catches *that* is a calibration rather than an invariant: four identical
+launches, and if the readings climb, the counter is cumulative and no absolute
+reading from it means anything. `tests/bench/block_cycles.cpp` runs it before
+printing a preamble and reports `-1` when it fails; `--calibrate-only` runs just
+the check. The first version compared **two** launches and asked whether the
+second was half again the first — which fires on a four-block kernel and misses
+on a small one, and reported "restarts per launch" on rtlsim. Monotonicity over
+four does not depend on the ratio.
+
+The `maxLive` refusal above is unaffected either way: a probe buffer holding two
+launches is two launches whatever the counter does across the boundary.
 
 ### 7.5 Managed memory on FPGA paths — **DRV**
 

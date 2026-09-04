@@ -79,10 +79,10 @@ At 2776 cycles each, 23 launches is **63848 cycles of fixed cost against a
 **That was the visible half, and the real figure is 51%.** The 2776 is the fixed
 cost inside a stage's measured *span*, and a span begins at the first warp's
 probe — so everything between the launch and that first warp sits outside every
-number above. MCYCLE is zeroed at the launch, so the first warp's own reading is
-exactly that interval, and it had simply never been read. Measured across all 23
-launches at S=16: **216621 cycles of preamble**, 9418 each, against 328987 of
-spans. Adding the two kinds of fixed cost together:
+number above. On simx MCYCLE is zeroed at the launch, so the first warp's own
+reading is exactly that interval, and it had simply never been read. Measured on
+simx across all 23 launches at S=16: **216621 cycles of preamble**, 9418 each,
+against 328987 of spans. Adding the two kinds of fixed cost together:
 
 | | cycles | share of the block |
 |---|---|---|
@@ -98,37 +98,58 @@ worse with parallelism rather than better: measured at 1, 2 and 4 SMs the
 preamble per launch *grows* — 9418, 10899, 11383 — so a 1.97× speedup on the
 work becomes **1.27× end to end** (see `grxcp_roadmap.md`, phase 8).
 
-**And the preamble is not a constant — it is CTA dispatch.** A kernel that does
-nothing but timestamp itself, launched at varying grid sizes, with every block
-recording its own entry (`tests/repro/launch_preamble/`):
+**The preamble is not a constant — it grows with occupancy and then stops.** A
+kernel that does nothing but timestamp itself, launched at varying grid sizes,
+with every block recording its own entry (`tests/repro/launch_preamble/`).
+**One launch per process**, for the reason under the table:
 
 | blocks | first block's entry, rtlsim | simx |
 |---|---|---|
 | 1 | 2910 | 3030 |
-| 4 | 7198 | 6863 |
-| 16 | 45221 | 26408 |
-| 64 | 100774 | 26416 |
+| 4 | 7195 | 6865 |
+| 16 | 16467 | 26414 |
+| 32 | **17687** | **26414** |
+| 64 | **17687** | **26414** |
 
-It is the **earliest** block's entry that grows, not merely the last. Two
-candidates are ruled out by the same run — the measuring fence costs 27 cycles
-at entry and the first memory access 18 — and the one-block floor is ~1850, so
-device bring-up is real and small.
+It is the **earliest** block's entry that grows, not merely the last — and it
+levels off at the point the machine is full: 64 warp slots, four warps per
+block, so sixteen resident blocks. Past that, blocks queue behind retiring ones
+and the first one in is no later than before. Two candidates are ruled out by
+the same run — the measuring fence costs 27 cycles at entry and the first memory
+access 18 — and the one-block floor is ~1850, so device bring-up is real and
+small.
 
-**What that cost IS remains open, and the obvious label is wrong.** The first
-version of this section called it hardware CTA dispatch. It may not be: block
-distribution is a **software loop** in grxgpu's CTA runtime
-(`sw/kernel/src/vx_spawn.c`, `process_thread_groups`), where each warp group
-iterates `for (group_id …) callback(arg)` and runs several blocks in sequence.
-So some or all of this may be the runtime rather than the machine — which
-matters enormously, because one is fixable in software and the other is not.
-Asked of grxgpu; not asserted here.
+**Two earlier versions of this paragraph were wrong, in opposite directions.**
+The first called the growth hardware CTA dispatch at ~1500 cycles per CTA and
+built a multi-SM scaling wall on it. The second retracted the label after
+reading grxgpu's CTA runtime, where block distribution is a **software loop**
+(`sw/kernel/src/vx_spawn.c`, `process_thread_groups`) — but kept the numbers,
+which showed the earliest entry climbing to 100774 at 64 blocks with no sign of
+stopping, and sent grxgpu a question about which backend was right.
 
-What survives either way: 9418 was the cost at the grids these kernels launch
-at S=16, so **51.4% is a figure for this shape rather than a property**, and it
-grows with grid size at production sequence lengths. And whatever the mechanism,
-fusion removes one whole instance of it per fused pair without reducing the CTA
-count of the remaining work — so fusion pays, but does not touch the term that
-scales with the machine.
+**Neither the wall nor the question was real.** Those numbers came from a sweep
+that ran all seven grid sizes in one process in ascending order, and MCYCLE does
+not restart between launches on rtlsim: the RTL counter (`VX_scheduler.sv`) is
+zeroed only under `reset`, which rtlsim issues once in its constructor, and it
+then free-runs per core gated on that core's `busy`. Every reading after the
+first carried the launches before it. Run the same sweep descending and one
+block reports 122873 instead of 2910. Six identical launches climb by a constant
+8917. The curve was the sweep's own position.
+
+So the term that would have scaled with the machine does not exist: **the
+preamble scales with occupancy, which is bounded, and not with the grid, which
+is not.** A 128-SM part does not inherit a serial per-CTA cost from this. What
+remains is a real per-launch cost at the shapes these kernels use — 9418 cycles
+at S=16 — so **51.4% is a figure for this shape rather than a property**, and
+fusion removes one whole instance of it per fused pair.
+
+**And the 51.4% is a simx number for a reason worth stating.** Reading the
+preamble as an absolute requires a counter that restarts at the launch, which is
+something simx does and silicon will not. On hardware the same quantity has to
+be measured as a difference against a reference taken before the launch. The
+figure is sound; the *method* does not transfer, and `block_cycles` now
+calibrates the counter with four identical launches and reports `-1` rather than
+a number on any backend where it does not restart.
 
 An eager operator-by-operator backend does not issue 23 launches per block. It
 issues far more, far smaller ones — that is what the decomposed graph in section
@@ -265,10 +286,20 @@ Gap 7.37 — `rtlsim` losing kernel arguments above one core — was closed on
 | Rebuilt the same design at 1, 2 and 4 SMs and compared | you cannot buy a 2-SM part |
 
 The launch-preamble result in section 3 is the clearest case. **51% of a
-transformer block is per-launch fixed cost**, and it was found because MCYCLE is
-zeroed at the launch, so the first warp's own reading *is* the preamble. That
-number sat in plain view for months, it doubled the strength of this document's
-central argument, and it is not obtainable on hardware at all.
+transformer block is per-launch fixed cost**, and it was found because simx
+zeroes MCYCLE at the launch, so the first warp's own reading *is* the preamble.
+That number sat in plain view for months, it doubled the strength of this
+document's central argument, and it is not obtainable on hardware at all.
+
+It also cuts the other way, which is the part worth keeping. That same
+convenience is not what the other backend does, and reading a *grid sweep*
+through it produced a scaling wall that did not exist — a whole roadmap phase
+was written on a curve that turned out to be the sweep's own position. What
+caught it was the same property: two backends that can be run against each
+other, a config rebuilt at will, and a kernel small enough to launch six times
+and watch the number that should not move. **A machine you can interrogate is
+one that can mislead you and then be made to say so.** Silicon offers neither
+half.
 
 Two more that follow from the same property and are worth naming as product:
 **deterministic replay** — every figure in this document reproduces exactly, so

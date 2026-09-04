@@ -8,7 +8,7 @@ shape by 1.39x, and the block profile said shipping that rule cost 3766 cycles.
 The rule that loses in isolation was kept on the strength of the block number.
 
 The block number was wrong. Attention is four launches sharing one probe
-buffer, MCYCLE restarts at zero at every launch, and the "cost of attention"
+buffer, MCYCLE is not comparable across launches, and the "cost of attention"
 was a maximum over four unrelated clocks -- see include/grx/grx_cycles.h. The
 conflict was never real.
 

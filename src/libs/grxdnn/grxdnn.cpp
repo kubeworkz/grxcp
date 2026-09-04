@@ -199,7 +199,8 @@ unsigned warps_in(const Shape& shape, unsigned warp_size) {
 // `offset` null means this call is a single launch, so the region list starts
 // over; non-null means the caller is walking a multi-launch call and this
 // region is appended to the ones already recorded. The recording is not
-// optional bookkeeping: MCYCLE restarts at zero at every launch, so a caller
+// optional bookkeeping: MCYCLE is not comparable across launches (7.25), so a
+// caller
 // that cannot tell the regions apart cannot get a duration out of the buffer
 // at all (grx_cycles.h, and grxdnnGetCycleRegions).
 grxdnnStatus_t attach_probe(Context& ctx, const Shape& shape,
