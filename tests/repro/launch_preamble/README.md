@@ -1,4 +1,4 @@
-# The launch preamble is CTA dispatch, and no work overlaps it
+# The launch preamble scales with the grid — and what it IS is still open
 
 The block bench reports a per-launch **preamble** — the interval between the
 launch (which zeroes MCYCLE) and the first warp reaching its cycle probe. At
@@ -24,9 +24,16 @@ rtlsim, 4 cores, 16 threads per block:
 | 32 | 68872 | 90206 | 21334 |
 | 64 | 100774 | 124372 | 23598 |
 
-**The FIRST block's entry time grows with the grid.** Not just the last — the
-first. Nothing begins executing until the grid has largely been set up, and
-that setup costs on the order of 1500 cycles per CTA.
+**The EARLIEST block's entry time grows with the grid.** Not just the last.
+
+**Do not call this hardware CTA dispatch.** The first version of this file did,
+and that was a label attached to a measurement rather than a finding. Block
+distribution is a SOFTWARE loop in grxgpu's CTA runtime
+(`sw/kernel/src/vx_spawn.c`, `process_thread_groups`): each warp group computes
+`start_group`/`group_stride` and iterates `callback(arg)` over its blocks in
+sequence. A warp running four blocks back to back produces later entry times
+with no hardware dispatcher involved. What that does NOT explain is why the
+*earliest* entry moves, which is the part worth asking grxgpu about.
 
 ## What it is not
 

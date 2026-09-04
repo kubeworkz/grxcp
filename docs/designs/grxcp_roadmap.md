@@ -2252,10 +2252,18 @@ entry (`tests/repro/launch_preamble/`), rtlsim at 4 cores:
 | 16 | 45221 | 57615 | 12394 |
 | 64 | 100774 | 124372 | 23598 |
 
-**The first block's entry grows with the grid** — nothing runs until the grid is
-largely set up, at roughly 1500 cycles per CTA. Ruled out by the same run: the
-measuring fence costs 27 cycles at entry, and the first memory access 18. The
-one-block floor is 1828–2910, so device bring-up is real but small.
+**The earliest block's entry grows with the grid.** Ruled out by the same run:
+the measuring fence costs 27 cycles at entry, and the first memory access 18.
+The one-block floor is 1828–2910, so device bring-up is real but small.
+
+**The mechanism is NOT established, and the first draft of this entry named it
+wrongly.** It said "hardware CTA dispatch, ~1500 cycles per CTA". Block
+distribution is a **software loop** in grxgpu's CTA runtime
+(`sw/kernel/src/vx_spawn.c`): each warp group computes `start_group`,
+`group_stride` and iterates `callback(arg)` over its blocks in sequence. A warp
+running four blocks one after another produces later entry times with no
+hardware dispatch involved at all. What is not yet explained is why the
+*earliest* entry moves. Asked of grxgpu.
 
 **This is the mechanism behind everything above.** More SMs means the libraries
 size bigger grids, more CTAs, more serial dispatch — which is why the per-launch
@@ -2264,12 +2272,12 @@ speedup is 1.27× end to end. **It is the multi-SM scaling wall**: a 128-SM part
 wants thousands of CTAs in flight, and at this rate a thousand-CTA launch spends
 over a million cycles before any work starts.
 
-It also bounds what step 2 can do. Fusion removes one dispatch per fused pair —
-the full per-launch cost — so it pays. But it does not reduce the CTA count of
-the remaining work, so **fusion cannot address the term that scales with the
-machine.** Making dispatch cheaper or overlapping it with execution is a
-hardware conversation, and on this evidence it belongs in the ordering ahead of
-widening the SM.
+It also bounds what step 2 can do. Fusion removes one whole instance of this
+cost per fused pair, so it pays. But it does not reduce the CTA count of the
+remaining work, so **fusion cannot address the term that scales with the
+machine.** Whether that term is addressable at all depends on where it lives —
+software CTA runtime or hardware dispatcher — which is the open question above
+and should be answered before the phase 8 ordering is re-cut around it.
 
 **A fidelity disagreement worth resolving first.** simx plateaus at 16 blocks —
 26408, 26408, 26416 for 16, 32, 64 — which is exactly residency here (4 cores ×

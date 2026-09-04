@@ -109,24 +109,26 @@ recording its own entry (`tests/repro/launch_preamble/`):
 | 16 | 45221 | 26408 |
 | 64 | 100774 | 26416 |
 
-It is the **first** block's entry that grows, not merely the last: **nothing
-begins executing until the grid has largely been set up**, at roughly 1500
-cycles per CTA. Two candidates are ruled out by the same run — the measuring
-fence costs 27 cycles at entry and the first memory access 18.
+It is the **earliest** block's entry that grows, not merely the last. Two
+candidates are ruled out by the same run — the measuring fence costs 27 cycles
+at entry and the first memory access 18 — and the one-block floor is ~1850, so
+device bring-up is real and small.
 
-So 9418 was the dispatch cost of the grids these kernels happen to launch at
-S=16, and 51.4% is a figure for this shape rather than a property. At
-production sequence lengths the grids are larger and this term grows with them.
-It is also a **multi-SM scaling wall**: a 128-SM part wants thousands of CTAs,
-and at 1500 cycles each, serial, before any work starts, a thousand-CTA launch
-spends over a million cycles dispatching.
+**What that cost IS remains open, and the obvious label is wrong.** The first
+version of this section called it hardware CTA dispatch. It may not be: block
+distribution is a **software loop** in grxgpu's CTA runtime
+(`sw/kernel/src/vx_spawn.c`, `process_thread_groups`), where each warp group
+iterates `for (group_id …) callback(arg)` and runs several blocks in sequence.
+So some or all of this may be the runtime rather than the machine — which
+matters enormously, because one is fixable in software and the other is not.
+Asked of grxgpu; not asserted here.
 
-That sharpens what fusion is for. Fusing two kernels removes one dispatch of
-that grid — the full per-launch cost, so fusion pays. But it does not reduce
-the CTA count of the work that remains, so **fusion cannot address the term
-that grows with the machine.** Something has to make dispatch cheaper or
-overlap it with execution, and that is a hardware conversation rather than an
-ingestion one.
+What survives either way: 9418 was the cost at the grids these kernels launch
+at S=16, so **51.4% is a figure for this shape rather than a property**, and it
+grows with grid size at production sequence lengths. And whatever the mechanism,
+fusion removes one whole instance of it per fused pair without reducing the CTA
+count of the remaining work — so fusion pays, but does not touch the term that
+scales with the machine.
 
 An eager operator-by-operator backend does not issue 23 launches per block. It
 issues far more, far smaller ones — that is what the decomposed graph in section
