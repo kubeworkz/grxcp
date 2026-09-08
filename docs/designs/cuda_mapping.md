@@ -1691,6 +1691,59 @@ team that owns the design as a fit — the same standard we held them to when
 their `CYCLE_COUNT` explanation turned out to be right and our guess about it
 was wrong (7.28).
 
+#### The fit stopped being a fit: the constant was `NUM_ROWS + NUM_COLS + 2`
+
+The array then widened to 8×8 (`06d82fd`, confirmed as the shipped default in
+`9f3c2b3`), which invalidated all twenty measurements — we said so at the time
+and owed a re-derivation. Re-derived now, in `tests/repro/npu_opcount/`, and it
+came back as something better than a refit.
+
+GRX930's new timing note gives the `S_RUN` pass length as `NUM_ROWS + NUM_COLS
++ 2`. **That is exactly 10 at 4×4** — our unexplained constant. So the
+prediction, written into the harness before it was run: at 8×8 the constant must
+be **18**, against a rival hypothesis that it is literally 10 and their
+published form which drops `M` entirely (`MAX_M=8` makes `ceil(M/8)` always 1).
+
+| | 8×8 | 4×4 | total |
+|---|---|---|---|
+| `(R+C+2)·M·ceil(N/C)·ceil(K/R)·R·C` | **15/15** | 15/15 | **30/30** |
+| constant literally 10 | 0/15 | 15/15 (same formula here) | — |
+| their published `ceil(M/R)·ceil(N'/C)·ceil(K/R)·R·C` | 0/15 | 0/15 | **0/30** |
+
+So `OP_COUNT` is now **parameterized rather than fitted**, and holds at two
+array widths — which one width could not have established. The 4×4 rebuild also
+reproduces the historical spot values on the current RTL without adjustment:
+`1×1×1 → 160`, `4×4×4 → 640`, `M=4 N=4 K=8 → OP_COUNT 1280, CYCLE_LO 224`, and
+the `2592` from the `DMA_CT` note above.
+
+**Their cycle model is exactly right — 30/30 across both widths**, from 12
+cycles to 2592:
+
+```
+CYCLE = M × [ (K+1)·N + ceil(K/R)·(R+C+2)·ceil(N/C) ]
+```
+
+That changes how the disagreement should be read, and it is worth being precise
+about: their model of the engine is not wrong, it is right to the cycle. **The
+two formulas in their own document are inconsistent with each other**, and the
+cycle one is the correct one. Dividing our `OP_COUNT` by `R·C` gives back the
+`S_RUN` term of their cycle formula exactly, so
+
+> **`OP_COUNT` is the array's area times the cycles it spends in `S_RUN`** —
+> every PE counted on every `S_RUN` cycle, fill and drain included.
+
+It is therefore **not a count of useful MACs and must not be reported as one**:
+at 8×8 a `K = NUM_ROWS` pass carries `(R+C+2)/R = 2.25×` of fill/drain inside
+the number. Anything in grxcp that ever surfaces this counter has to say what it
+counts, or it will be read as throughput.
+
+One defect in our own harness, caught by the calibration and worth recording
+because of what it is: the first poll was `while (status & BUSY)` with no wait
+for `BUSY` to *rise*, so it exited on its first read and the first command after
+reset reported `OP_COUNT = 0` and wrong answers. **That is the same defect, in
+the same shape, as the rtlsim `run()` bug we reported to grxgpu** — sampling a
+level signal before its transient. We have now made it ourselves twice.
+
 ### 7.35 `grxblasGemmEx` runs on the c930 RTL — **OURS, done; still not silicon**
 
 `tests/rtl/test_npu_rtl.cpp`, built only with `-DGRXCP_C930_RTL_DIR=<path>`.
