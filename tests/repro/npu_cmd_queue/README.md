@@ -1,4 +1,4 @@
-# c930 NPU command queue: back-to-back commands strand — reproducer
+# c930 NPU command queue: back-to-back commands stranded — FIXED, verified here
 
 Drives `c930_npu_top` under Verilator with a C++ AXI memory model and submits
 several GEMMs without waiting for each to finish, which is what the queue in
@@ -24,14 +24,29 @@ the queue forever.
 
 ## Measured, at the SoC's own parameters
 
-| | sequential (control) | 2 pipelined |
-|---|---|---|
-| `3df215b^` (queue, pre-fix) | all correct | occupancy stuck at 1, 1.6M cycles |
-| `3df215b` ("fix tensor unit deadlock on second CTA") | all correct | **identical: occupancy 1, same cycle count** |
+| | sequential (control) | 2 pipelined | 3 | 4 (fills the queue) |
+|---|---|---|---|---|
+| `950b721^` (pre-fix) | 1190 cycles, all correct | **deadlock**, occupancy 1, 1600060 cycles | ERROR, `QUEUE_STATUS=0xc` | — |
+| `72b2e9e` (current HEAD) | 1190 cycles, all correct | **drains, 508 cycles, correct** | 696 cycles, correct | 1120 cycles, correct |
 
-At three or more commands the post-fix RTL differs from the pre-fix one, but not
-in the direction claimed: it sets STATUS.ERROR and reports `QUEUE_STATUS = 0xc`,
-an occupancy of twelve on a four-entry queue.
+**The fix is real and this is our own run of it**, not a reading of the commit
+message. `950b721` ("fix command queue drain, add staging buffer, watchdog
+timers, and diagnostics") adds the `D_IDLE` branch that was missing — engine
+idle, FIFO non-empty, nothing dispatching — which is the state this harness
+sat in for 1.6M cycles. The control is unchanged at 1190 cycles on both
+builds, so the harness did not move under us.
+
+`QUEUE_STATUS=0xc` on the old build is gone: occupancy now reads 0,1,2,3 as
+commands are pushed and returns to 0 when drained.
+
+### What the queue is worth, measured here and bounded below
+
+Four GEMMs sequential is 1190 cycles; the same four queued is 1120. That is
+**70 cycles over four commands** — the inter-command dispatch bubble, and
+nothing more. Do not read it as the value of batching on a real host: this
+harness polls CSRs every cycle with no bus latency, so it is the *floor*. What
+a host pays per round trip over MMIO is the part that batching actually
+removes, and that is not measurable from here.
 
 ## Why the completion signal is the queue and not DONE
 

@@ -160,6 +160,11 @@ int main(int argc,char**argv){
         int32_t got=(int32_t)(r.ddr[a]|(r.ddr[a+1]<<8)|(r.ddr[a+2]<<16)|((uint32_t)r.ddr[a+3]<<24));
         if(got!=ref_gemm(As[t].data(),Bs[t].data(),ops[t].n,ops[t].k,i,j)) ++bad;
       }
-  std::printf("%s\n", bad ? "*** WRONG ANSWERS ***" : "all four results match the host reference");
+  // NOPS, not "four": this harness is run at 2, 3 and 4 and the loop above
+  // checks exactly the ops that ran. A pass line that says "four" after two
+  // ran is the kind of sentence that gets quoted six weeks later.
+  std::printf(bad ? "*** %d WRONG ANSWERS ***\n"
+                  : "all %d results match the host reference\n",
+              bad ? bad : NOPS);
   return bad?1:0;
 }

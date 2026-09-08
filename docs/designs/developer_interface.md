@@ -239,9 +239,25 @@ slack to an ordinary piece of enabling work, and it removes the argument that
 bf16 forces matmul through the NPU.
 
 Two things survive the correction. The NPU's bf16 is still bounded at
-`MAX_M=8, MAX_N=12, MAX_K=16` with a command queue that cannot pipeline two
-commands, so the NPU is not a bf16 escape hatch if the GPU path stalls. And the
-general lesson is worth more than the specific fact: **a capability can be
+`MAX_M=8, MAX_N=12, MAX_K=16`, so the NPU is not a bf16 escape hatch if the GPU
+path stalls — the *shape* limit is what disqualifies it, and that has not moved.
+
+**The queue half of that sentence is now stale and the correction is worth
+recording.** It used to read "with a command queue that cannot pipeline two
+commands", which was true when written: we reported the strand and measured it
+at 1.6M cycles with one command stuck in the queue. GRX930 fixed it in
+`950b721` by adding the `D_IDLE` branch that drains a non-empty FIFO when the
+engine is idle. Verified here rather than taken from the commit message — same
+harness, same parameters, `950b721^` against `72b2e9e`:
+
+| | sequential (control) | 2 pipelined | 4 (fills the queue) |
+|---|---|---|---|
+| pre-fix | 1190 cycles | **deadlock**, 1600060 cycles | — |
+| HEAD | 1190 cycles | 508 cycles, correct | 1120 cycles, correct |
+
+The control is identical on both builds, so the harness did not move. The queue
+works; the shape bound is what still rules the NPU out as a general fallback.
+And the general lesson is worth more than the specific fact: **a capability can be
 absent from the product while present in the silicon, and the two are not the
 same finding.** The honest instrument would have been to ask the device, which
 this project already does elsewhere and did not do here.

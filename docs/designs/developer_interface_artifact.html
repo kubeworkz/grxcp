@@ -513,8 +513,12 @@
         <p class="verdict">bf16 needs a bit in the reported type set and a path through
           grxblasGemmEx — two pieces of our own software, neither on the tape-out critical path.</p>
         <p>Two things survive the correction. The NPU's bf16 is still bounded at
-          <code>MAX_M=8, MAX_N=12, MAX_K=16</code> with a command queue that cannot pipeline two
-          commands, so it is not an escape hatch if the GPU path stalls. And the general lesson
+          <code>MAX_M=8, MAX_N=12, MAX_K=16</code>, so it is not an escape hatch if the GPU path
+          stalls — the <em>shape</em> limit is what disqualifies it. This sentence used to add "with
+          a command queue that cannot pipeline two commands"; GRX930 fixed that in
+          <code>950b721</code>, and we verified it rather than taking the commit message — two
+          queued GEMMs went from a 1.6M-cycle deadlock to draining in 508 cycles, with the
+          sequential control unchanged at 1190 on both builds. And the general lesson
           outlasts the specific fact: <strong>a capability can be absent from the product while
           present in the silicon, and those are not the same finding.</strong> The honest instrument
           would have been to ask the device — which this project does elsewhere, and did not do
