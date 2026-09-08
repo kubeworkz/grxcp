@@ -2144,6 +2144,54 @@ ran against `build-real/test_grxblas`, which statically links grxblas and
 predates the edit, so both the silence and the sabotage were measurements of a
 stale binary. `strings` on the built library is what caught it.
 
+### 7.38 The runtime is not safe to call from more than one host thread — **CROSS-TEAM + DOC, silent**
+
+CUDA's runtime API is thread-safe. Ours has never said whether it is, and until
+now the question was academic: the GRX930 host was a single RISC-V64 core, so
+"one thread touches the driver" held by construction. It went to **four cores
+with a directory-coherent shared L2**, and the question stopped being academic.
+
+Measured rather than read — four threads, real calls, under ThreadSanitizer,
+with TSan first watched firing on a deliberate race and every operation checked
+against a **single-threaded control** that passes (`tests/repro/host_threads/`):
+
+| stage | grxcp's own state | underneath |
+|---|---|---|
+| allocator, 160 ops | **0 races, 0 failures** | — |
+| module load / unload | 0 races | **19 of 40 loads fail**: `address range overlaps with existing allocation` |
+| events | 0 races; locks correctly | **5 data races**, all `libvortex` |
+| launches, per-thread streams | 0 races | **7 data races**, `libvortex` and the simulator's DRAM model |
+
+**No grxcp code owns a racing access.** Every `#0`/`#1` frame belongs to
+`libvortex`; grxcp appears at depth 2+ as the caller, and once as the owner of a
+mutex TSan noted it taking. That was verified rather than assumed — grxcp links
+into the test binary, so its frames appear as `stress+0x…` and are easy to
+mistake for the backend's.
+
+The sharp one is an event-lifetime defect in the Vortex runtime:
+`vx_event_release` calls `pthread_cond_destroy` on a condvar while another
+thread is inside `pthread_cond_broadcast` on it, reached by an ordinary
+sequence — create an event on one thread, let another thread's queue signal it,
+destroy it. `vx::Event::signal`, `::complete`, `::wait_value` and
+`vx::Queue::worker_loop` all appear in the same run, so it is the object's whole
+lifetime rather than one call. The module failure is a different shape: nothing
+races on a word, so TSan is silent, but `vx_module_load_bytes`'s check-and-
+reserve of the image address range is not atomic and concurrent loads of the
+same `.vxbin` collide where sequential loads of it do not.
+
+**Two things follow, and they are separable.** The runtime defects belong to
+grxgpu and are reported there. What is ours is that **the contract is
+unwritten** — a CUDA-shaped API silent about thread safety will be assumed
+thread-safe, and the failure mode here is a destroyed condition variable rather
+than an error code. Until the layer underneath is fixed, the honest contract is
+one thread, and it has to be stated in `include/grx/` rather than inferred.
+
+Worth recording that our own bookkeeping came through clean, since the audit was
+started expecting the opposite: `g_mem_mutex` covers the whole carve-and-record,
+the stream table locks, and `launch.cpp` — which has no mutex at all — was never
+implicated, because its per-call state is `thread_local`. That is evidence, not
+proof; TSan sees only the interleavings that happened.
+
 ## 8. Where GRX-G100 is *ahead* of the reference
 
 Worth recording, because the platform should expose these rather than

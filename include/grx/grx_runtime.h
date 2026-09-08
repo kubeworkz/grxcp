@@ -7,6 +7,31 @@
 // vortex2.h driver surface. Where a CUDA feature needs GRX-G100 driver or
 // hardware work, the entry point returns grxErrorNotSupported and the gap is
 // recorded in docs/designs/cuda_mapping.md section 7 -- it is never faked.
+//
+// THREADING CONTRACT: CALL THIS API FROM ONE HOST THREAD.
+//
+// This is the one place where the CUDA analogy does not hold and the difference
+// is silent. The CUDA runtime API is thread-safe; this one is not yet, and the
+// reason is below it rather than in it. It matters now because the GRX930 host
+// went from a single RISC-V64 core to four with a coherent shared L2, so a
+// second thread stopped being hypothetical.
+//
+// Measured, four threads under ThreadSanitizer against a passing
+// single-threaded control (tests/repro/host_threads/, gap 7.38):
+//
+//   * grxEventDestroy on one thread can destroy a condition variable while
+//     another thread is broadcasting on it, inside the driver's event object.
+//     Undefined behaviour, not an error code.
+//   * Concurrent grxModuleLoad of the same image fails 19 times in 40 --
+//     the driver's check-and-reserve of the image address range is not atomic.
+//   * Concurrent launches on separate streams race inside the driver's queue.
+//
+// grxcp's own bookkeeping was clean in that run -- the allocator, the stream
+// table and the module table all hold their locks -- so this is a statement
+// about the layer underneath, not an admission about this one. It is written
+// here anyway, because an API that is silent about thread safety will be
+// assumed thread-safe, and the failure mode above is not one a caller can
+// detect. Serialise at your own boundary until this notice changes.
 
 #ifndef GRX_RUNTIME_H
 #define GRX_RUNTIME_H
