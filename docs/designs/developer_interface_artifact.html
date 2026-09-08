@@ -415,6 +415,14 @@
             <code>simx</code> resets the device at every launch. Run the sweep descending and the
             one-block case reports 122,873 instead of 2,910. Six identical launches climb by a
             constant 8,917.</p>
+          <p><strong>And the mechanism was named wrongly twice.</strong> The first draft said hardware
+            CTA dispatch; that was withdrawn after finding a software block-distribution loop in
+            grxgpu's tree. <code>vx_spawn.c</code> is not linked into anything we build —
+            <code>llvm-nm</code> on the probe kernel shows <code>__vx_cta_entry</code> and no
+            <code>vx_spawn_threads</code>, and <code>_start</code> is three instructions ending in
+            <code>jalr</code>: one CTA per entry, no loop. Distribution <em>is</em> hardware, via the
+            KMU and <code>VX_cta_dispatch</code>. The retraction retracted the correct half; what
+            stays retracted is the cost model built on it.</p>
           <p>Measured one launch per process, <strong>both backends plateau at residency</strong> —
             17,687 on <code>rtlsim</code> and 26,414 on <code>simx</code> from 32 blocks up. The
             preamble scales with occupancy, which the machine bounds, not with the grid, which it
@@ -563,7 +571,7 @@
     <div class="row">
       <div class="rail">
         <div class="param"><span class="val">1</span><span class="key k-meas">env var to A/B the machine</span></div>
-        <div class="param"><span class="val">4</span><span class="key k-risk">wrong claims, one week</span></div>
+        <div class="param"><span class="val">5</span><span class="key k-risk">wrong claims, one week</span></div>
       </div>
       <div class="body">
         <h2><span class="num">08</span><span>The differentiator is not the simulator — it is that the machine is debuggable</span></h2>
@@ -669,6 +677,10 @@
             would have caught it in ninety seconds. The rule that came out of the first three — a
             symptom explained is not a symptom measured — did not cover it, so: <strong>an instrument
             that has never been shown reporting “nothing happened” has not been calibrated.</strong></p>
+          <p>A fifth followed the same day, and it rhymes: the mechanism quoted to grxgpu came out of
+            their source, and <code>--gc-sections</code> had removed it from our binary. Both were
+            cases of believing a text over an artifact we could have run. <strong>A mechanism found
+            by reading source is a hypothesis until the binary agrees.</strong></p>
         </div>
 
         <p>And audience (2) is where that bites hardest. The kernel-writing audience is small, and

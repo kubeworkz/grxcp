@@ -2264,14 +2264,30 @@ real but small. Both backends flatten at residency — 4 cores × 16 warps = 64
 slots, 4 warps per block, sixteen resident blocks — which is the behaviour you
 would want and which they **agree** on.
 
-**This entry has now been wrong twice, and the second time was worse.** The
-first draft called the growth "hardware CTA dispatch, ~1500 cycles per CTA".
-That label was retracted after reading grxgpu's CTA runtime, where block
-distribution is a **software loop** (`sw/kernel/src/vx_spawn.c`): each warp
-group computes `start_group`, `group_stride` and iterates `callback(arg)` over
-its blocks in sequence, which accounts for the spread with no hardware
-dispatcher involved. But the retraction kept the numbers — and the numbers were
-the artifact.
+**This entry has now been wrong twice, and the second time retracted the correct
+half.** The first draft called the growth "hardware CTA dispatch, ~1500 cycles
+per CTA". That *label* was then withdrawn on the strength of a software
+block-distribution loop found in grxgpu's tree (`sw/kernel/src/vx_spawn.c`,
+`process_thread_groups`), which accounts for the spread with no hardware
+dispatcher involved. The retraction kept the *numbers*, and the numbers were the
+artifact.
+
+**`vx_spawn.c` is not linked into anything we build.** `llvm-nm` on the probe
+kernel returns 28 symbols — `__vx_cta_entry`, `__vx_kentry_preamble_probe`,
+`preamble_probe`, crt — and no `vx_spawn_threads`, `process_thread_groups` or
+`vx_wspawn`; `--gc-sections` drops them from `libvortex2.a`. `_start`
+disassembles to `csrr s11, 0xce1` (`VX_CSR_CTA_ENTRY`), `csrr a0, mscratch`,
+`jalr s11`: no loop, one CTA per entry. grxgpu's `sw/kernel/src/vx_start.S` says
+it outright — *"the KMU launches every (block, thread) coordinate of a kernel at
+that kernel's entry PC"* — and `VX_cta_dispatch` is instantiated unconditionally
+in `VX_scheduler.sv`, fed from `kmu_bus_if`, issuing one warp per cycle.
+**Distribution is hardware.** `vx_spawn.c` is the footer-less `kernel_main`
+path their regression tests use, which is why it was there to find.
+
+So the label was right and the cost model was wrong, and neither correction held
+both ends at once. A dispatcher issuing one warp per cycle into a finite pool of
+warp slots fills the machine quickly and then makes further CTAs wait for
+retirement — which is the plateau, and is not a serial per-CTA term.
 
 **They came from a sweep that ran all seven grid sizes in one process, in
 ascending order.** MCYCLE does not restart between launches on rtlsim: the RTL

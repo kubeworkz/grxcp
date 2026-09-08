@@ -1,6 +1,7 @@
 # The launch preamble grows with occupancy and stops at residency
 
-*The first two versions of this file measured something else.*
+*The first two versions of this file measured something else, and both named the
+mechanism wrongly — in opposite directions.*
 
 The block bench reports a per-launch **preamble** — the interval between the
 launch and the first warp reaching its cycle probe. At S=16 it measured 9418
@@ -36,7 +37,10 @@ than simx at large grids.
 
 The earliest block's entry does grow between 1 block and residency — 5.7× on
 rtlsim, 8.7× on simx. That part is real on both. What gates it is asked of
-grxgpu; `process_thread_groups` explains the spread but not the floor.
+grxgpu. Distribution is hardware -- the KMU fires every CTA at the kernel entry
+PC and `VX_cta_dispatch` issues one warp per cycle -- so CTAs beyond residency
+wait for warp slots, which explains the spread. What gates the *first* CTA
+between one block and residency is the part still open.
 
 ## What it is not
 
@@ -45,7 +49,8 @@ grxgpu; `process_thread_groups` explains the spread but not the floor.
 | the instrument — `vx_rdcycle_sync`'s fence at entry | **27 cycles.** Not it. |
 | the first memory access, cold dcache | **18 cycles.** Not it. |
 | fixed device bring-up | **1828 cycles at one block** — real, but a floor |
-| hardware CTA dispatch at ~1500 cycles/CTA | **retracted.** Block distribution is a software loop (`sw/kernel/src/vx_spawn.c`, `process_thread_groups`) |
+| ~1500 cycles/CTA, serial | **retracted.** That number came from the contaminated sweep below |
+| block distribution as a software loop | **retracted, and it retracted the wrong half.** `vx_spawn.c` is not linked here: `llvm-nm` on the probe kernel shows `__vx_cta_entry` and no `vx_spawn_threads`, and `_start` is `csrr s11, VX_CSR_CTA_ENTRY` / `csrr a0, mscratch` / `jalr s11` -- one CTA per entry, no loop. Distribution **is** hardware, via the KMU and `VX_cta_dispatch` |
 | a serial per-CTA cost that scales with the grid | **refuted.** It stops at residency on both backends |
 
 The kernel takes an unserialized `csrr` as its very first instruction, so the
@@ -125,6 +130,13 @@ VORTEX_DRIVER=rtlsim ./build-real/repeat_probe 4 16 6 # same grid, six times
 
 # the honest sweep: one launch per process
 for nb in 1 2 4 8 16 32 64; do ./build-real/repeat_probe $nb 16 1; done
+
+# which distribution path this binary actually takes -- run this BEFORE
+# quoting a mechanism out of grxgpu's source. --gc-sections means the most
+# plausible explanation in the tree can be absent from the program.
+llvm-nm --defined-only build-real/preamble.elf
+llvm-objdump -d --start-address=0x180000000 --stop-address=0x18000005c \
+    build-real/preamble.elf
 ```
 
 The kernel writes `{t_raw, t_sync, t_arg, core+1}` per block. `t_raw` is a plain

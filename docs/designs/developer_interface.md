@@ -119,13 +119,23 @@ the same run — the measuring fence costs 27 cycles at entry and the first memo
 access 18 — and the one-block floor is ~1850, so device bring-up is real and
 small.
 
-**Two earlier versions of this paragraph were wrong, in opposite directions.**
-The first called the growth hardware CTA dispatch at ~1500 cycles per CTA and
-built a multi-SM scaling wall on it. The second retracted the label after
-reading grxgpu's CTA runtime, where block distribution is a **software loop**
-(`sw/kernel/src/vx_spawn.c`, `process_thread_groups`) — but kept the numbers,
+**Two earlier versions of this paragraph were wrong, and the second retracted
+the correct half.** The first called the growth hardware CTA dispatch at ~1500
+cycles per CTA and built a multi-SM scaling wall on it. The second withdrew the
+*label* after finding a software block-distribution loop in grxgpu's tree
+(`sw/kernel/src/vx_spawn.c`, `process_thread_groups`) — and kept the *numbers*,
 which showed the earliest entry climbing to 100774 at 64 blocks with no sign of
 stopping, and sent grxgpu a question about which backend was right.
+
+Both halves were backwards. **`vx_spawn.c` is not linked into anything we
+build.** `llvm-nm` on the probe kernel returns 28 symbols; the entry is
+`__vx_cta_entry`, and `_start` disassembles to `csrr s11, VX_CSR_CTA_ENTRY` /
+`csrr a0, mscratch` / `jalr s11` — no loop, one CTA per entry. `--gc-sections`
+drops the spawn path because nothing reaches it. grxgpu's own
+`sw/kernel/src/vx_start.S` says so directly: *"the KMU launches every (block,
+thread) coordinate of a kernel at that kernel's entry PC"*. Block distribution
+here **is** hardware, through the KMU and `VX_cta_dispatch`; `vx_spawn.c` is the
+legacy `kernel_main` path their regression tests use.
 
 **Neither the wall nor the question was real.** Those numbers came from a sweep
 that ran all seven grid sizes in one process in ascending order, and MCYCLE does
@@ -136,7 +146,11 @@ first carried the launches before it. Run the same sweep descending and one
 block reports 122873 instead of 2910. Six identical launches climb by a constant
 8917. The curve was the sweep's own position.
 
-So the term that would have scaled with the machine does not exist: **the
+So the mechanism is a hardware dispatcher and the cost model built on it was
+still wrong, which is the combination neither retraction managed to hold. A
+dispatcher issuing one warp per cycle into a finite pool of warp slots fills the
+machine and then makes further CTAs wait for retirement — exactly the plateau.
+The term that would have scaled with the machine does not exist: **the
 preamble scales with occupancy, which is bounded, and not with the grid, which
 is not.** A 128-SM part does not inherit a serial per-CTA cost from this. What
 remains is a real per-launch cost at the shapes these kernels use — 9418 cycles
