@@ -17,6 +17,24 @@
 - [Heterogeneous devices](designs/heterogeneous_devices.md) — **design, not
   built**: where the backend seam goes for the GRX930 NPU, why abstracting the
   driver is the wrong answer, and which of it can be gated before a c930 exists
+- [PTA on the CPU](designs/pta_cpu_integration.md) — **design, nothing built**:
+  a photonic tensor tile in the c930 NPU, emulation-only by decision; why the
+  weight-stationary systolic array is already the right dataflow, the loop
+  interchange that a microsecond weight-programming time forces, and how an
+  analog device keeps a bitwise numerical gate instead of losing one
+- [PTA on the GPU](designs/pta_gpu_integration.md) — **design, staged behind
+  the CPU path**: why the FEDP backend seam is the wrong place for a photonic
+  engine and the right place for an analog-numerics study, where the engine
+  actually goes, and the weight-residency-versus-warp-scheduling problem the
+  GPU has and the CPU does not
+- [TPA-QCN PTA review](designs/pta_tpaqcn_review.md) — **a review, nothing
+  built**: the Tier-1 physics of `docs/GRX_AI_Photonics_PTA_TPA_QCN.md` run
+  rather than read — why the effective-index model cannot express the
+  birefringent phase matching the whole premise rests on, why the energy per
+  activation is picojoules rather than attojoules (checked against the
+  published TPA-QCN waveguide: hundreds as built), what removing the ADC does
+  to noise accumulation, and the activation-stage experiment that answers it in
+  the c930 emulator without any photonics
 - [The GRXCP developer interface](designs/developer_interface.md) — **a
   proposal, not built**: who the developer is, why the 2776-cycle launch cost
   forces a graph-level ingestion rather than an eager backend, the bf16
