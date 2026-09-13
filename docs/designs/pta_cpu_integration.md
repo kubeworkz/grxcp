@@ -202,6 +202,14 @@ for thin-film lithium tantalate (Powell et al., *Opt. Express* 32, 44115, 2024).
 At this end, accuracy over a long run is a calibration question (§5.1), not a
 loop-nest one.
 
+[`pta_material_scorecard.py`](pta_material_scorecard.py) puts thermo-optic
+silicon, thin-film lithium tantalate and non-volatile barium titanate through
+the same model. Resident, every one of them lands on the same 25.6 µs. What
+differs is what holding the weights costs — about 25 W of heater power for one
+GEMM's 2,048 thermo-optic shifters, under a milliwatt for barium titanate — and
+how far they drift. Rewritten per tile, barium titanate's 80 ns switch lands
+within 2% of the 78.7 ns break-even.
+
 ### 2.2 What the interchange costs
 
 Accumulator state. Today `acc[0..NUM_COLS-1]` is one output row's running

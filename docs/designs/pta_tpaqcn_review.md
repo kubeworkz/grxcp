@@ -411,9 +411,11 @@ pulsed clock:
 | compound 4, leakage removed, 6 mm | 0.835 W | 8.35 pJ | 835 fJ | 83.5 fJ |
 | TFLN-class (~5000 %/W/cm²), 1 cm, no loss | 15.5 mW | 155 fJ | 15.5 fJ | 1.55 fJ |
 
-The femtosecond column is not hypothetical: dispersion-engineered lithium
+Femtosecond switching is not hypothetical: dispersion-engineered lithium
 niobate nanowaveguides have switched with energies down to 80 fJ and times down
-to about 46 fs, with no cavity (Guo et al., *Nat. Photonics* 16, 625, 2022).
+to about 46 fs, with no cavity (Guo et al., *Nat. Photonics* 16, 625, 2022) —
+though, as the end of this section shows, at energies well above the table's
+bottom row.
 
 **Walk-off sets how short the pulse can be.** The fundamental and second
 harmonic travel at different group velocities, and a pulse shorter than the
@@ -452,6 +454,20 @@ devices, and it arrives where nanoscale optoelectronics already points, around a
 femtojoule — where an activation carries about 12,000 photons and shot noise, at
 about 1%, starts to decide how far a signal can travel between resets (section
 5.2).
+
+The TFLN-class figure behind that is an idealisation: lossless, a centimetre
+long, and free of walk-off. The measured lithium niobate switch above costs
+80 fJ, about 50 times the table's 1.55 fJ — half of today's 172 fJ analog
+device and four times the 18 fJ one. A switching
+energy is not defined exactly as this review's knee, but no difference in
+definition is worth a factor of 50. On measured numbers, the most efficient
+chi(2) platform's best all-optical switch is the analog neuron's peer, not its
+successor. [`pta_material_scorecard.py`](pta_material_scorecard.py) runs every
+candidate through the same model and prints what a successor film would need:
+at 5 dB/cm and 100 fs, about 35 pm/V of chi_31 just to tie the 18 fJ neuron —
+twice compound 4, four times TPA-QCN. Cutting loss n-fold buys what an n-fold
+chi(2) does, but it is spent as length, and length is paid for in
+group-velocity matching and phase-matching tolerance.
 
 **So the honest answer has two halves.** Far better than a *digital* O-E-O
 activation is physically reachable, with a pulsed clock and
