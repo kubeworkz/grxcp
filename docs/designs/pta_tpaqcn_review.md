@@ -667,6 +667,30 @@ channel count, not by time-of-flight. This is a small change to the performance
 model and it will move the headline number by orders of magnitude — which is a
 reason to make it now rather than after Layer 5.
 
+**Made, in [`pta_operand_supply.py`](pta_operand_supply.py), and the headline
+moves as predicted.** Ported as written, `evaluate_pta` gives the proposal's own
+per-chip configuration — four layers of N = 16 over 32 channels — 1.07 POPS,
+about a quarter of the H100 it compares against, so the table's 10–100 POPS is
+9 to 94 such chips. The model also never reads four parameters its own
+configuration defines: a 10 GHz control clock and the DAC, ADC and modulator
+energies per bit. Put back, with one shot per symbol:
+
+- **Throughput** is 0.33 POPS at the proposal's own control clock, 1.6 at its
+  50 GBd link rate and 3.3 at its activation's 100 GHz — below the H100 at every
+  rate the proposal itself uses. The headline needs 3 to 31 times the
+  activation's own bandwidth.
+- **Feed.** One chip's inputs need 31–307 Tb/s from the host: 3–307 mm² at the
+  proposal's own 1–10 Tb/s/mm², or 0.011 POPS if they arrive over a PCIe 6.0 x16
+  link.
+- **Energy.** The conversions at the two ends of the stack, at the proposal's
+  own per-bit energies, cost 26 fJ per MAC — fifty times the claimed 0.5 fJ,
+  before any activation. With one activation per output rather than four per
+  layer, and the measured-anchored energies of section 4.5, a MAC costs 27 fJ
+  (TFLN-class at 100 fs) to 550 fJ (compound 4 at 10 ps): 9 to 190 times less
+  than the H100's 5 pJ, not 10,000. The analog optoelectronic neuron lands at
+  28 fJ, beside the best all-optical row — the conversions, not the activation,
+  set the floor.
+
 ---
 
 ## 8. Smaller notes
@@ -742,10 +766,12 @@ is the all-optical branch, and item 4 is its kill test.
    open question; closes the design loop with hardware we control. Include the
    fixed-pattern detuning of section 5.1 from the start, and sweep photons per
    activation alongside N (section 5.2).
-5. **Put an operand supply into the performance model**, then re-derive the
+5. ~~**Put an operand supply into the performance model**, then re-derive the
    headline throughput and energy claims — with the pulse length as a
    parameter, and an analog optoelectronic neuron beside the digital O-E-O
-   baseline (section 4.5).
+   baseline (section 4.5).~~ — **done**, section 7 and `pta_operand_supply.py`:
+   below the H100 at every symbol rate the proposal uses, and about 27 fJ per
+   MAC at best, set by the stack's conversions rather than its activation.
 6. **Add ageing to the risk register** with a measurement plan.
 7. **Cut or clearly label Layer 7**, and regenerate or mark the evaluation
    tables.
