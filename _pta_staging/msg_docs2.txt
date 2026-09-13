@@ -1,0 +1,66 @@
+docs: review the TPA-QCN proposal by running its physics, not reading it
+
+GRX_AI_Photonics_PTA_TPA_QCN.md proposes an all-optical activation function
+from the chi(2) response of an evaporated organic film, and ships about 9,000
+lines of Python across seven layers.  Layer 1 is real: a batched, differentiable
+coupled-mode solver on torchdiffeq.  So it was extracted and run rather than
+read.  Three findings, each reproducible from the scripts added here.
+
+1. The effective-index model cannot phase-match anywhere.  Swept over 38,400
+   geometries it never brings n_eff(2w) below n_eff(FF); the minimum gap is
+   +0.0427.  The cause is structural: one core index per wavelength and no
+   polarisation axis, so the giant negative birefringence the whole TPA-QCN
+   premise rests on has nowhere to live.  The document's own reference unit
+   carries 547 radians of phase walk-off.  Every transfer function that solver
+   has produced is a cascading artefact, and any diffusion model trained on its
+   output was fitting physics that cannot express its own target.
+
+2. The nonlinear coupling coefficient is dimensionally inconsistent -- it
+   carries m s^-1 W^-1/2 where the coupled-mode equation needs m^-1 W^-1/2 --
+   because no effective mode area appears anywhere.  Two independent repairs
+   agree: as written it is about 109x too large, which understates the power an
+   activation needs by four orders of magnitude.
+
+3. With both repaired, energy per activation is picojoules, not attojoules.
+   At the document's own 0.5 mm reference geometry and its assumed 50 pm/V, it
+   is 12.5 pJ against a claimed 100 aJ.  With the material's published chi_31
+   and the correct tensor element for TE+TE->TM, a 2 mm unit at a 3 dB loss
+   budget costs 179 pJ -- roughly 36x worse than the O-E-O path the
+   architecture exists to remove.
+
+pta_tpaqcn_waveguide_pol.py is the replacement physics: a uniaxial film with
+n_o in-plane and n_e out-of-plane, confinement from an asymmetric-slab
+dispersion relation solved by bisection, and the effective-index method for the
+second dimension.  With it, phase matching exists.  It also shows the
+birefringence must sit inside a WINDOW of roughly 1.2x to 4.8x the material
+dispersion: too little and the branches never cross, too much and the second
+harmonic sits below the fundamental everywhere and then stops being guided.
+
+pta_tpaqcn_measured.py checks the review against the device the proposal
+needs, which the same group has already published (Theriault et al., Sci. Adv.
+12, eaeg3170, May 2026): TE00 -> TM00 phase matching in a 230 nm TPA-QCN film,
+29 %/W/cm^2 at 20 dB/cm.  Indices digitised from its figures put TPA-QCN inside
+the window, so the premise holds.  Anchored on the measured efficiency, the
+same activation costs 326 pJ in a 2 mm unit as built, and about 8 pJ in a 6 mm
+unit with the device's avoidable leakage removed and the best derivative's
+chi(2) -- still above O-E-O.  Two claims of the first draft are withdrawn: that
+the film must be 0.4-2 um thick (the model's air-clad geometry was the limit,
+not the film; under a low-index cover 230 nm is well guided), and that about
+1 pJ is the honest design point (it used the assumed chi(2)).  The script is
+standard library only and runs in seconds.
+
+The review also records what the proposal does not see: removing the ADC
+between layers removes the only requantisation point in the datapath, so analog
+error compounds across depth with nothing to arrest it, amplified by the
+activation's own slope at exactly its operating point.  And the measured device
+adds a fixed-pattern error O-E-O never had: 14 nm of strip width halves a
+unit's conversion at a shared pump wavelength.  Section 6 specifies the
+experiment that settles both -- an S_ACT stage in the c930 NPU carrying a
+CME-derived transfer table, the analog error model with per-unit detuning, and
+a configurable O-E-O reset interval -- which needs no fab, no PDK and no
+photonics.
+
+index.md gains entries for all three design documents.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01DDRVtkfgqUSqWKry7mG9A5

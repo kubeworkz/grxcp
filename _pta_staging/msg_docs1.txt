@@ -1,0 +1,26 @@
+docs: land the PTA integration designs and the analyses they came from
+
+Two design documents that have existed only as working files until now, plus
+the two source analyses they were written against.
+
+pta_cpu_integration.md argues that the c930 NPU is already the right host for a
+photonic tensor tile -- its weight-stationary systolic dataflow is the dataflow
+a photonic tile wants -- and works out what changes: the precision codes and CSR
+space, the PTM-C compatibility shim against the PTM-B broadside variant, an
+analog error model that keeps a bitwise numerical gate rather than abandoning
+one, and calibration scheduled in the DMA's memory shadow.
+
+pta_gpu_integration.md takes the opposite result seriously. The FEDP backend
+seam in grxgpu is real -- five backends, each declaring its own FEDP_LATENCY --
+but it is the wrong seam for a photonic engine, because nothing is stationary
+there and FEDP_K = 2. It is the right seam for an analog-numerics study. The
+engine itself belongs at cluster scope beside VX_dxa_core.
+
+Both are marked design-not-built, and the GPU path is staged behind the CPU
+path's phase C2 gate.
+
+The source analyses are committed alongside because the designs cite them by
+path and a clone without them cannot check the citations.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01DDRVtkfgqUSqWKry7mG9A5
