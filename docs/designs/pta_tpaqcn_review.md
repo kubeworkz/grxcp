@@ -37,7 +37,10 @@ halves with measurements rather than models: the phase-matching mechanism is
 real, in a 230 nm film, and run through the same activation definition the
 device as built costs about **330 pJ per activation** at 2 mm, 65x the O-E-O
 path — about 8 pJ in a 6 mm unit once its avoidable leakage is removed and the
-best known derivative is used. None of that kills the idea. It relocates the project: the thing to build first is not Layer 7,
+best known derivative is used. A pulsed clock with group-velocity-matched units
+could take that far below a digital O-E-O activation, but only into the range
+of an analog optoelectronic neuron, not clearly below it (section 4.5). None of
+that kills the idea. It relocates the project: the thing to build first is not Layer 7,
 it is a corrected Layer 1 and a numerical experiment we can run on hardware we
 already have.
 
@@ -394,6 +397,96 @@ Only the last row beats O-E-O, and it needs the ~30x of optical gain per stage
 that section 4.3 prices at a pump nobody has modelled. The compound 4 rows
 assume its films guide and lose like TPA-QCN's, which has not been measured.
 
+### 4.5 What far better than O-E-O would take
+
+Every energy above prices an activation as a full 10 ps symbol at constant
+power. That is an assumption about the clock, not the material, and it is the
+largest single factor in the comparison: the knee is a threshold in *peak*
+power, and the energy is that power times however long it is held. With a
+pulsed clock:
+
+| unit | P_knee | 10 ps | 1 ps | 100 fs |
+|---|---|---|---|---|
+| TPA-QCN as built, 2 mm | 32.6 W | 326 pJ | 32.6 pJ | 3.26 pJ |
+| compound 4, leakage removed, 6 mm | 0.835 W | 8.35 pJ | 835 fJ | 83.5 fJ |
+| TFLN-class (~5000 %/W/cm²), 1 cm, no loss | 15.5 mW | 155 fJ | 15.5 fJ | 1.55 fJ |
+
+The femtosecond column is not hypothetical: dispersion-engineered lithium
+niobate nanowaveguides have switched with energies down to 80 fJ and times down
+to about 46 fs, with no cavity (Guo et al., *Nat. Photonics* 16, 625, 2022).
+
+**Walk-off sets how short the pulse can be.** The fundamental and second
+harmonic travel at different group velocities, and a pulse shorter than the
+delay they build up over the unit converts as if it were longer. The measured
+acceptance is that delay seen from the other side: to first order, 12 nm FWHM
+is about 0.3 ps of walk-off over the paper's devices. A 6 mm unit would walk
+off 0.6–1.8 ps, depending on the length of the devices behind Fig. 3C, which
+the paper does not give. So pulses of one to two picoseconds fit the dispersion
+already demonstrated, and they bring the compound 4 unit to 0.8–1.7 pJ, three
+to six times better than the document's O-E-O figure. 100 fs needs a
+group-index mismatch at or below 0.005, some ten times smaller than those
+devices imply: group-velocity matching as a design target alongside phase
+matching, a requirement the published device, pumped continuous-wave, never
+faced.
+
+**5 pJ is the wrong baseline.** It prices a digital path per activation:
+receiver, ADC, DSP, DAC, driver. What an all-optical activation actually
+competes with is an analog optoelectronic neuron, a photodiode charging a
+modulator directly: enough light to deliver the charge C·V, plus C·V² from the
+supply. That is 172 fJ for a 50 fF device swinging 1.5 V, 18 fJ at 10 fF and
+1 V, and 650 aJ at 1 fF and 0.5 V. The architecture has been demonstrated end
+to end — optical linear layers with optoelectronic activations classify images
+on-chip in under 570 ps (Ashtiani, Geers and Aflatouni, *Nature* 606, 501,
+2022) — and it comes with what a χ(2) activation has to buy: gain, fan-out,
+isolation between input and output, and restoration of signal levels (Miller,
+*Nat. Photonics* 4, 3, 2010). A parametric activation gets gain only from a
+pump. Both sides are counted at the device, before the laser's wall-plug
+efficiency, which penalises the all-optical side more because nearly all of its
+energy is light.
+
+Per neuron at 100 GHz, energy times rate: digital O-E-O 500 mW, the compound 4
+unit at 100 fs 8.4 mW, the 18 fJ analog neuron 1.8 mW. The optimistic
+all-optical case lands in the analog neuron's range, not below it. Only
+TFLN-class efficiency with femtosecond pulses gets well under today's analog
+devices, and it arrives where nanoscale optoelectronics already points, around a
+femtojoule — where an activation carries about 12,000 photons and shot noise, at
+about 1%, starts to decide how far a signal can travel between resets (section
+5.2).
+
+**So the honest answer has two halves.** Far better than a *digital* O-E-O
+activation is physically reachable, with a pulsed clock and
+group-velocity-matched units. Far better than an *analog* optoelectronic neuron
+is not supported by any number in this review. An all-optical nonlinearity wins
+clearly only where there is no electronic signal to begin with and latency is
+the product — optical signal processing, sensing before detection, picosecond
+classification — because there it removes a conversion instead of cheapening
+one. And an activation's energy is rarely what dominates a system: section 7
+is the reminder that operand supply, not arithmetic, set the limit the last
+time we measured.
+
+### 4.6 Or do without an activation device
+
+Two published approaches get nonlinear computation out of optics without a
+nonlinear element per neuron, and both bear on this programme.
+
+**Nonlinearity from linear optics.** Encode the input into a scattering medium
+more than once and the scattered field becomes a nonlinear function of the
+data, although every element is linear. Programmable nonlinear transformations
+follow at milliwatt continuous-wave power (Yildirim et al., *Nat. Photonics* 18,
+1076, 2024). What it costs is modulators, which a photonic tile has anyway.
+
+**Train the physics as it is.** A deep network built from ultrafast
+second-harmonic generation itself — inputs encoded in a pulse's spectrum, no
+digital activation functions — classified vowels at 93% when trained through
+the real hardware, where training on an accurate digital model of the same
+system reached about 40% (Wright et al., *Nature* 601, 549, 2022). That is the
+lesson of sections 2.3 and 5.1 from the other direction: models of
+phase-matched χ(2) devices are not accurate enough to train against, and
+training through the hardware absorbs their imperfections instead of trimming
+them out. For a tile with fabricated activation units, training through the
+tile is the deployment regime to assume, and S_ACT can emulate it with the
+detuning term in place.
+
 ---
 
 ## 5. What the document does not see: the ADC was a noise reset
@@ -437,6 +530,31 @@ activation function at every neuron. It has to be trimmed per unit — thermally
 at a power that belongs in section 4's budget — or learned around, and which
 one is cheaper is an architectural question the S_ACT experiment can answer.
 
+### 5.2 The reset caps the gain
+
+If accuracy forces an O-E-O reset every N activations — the N of section 6.1 —
+a layer of the all-optical chain costs E_opt + E_OEO / N, against E_OEO for an
+O-E-O layer. The advantage is at most N, however cheap E_opt becomes. For the
+compound 4 unit at 100 fs (83.5 fJ, section 4.5):
+
+| N | vs digital O-E-O, 5 pJ | vs analog neuron, 18 fJ |
+|---|---|---|
+| 1 | 0.98x | 0.18x |
+| 4 | 3.7x | 0.20x |
+| 10 | 8.6x | 0.21x |
+| 100 | 37x | 0.22x |
+| ∞ | 60x | 0.22x |
+
+Against a digital path the win is whatever N the network tolerates. Against an
+18 fJ analog neuron this unit loses at every N; against today's 172 fJ devices
+it wins by 2.1x at most.
+
+E_opt and N are not independent either. A cheaper activation carries fewer
+photons, so its shot noise per stage is larger and the chain before a reset is
+shorter. At 83.5 fJ that is irrelevant — 650,000 photons, 0.12% — but at the
+femtojoule end of section 4.5 it is the wall. The quantity worth measuring is
+N as a function of photons per activation.
+
 ---
 
 ## 6. The experiment to run: an activation stage in the c930 NPU
@@ -478,6 +596,8 @@ reference. The output is a curve of accuracy versus number of chained
 all-optical activations, per transfer-function shape. From it:
 
 - the maximum optical chain length at a given accuracy target;
+- that chain length as a function of photons per activation, swept through the
+  shot-noise term, which is the curve section 5.2's bound needs;
 - therefore the O-E-O reset frequency;
 - therefore the *true* average energy per activation, which is the section-4
   number amortised with a picojoule-scale reset every N stages;
@@ -486,6 +606,16 @@ all-optical activations, per transfer-function shape. From it:
 - and, because the transfer curve shape is an input, which activation shapes
   are most robust to accumulation. That is a design constraint the diffusion
   model can be conditioned on, and it is not in the current loss function.
+
+It also gives the all-optical branch a kill criterion, in section 5.2's terms:
+unless the measured N makes E_OEO / (E_opt + E_OEO / N) comfortably exceed one
+against an *analog* optoelectronic neuron, the activation stays electronic.
+Against the 18 fJ neuron of section 4.5, every TPA-QCN unit in this review
+fails at every N, and even today's 172 fJ devices are beaten by 2.1x at most,
+which is not comfortable. Only the TFLN-class row at 100 fs passes against
+18 fJ — 3.0x at N = 4, 12x in the limit — and it still fails against a
+nanoscale neuron. The experiment says whether any combination of efficiency,
+clock and N that the programme can actually build passes.
 
 ### 6.3 Why this is the right first build
 
@@ -574,6 +704,11 @@ reason to make it now rather than after Layer 5.
 
 ## 10. Recommended order
 
+The mainline does not wait on this list.
+[PTA on the CPU](pta_cpu_integration.md) keeps the nonlinearity electronic at
+the tile boundary, which section 4.5 shows is the right default. What follows
+is the all-optical branch, and item 4 is its kill test.
+
 1. ~~**Fix the effective-index model**~~ — **done**, section 2.1.
    `pta_tpaqcn_waveguide_pol.py` replaces it. Phase matching now exists and the
    birefringence window is the new result. ~~Next: check TPA-QCN's measured
@@ -589,9 +724,12 @@ reason to make it now rather than after Layer 5.
    misplaces that device's width by 0.9 um.
 4. **Build the S_ACT experiment.** No photonics required; answers the deepest
    open question; closes the design loop with hardware we control. Include the
-   fixed-pattern detuning of section 5.1 from the start.
+   fixed-pattern detuning of section 5.1 from the start, and sweep photons per
+   activation alongside N (section 5.2).
 5. **Put an operand supply into the performance model**, then re-derive the
-   headline throughput and energy claims.
+   headline throughput and energy claims — with the pulse length as a
+   parameter, and an analog optoelectronic neuron beside the digital O-E-O
+   baseline (section 4.5).
 6. **Add ageing to the risk register** with a measurement plan.
 7. **Cut or clearly label Layer 7**, and regenerate or mark the evaluation
    tables.
@@ -609,10 +747,18 @@ reason to make it now rather than after Layer 5.
   organic-loaded silicon nitride, which the authors propose, trade nonlinear
   overlap against mode area; a proper mode solver would settle by how much.
   None plausibly moves 33 pJ to 100 aJ.
-- **Whether tens of picojoules per activation can compete.** With measured
-  material the 3 dB design point is 8–33 pJ (section 4.4), above O-E-O. It
-  depends entirely on the chain length from section 6, which nobody has
-  measured, and could only be redeemed by a very long optical chain.
+- **Whether an all-optical activation can compete at all.** With a 10 ps
+  clock the 3 dB design point is 8–33 pJ (section 4.4); with a pulsed clock it
+  could reach tens of femtojoules (section 4.5), in the range of an analog
+  optoelectronic neuron rather than below it. Against a digital path the
+  answer is the chain length from section 6, which nobody has measured.
+- **Whether group-velocity matching is possible in these films.** The
+  femtosecond rows of section 4.5 need a group-index mismatch about ten times
+  smaller than the published devices imply, at the same time as birefringent
+  phase matching.
+- **What an analog neuron would cost in practice.** Section 4.5's figures are
+  C·V² estimates across plausible capacitances and swings, not a measured
+  device, and nothing here prices one built alongside a GRX tile.
 - **Anything about the diffusion model's quality.** Layers 2 and 3 were read,
   not run. The composite loss is well-posed; whether it trains is untested here.
 - **Fabrication.** No judgement is offered on selective-area evaporation,

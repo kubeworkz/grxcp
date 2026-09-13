@@ -32,9 +32,10 @@
   rather than read — why the effective-index model cannot express the
   birefringent phase matching the whole premise rests on, why the energy per
   activation is picojoules rather than attojoules (checked against the
-  published TPA-QCN waveguide: hundreds as built), what removing the ADC does
-  to noise accumulation, and the activation-stage experiment that answers it in
-  the c930 emulator without any photonics
+  published TPA-QCN waveguide: hundreds as built), what far better than O-E-O
+  would take and why an analog optoelectronic neuron is the real baseline, what
+  removing the ADC does to noise accumulation, and the activation-stage
+  experiment that answers it in the c930 emulator without any photonics
 - [The GRXCP developer interface](designs/developer_interface.md) — **a
   proposal, not built**: who the developer is, why the 2776-cycle launch cost
   forces a graph-level ingestion rather than an eager backend, the bf16

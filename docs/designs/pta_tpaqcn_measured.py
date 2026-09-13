@@ -7,7 +7,7 @@ The TPA-QCN review, checked against the device that now exists.
 
 The same group as the materials paper (arXiv:2511.13682) fabricated the
 TE00(w) -> TM00(2w) birefringently phase-matched waveguide the review argues
-for.  This script re-derives section 2.3 and section 4.4 of
+for.  This script re-derives sections 2.3, 4.4, 4.5, 5.1 and 5.2 of
 pta_tpaqcn_review.md from what that paper reports.
 
 From the text:
@@ -26,7 +26,10 @@ within 1 nm).  Index readings are good to about +/-0.002:
     Fig. 3C   phase-matching FWHM of about 12 nm in pump wavelength
 
 Assumed, not in the text: SiO2 1.444 / 1.454, TCTA 1.66 / 1.70 (isotropic,
-15 nm, so it barely matters).
+15 nm, so it barely matters).  For section 7, an analog optoelectronic neuron
+is a photodiode at unity quantum efficiency charging a modulator directly, at
+capacitances and swings chosen to span today's devices to nanoscale ones; they
+are estimates, not a measured device.
 
 Standard library only.  Run:  python3 docs/designs/pta_tpaqcn_measured.py
 """
@@ -57,11 +60,23 @@ TAU = 10e-12                             # one symbol at the claimed 100 GHz
 OEO_J = 5e-12                            # the document's O-E-O activation
 NP_DB = 10 * math.log10(math.e)          # dB per neper, power
 
+C_LIGHT = 299792458.0
+Q_E = 1.602176634e-19
+LAM_M = 1550e-9
+E_PHOTON = 6.62607015e-34 * C_LIGHT / LAM_M
+
 
 def rule(title):
     print("=" * 76)
     print(title)
     print("=" * 76)
+
+
+def fmt_energy(E):
+    for unit, scale in (("nJ", 1e-9), ("pJ", 1e-12), ("fJ", 1e-15), ("aJ", 1e-18)):
+        if E >= scale:
+            return f"{E / scale:.3g} {unit}"
+    return f"{E:.3g} J"
 
 
 # ---------------------------------------------------------------------------
@@ -286,8 +301,9 @@ def main():
     )
     print(f"\n  {'case':<42}{'L mm':>6}{'loss':>8}{'P_knee':>10}{'E':>10}{'/O-E-O':>9}")
     print("  " + "-" * 83)
+    knee = {}
     for name, k, L, a in cases:
-        P = knee_power(L, k, a, a)
+        P = knee[name] = knee_power(L, k, a, a)
         E = P * TAU
         print(f"  {name:<42}{L:6.1f}{a*L/10:6.1f}dB{P:9.3g}W"
               f"{E*1e12:8.3g}pJ{E/OEO_J:8.2g}x")
@@ -307,6 +323,83 @@ def main():
           " than nominal is at half efficiency")
     print("  the acceptance scales as 1/L, so the long, low-energy units in 5 above")
     print("  are proportionally less tolerant")
+
+    print()
+    rule("7. FAR BETTER THAN O-E-O: the clock and the baseline (review 4.5, 5.2)")
+    P_built = knee["TPA-QCN as built, the review's 2 mm unit"]
+    P_c4 = knee["+ compound 4 chi(2), 6 mm"]
+    units = (("TPA-QCN as built, 2 mm", P_built),
+             ("compound 4, leakage removed, 6 mm", P_c4),
+             ("TFLN-class, 1 cm, no loss", P_tfln))
+    pulses = (("10 ps", 10e-12), ("1 ps", 1e-12), ("100 fs", 100e-15))
+    print("  the knee is a peak power; the energy is that power times how long it is held")
+    print(f"  {'unit':<36}{'P_knee':>9}" + "".join(f"{n:>11}" for n, _ in pulses))
+    for name, P in units:
+        print(f"  {name:<36}{P:8.3g}W"
+              + "".join(f"{fmt_energy(P * t):>11}" for _, t in pulses))
+
+    # sinc^2(dbeta L / 2) has FWHM 2.783 / L in dbeta.  With T_w = L dn_g / c
+    # the fundamental/second-harmonic group delay over the unit, that is
+    # 0.4429 lam^2 / (c T_w) in pump wavelength, to first order.
+    T_w = 0.4429 * LAM_M ** 2 / (C_LIGHT * FWHM_NM * 1e-9)
+    bw_hz = C_LIGHT * FWHM_NM * 1e-9 / LAM_M ** 2
+    print(f"\n  walk-off: the measured {FWHM_NM:.0f} nm acceptance is {T_w*1e15:.0f} fs of"
+          " group delay over those devices")
+    print(f"  (a transform-limited pulse filling that band lasts {0.315/bw_hz*1e15:.0f} fs)")
+    for L_fig_mm in (1.0, 1.7, 3.0):
+        dng = T_w * C_LIGHT / (L_fig_mm * 1e-3)
+        print(f"    if the Fig. 3C devices were {L_fig_mm:.1f} mm: dn_g {dng:.3f},"
+              f" and a 6 mm unit walks off {6.0 / L_fig_mm * T_w * 1e12:.1f} ps")
+    print(f"  100 fs pulses in a 6 mm unit need dn_g <= {100e-15 * C_LIGHT / 6e-3:.4f}")
+    for tau in (1e-12, 2e-12):
+        E = P_c4 * tau
+        print(f"  compound 4 unit at {tau*1e12:.0f} ps: {fmt_energy(E)},"
+              f" {OEO_J / E:.1f}x better than the document's O-E-O")
+
+    print("\n  analog O-E-O neuron: a photodiode charging a modulator, no TIA or ADC")
+    analog = {}
+    for C_fF, V in ((50, 1.5), (10, 1.0), (1, 0.5)):
+        e_light = C_fF * 1e-15 * V / Q_E * E_PHOTON
+        e_supply = C_fF * 1e-15 * V * V
+        analog[C_fF] = e_light + e_supply
+        print(f"    {C_fF:>3} fF at {V:.1f} V: {fmt_energy(e_light):>9} of light"
+              f" + {fmt_energy(e_supply):>9} from the supply"
+              f" = {fmt_energy(e_light + e_supply)}")
+
+    E_c4_fs = P_c4 * 100e-15
+    E_analog = analog[10]
+    print("\n  per neuron at 100 GHz, energy x rate:")
+    for label, E in (("digital O-E-O, 5 pJ", OEO_J),
+                     ("compound 4 unit at 100 fs", E_c4_fs),
+                     ("analog neuron, 10 fF at 1 V", E_analog)):
+        print(f"    {label:<32}{E / TAU * 1e3:8.3g} mW")
+
+    print("\n  photons per activation, and the shot-noise floor they set:")
+    for label, E in (("compound 4 unit at 100 fs", E_c4_fs),
+                     ("TFLN-class at 100 fs", P_tfln * 100e-15)):
+        n = E / E_PHOTON
+        print(f"    {label:<32}{n:10.3g} photons   1/sqrt(N) = {100 / math.sqrt(n):.2f}%")
+
+    E_tfln_fs = P_tfln * 100e-15
+
+    def advantage(e_opt, e_oeo, K):
+        v = e_oeo / (e_opt + (0.0 if K == math.inf else e_oeo / K))
+        return f"{v:.0f}" if v >= 10 else f"{v:.1f}" if v >= 1 else f"{v:.2f}"
+
+    print("\n  the reset caps the gain: E_OEO / (E_opt + E_OEO / N) never exceeds N,")
+    print("  N being the O-E-O reset interval of review section 6.1")
+    print(f"    {'':>8}{'compound 4 at 100 fs, ' + fmt_energy(E_c4_fs):^40}"
+          f"{'TFLN-class at 100 fs':^22}")
+    print(f"    {'N':>8}{'vs digital, 5 pJ':>19}{'vs analog, ' + fmt_energy(E_analog):>21}"
+          f"{'vs analog':>14}{'vs 1 fF':>9}")
+    for N in (1, 4, 10, 100, math.inf):
+        print(f"    {str(N):>8}"
+              f"{advantage(E_c4_fs, OEO_J, N):>18}x"
+              f"{advantage(E_c4_fs, E_analog, N):>20}x"
+              f"{advantage(E_tfln_fs, E_analog, N):>13}x"
+              f"{advantage(E_tfln_fs, analog[1], N):>8}x")
+    print(f"    compound 4 at 100 fs against today's {fmt_energy(analog[50])} device:"
+          f" {advantage(E_c4_fs, analog[50], math.inf)}x at most")
 
 
 if __name__ == '__main__':
