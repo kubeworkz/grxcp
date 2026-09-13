@@ -577,9 +577,14 @@ drops into it.
 exactly; `op_count` is unchanged to the last operation; results are
 bit-identical across every shape in the NPU testbench and at `M=64, K=256` in
 `tb/tb_core_m64.sv`, at both 8- and 16-bit operand width.
-*Still open:* the FP16/BF16 path is preserved by construction rather than by
-test — the NPU testbench is INT-only, so `tb_c930_soc_full.sv`'s
-mixed-precision queue is the gate that has to run before this merges.
+*FP16/BF16, closed by test rather than construction:* `tb_npu_float_prec`
+checks float GEMMs bit-exactly, including running sums carried across K tiles
+through C, and passes 24/24 on the interchanged core; the UART GEMM sweep on
+the full SoC passes 18/18. Getting there fixed two float bugs that predate the
+interchange — stale weights in rows outside a K tile, which IEEE multiplication
+turns into NaN, and NPU operand reads served from L2 lines nothing invalidates
+— plus a silent-corruption bug the A-row interlock introduced, a core left
+waiting after the DMA abandons a GEMM.
 *Remaining for the tile:* total cycles matching the §2.1 model, `Td` term
 included, at every §6.2 sweep point in both loop orders — affine in `PTA_TW`,
 with slope `PTA_WLOAD_CT`.
