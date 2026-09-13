@@ -22,8 +22,12 @@ What an emulation-only program can honestly produce:
    magnitude above its compute cost, depending on the tuning mechanism — a
    thermo-optic phase shifter settles in tens of microseconds against a shot of
    nanoseconds. That single ratio invalidates the loop nest the
-   c930 NPU ships today. Finding that, fixing it, and measuring the fix is a
-   real result, and it is entirely a digital-RTL result.
+   c930 NPU ships today. An electro-optic tile on thin-film lithium niobate,
+   which settles in picoseconds, is the check on that claim, and §2.1 runs it:
+   with its weights scanned in by the host it still wants the fix; with every
+   weight set held at the tile it wants the shipped loop nest back. Finding
+   that, fixing it, and measuring the fix is a real result, and it is entirely a
+   digital-RTL result.
 2. **The numerics.** How much accuracy survives a 4–6 effective-bit analog
    channel with drift, and what digital correction buys it back. Answerable
    against a seeded, bit-deterministic model.
@@ -113,23 +117,90 @@ inefficiency and becomes the entire runtime.
 
 ### 2.1 The cost model
 
-Let `Tw` be weight program plus settle, `Ts` be shot plus ADC conversion,
-`Kt = ceil(K / NUM_ROWS)`, `Nt = ceil(N / NUM_COLS)`. Then:
+Let `Tw` be weight program plus settle, `Ts` everything a shot costs that both
+loop orders pay — operand feed, shot, ADC conversion — and `Td` one row write
+into `c_mem`, the traffic §2.2 counts. With `Kt = ceil(K / NUM_ROWS)`,
+`Nt = ceil(N / NUM_COLS)`, and the accumulator restore folded into the write
+(§2.3's first step):
 
-| Loop order | Weight programmings | Total time |
-|---|---|---|
-| `m` outer (as shipped) | `M · Nt · Kt` | `M · Nt · Kt · (Tw + Ts)` |
-| `(kt, nt)` outer, `m` inner | `Nt · Kt` | `Nt · Kt · (Tw + M · Ts)` |
+| Loop order | Weight programmings | Row writes | Total time |
+|---|---|---|---|
+| `m` outer (as shipped) | `M · Nt · Kt` | `M · Nt` | `M · Nt · (Kt · (Tw + Ts) + Td)` |
+| `(kt, nt)` outer, `m` inner | `Nt · Kt` | `M · Nt · Kt` | `Nt · Kt · (Tw + M · (Ts + Td))` |
 
-The weight term drops by exactly `M`. For a plausible thermo-optic mesh —
-`Tw` = 10 µs, `Ts` = 50 ns — and `M = 64, N = 8, K = 256`:
+The weight term drops by exactly `M`; the write term grows by exactly `Kt`.
+The model is checked, not asserted: with the digital array's own constants —
+`Tw` = 64 cycles of weight scan, `Ts` = 18 of `S_RUN`, `Td` = 8 — it reproduces
+both of §2.3's measured totals to the cycle, 168,448 as shipped and 71,168
+interchanged once the unfolded restore's `M · Nt · (Kt − 1) · Td` is added back
+([`pta_tw_sweep.py`](pta_tw_sweep.py) asserts it, and computes every derived
+figure in this section and §6.2).
+
+For a plausible thermo-optic mesh — `Tw` = 10 µs, `Ts` = 50 ns — and
+`M = 64, N = 8, K = 256`, taking `Td` = 0:
 
 - as shipped: 64 · 1 · 32 · 10.05 µs ≈ **20.6 ms**
 - interchanged: 32 · (10 µs + 64 · 50 ns) ≈ **0.42 ms**
 
-Roughly 49×, and the gap widens with `M`. **The loop interchange is the
-photonic integration.** Everything else in this document is instrumentation
-for measuring it or numerics for making the result trustworthy.
+Roughly 49×, and the gap widens with `M`. **For a thermally tuned tile, the
+loop interchange is the photonic integration.** Everything else in this
+document is instrumentation for measuring it or numerics for making the result
+trustworthy.
+
+**`Ts` does not decide which order wins.** Subtract the two totals and it
+cancels. The interchange pays exactly when
+
+```
+  Tw  >  Td · M · (Kt − 1) / ((M − 1) · Kt)   ≈ Td      (0.98 · Td at M = 64, K = 256)
+```
+
+— when one weight program costs more than one row write, or two until the
+restore is folded. The `Tw`-to-`Ts` ratio sets how much the winner wins by;
+`Tw` against `Td` sets which order it is.
+
+**TFLN-class tiles.** An electro-optic tile on thin-film lithium niobate is the
+case that tests this. Its phase shifters are Pockels modulators — 45 GHz of
+3-dB bandwidth from a 20 mm device in the 2018 CMOS-voltage demonstration
+(Wang et al., *Nature* 562, 101, 2018) — and a single-pole response at that
+bandwidth settles to half an 8-bit LSB in ln(512) / (2π · 45 GHz) ≈ 22 ps. The
+settle is gone. What is left of `Tw` is whatever delivers the weights, and that
+splits the regime in two:
+
+- **Scanned.** The host writes the tile's 64 weights one per beat, as
+  `i_wen`/`i_wrow`/`i_wcol` already do (§1). `Tw` is the scan: 64 cycles,
+  640 ns at 100 MHz, and 22 ps of settle does not register. This is the digital
+  array with its 18-cycle run cut to a one-cycle shot.
+- **Resident.** Every weight set the GEMM uses is already at the tile, so a
+  program is a bank select — roughly one DAC update, inside the shot's own
+  cycle, counted as zero. That takes `Nt · Kt` banks: §8 item 3's multi-bank
+  tile.
+
+Priced with the c930 as host at 100 MHz — `Td` = 80 ns, and `Ts` at least one
+cycle, because the host presents one operand vector per cycle however short the
+shot:
+
+| Tile | `Tw` | `Ts` | As shipped | Interchanged | Faster order |
+|---|---|---|---|---|---|
+| thermo-optic | 10.6 µs (scan + 10 µs settle) | 50 ns | 21.9 ms | 0.61 ms | interchange, 36× |
+| TFLN, scanned | 640 ns (scan) | 10 ns | 1.34 ms | 0.20 ms | interchange, 6.5× |
+| TFLN, resident | 0 (sub-cycle) | 10 ns | 25.6 µs | 184 µs | **as shipped, 7.2×** |
+
+The c930's own row write costs the thermal tile some of its 49× and none of the
+argument. A scanned TFLN tile still wants the interchange, by an amount the host
+sets — 64 cycles of scan against 8 of row write, whatever the modulator does. A
+resident one wants the shipped order back: there is no weight cost left to
+amortize, only row writes to multiply. Its 25.6 µs is 20.5 µs of one-cycle
+shots and 5.1 µs of row writes, so it is bound by the host — its feed and its
+writes — not by the tile: the review's operand-supply finding
+([`pta_tpaqcn_review.md`](pta_tpaqcn_review.md) §7) arriving from the tile
+side.
+
+What a TFLN tile pays instead of settle is bias drift. Lithium niobate
+modulators drift under a held DC bias: side by side, a quadrature-biased TFLN
+modulator's output power fluctuated by 5 dB over 46 hours, against under 1 dB
+for thin-film lithium tantalate (Powell et al., *Opt. Express* 32, 44115, 2024).
+At this end, accuracy over a long run is a calibration question (§5.1), not a
+loop-nest one.
 
 ### 2.2 What the interchange costs
 
@@ -238,7 +309,7 @@ document nobody trusts.
 | 0x5C | `PTA_SIGMA_PR` | RW | weight-programming error σ |
 | 0x60 | `PTA_DRIFT` | RW | [15:0] drift step σ, [31:16] log2 update interval |
 | 0x64 | `PTA_XTALK` | RW | nearest-neighbour coupling, Q0.8 |
-| 0x68 | `PTA_TW` | RW | weight program + settle, in core cycles |
+| 0x68 | `PTA_TW` | RW | settle after a program's last weight write, in core cycles; 0 is legal (§6.2) |
 | 0x6C | `PTA_TS` | RW | shot + ADC latency, in core cycles |
 | 0x70 | `PTA_CAL_PER` | RW | calibration period for the periodic scheduler |
 | 0x74 | `PTA_CAL_THR` | RW | predicted-error threshold for the drift-predictive scheduler |
@@ -454,10 +525,20 @@ reprograms during a model's execution, with the digital array handling
 everything else. That conclusion is *available from this program*: sweep
 `PTA_TW` and find the crossover.
 
+The sweep has a second end, and the TFLN-class points of §2.1 reach it. There
+the hypothesis inverts: a resident electro-optic tile wants the shipped
+`m`-outer order, 7.2× ahead of the interchange, because a bank select leaves no
+weight cost to amortize. Weight residency is the destination at both ends, for
+opposite reasons — thermal weights are too slow to reprogram, and electro-optic
+ones switch fast enough that keeping every set at the tile costs only memory.
+The interchange is the right loop nest in between: wherever weights must be
+reprogrammed and a program costs more than a row write.
+
 Writing it down as a hypothesis under test, before the sweep, is the
 difference between a measurement and a justification. It also determines what
 the CPU path should be optimizing for if the crossover lands badly: weight-set
-residency and capacity, not GEMM throughput.
+residency and capacity, not GEMM throughput — and at the electro-optic end, the
+host's per-shot feed and write path as well.
 
 ---
 
@@ -491,8 +572,9 @@ bit-identical across every shape in the NPU testbench and at `M=64, K=256` in
 *Still open:* the FP16/BF16 path is preserved by construction rather than by
 test — the NPU testbench is INT-only, so `tb_c930_soc_full.sv`'s
 mixed-precision queue is the gate that has to run before this merges.
-*Remaining for the tile:* total cycles as a function of `PTA_TW` matching the
-§2.1 model.
+*Remaining for the tile:* total cycles matching the §2.1 model, `Td` term
+included, at every §6.2 sweep point in both loop orders — affine in `PTA_TW`,
+with slope `PTA_WLOAD_CT`.
 
 **C3 — calibration.** Per-column affine correction, calibration FSM,
 three schedulers, and the `cal_busy` dispatch guard.
@@ -504,7 +586,9 @@ accuracy. *Ablation:* the START-during-calibration regression from §3.2.
 **C4 — SoC, firmware, numbers.** CSR decode widening, firmware, the full-SoC
 test suite, and a Vivado run on the Arty A7-200T.
 *Gate:* real utilization and timing, not estimates; the five existing full-SoC
-tests still pass; the `Tw`-to-`Ts` ratio sweep of §5.5 produced.
+tests still pass; the §6.2 sweep produced at both ends, thermo-optic and
+TFLN-class, with EO-res labelled a model evaluation until a multi-bank tile
+exists.
 
 ### 6.1 Does it fit?
 
@@ -531,15 +615,51 @@ carries comments about paths that had to be broken by registration.
 ### 6.2 The cycle-time honesty note
 
 The FPGA runs the tile at ~100 MHz, 10 ns per cycle. A real photonic shot is
-1–5 ns — *sub-cycle* — and a thermo-optic weight program is 10 µs to 1 ms. So
+1–5 ns — *sub-cycle* — a thermo-optic weight program is 10 µs to 1 ms, and an
+electro-optic one is tens of picoseconds plus whatever delivers the weights. So
 the emulation cannot represent absolute photonic throughput at all, and must
 not be reported as doing so.
 
 What it represents exactly is the **ratio**. Set `PTA_TS` to its floor and
-`PTA_TW` to `Tw_real × f_fpga` — at 10 µs and 100 MHz, 1,000 cycles — and the
-whole architecturally interesting range of that ratio, from 1 to about 10⁵, is
-reachable by sweeping one register. The sweep is the experiment; the absolute
-cycle counts are not a claim about anything.
+`PTA_TW` to the tile's settle × `f_fpga` — at 10 µs and 100 MHz, 1,000 cycles —
+and the thermal range of that ratio, up to about 10⁵, is reachable by sweeping
+one register. The sweep is the experiment; the absolute cycle counts are not a
+claim about anything.
+
+**The bottom of the range is not reachable, although this note used to say it
+was.** `PTA_TW` counts from a program's last weight write, on top of the core's
+own 64-cycle scan, so with `PTA_TS` at its floor the smallest `Tw`-to-`Ts` ratio
+a two-bank tile can show is 64, not 1. That floor is not an artifact to design
+out. It is the host's cost of delivering weights, and it is exactly what a
+scanned TFLN-class tile runs into (§2.1). So the sweep names four points and
+sweeps between them:
+
+| Point | Models | `PTA_TW` | `PTA_TS` | `Tw` | As shipped | Interchanged | Faster order |
+|---|---|---|---|---|---|---|---|
+| TO-1ms | thermo-optic, 1 ms settle | 100,000 | 5 | 100,064 | 205 M | 3.23 M | interchange, 63× |
+| TO-10µs | thermo-optic, 10 µs settle | 1,000 | 5 | 1,064 | 2.19 M | 60.7 k | interchange, 36× |
+| EO-scan | TFLN-class, scanned | 0 | 1 | 64 | 134 k | 20.5 k | interchange, 6.5× |
+| EO-res | TFLN-class, resident | 0 | 1 | 0 | 2,560 | 18.4 k | as shipped, 7.2× |
+
+Cycles as §2.1 predicts them at `M = 64, N = 8, K = 256`, `Td` = 8, restore
+folded; at 10 ns a cycle, TO-10µs, EO-scan and EO-res are §2.1's table.
+Sweeping `PTA_TW` between the points is what checks C2's affine claim, but no
+value of it crosses the §2.1 break-even: that sits at 8 cycles, and a two-bank
+tile's `Tw` never drops below the scan's 64.
+
+Three rules hold at the TFLN-class end:
+
+- **EO-res is a model evaluation until a multi-bank tile exists.** It needs
+  `Nt · Kt` resident banks and the tile has two (§8 item 3). Report it as the
+  §2.1 formula with the scan removed, labelled as such.
+- **`DMA_CT` is part of the result.** A GEMM of a few thousand cycles is no
+  longer long beside the DMA fetch of its 18,432 operands, so the fetch cannot
+  be subtracted as overhead at this end.
+- **Dilation is a claim about the host.** Raising `PTA_TS` above its floor to
+  stretch a sub-cycle shot is the same as assuming a host that many times
+  faster than the FPGA, because the scan, the row write and the fetch keep
+  their real cycle counts. That is a legitimate experiment, but a different
+  one, and it is labelled as that one.
 
 ---
 
@@ -601,10 +721,16 @@ Recorded so the next reader knows what was considered and deliberately deferred.
    source analysis. It is orthogonal to everything measurable here: the c930's
    AXI4 master already feeds the tile faster than a thermally-limited weight
    bank can consume, so coherence changes no result this program can produce.
-   It belongs to the GRXIConnect work, not here.
+   That holds at the thermal end of the §6.2 sweep only. At the TFLN-class end
+   the host's feed is the binding cost (§2.1), so reporting those points
+   reopens this item, with their `DMA_CT` as the evidence. It belongs to the
+   GRXIConnect work, not here.
 3. **Multiple weight banks beyond two.** §5.5's hypothesis may make weight-set
    capacity the interesting axis, in which case `N` banks and a bank-allocation
    policy is the follow-on. Not before the `Tw`-to-`Ts` ratio sweep says so.
+   The exception is §6.2's EO-res point, which cannot be measured at all
+   without `Nt · Kt` banks: if the TFLN-class end matters, this stops being a
+   follow-on.
 4. **A second tile.** The grx930 team's notes observe 41.5% LUT headroom is
    "enough for a second NPU tile." Two tiles with independent weight sets is
    how a real machine hides `Tw` completely, and it is the obvious C5. It is
@@ -640,3 +766,7 @@ Recorded so the next reader knows what was considered and deliberately deferred.
    RTL simulation, and dominated by GEMM. A two-layer MLP on MNIST is
    defensible and boring; anything transformer-shaped will not fit the
    `MAX_N = 8` output width without tiling that muddies the measurement.
+5. **Which weight drive would a real TFLN tile have?** §2.1 shows the loop nest
+   turns on it — scanned wants the interchange, resident wants the shipped
+   order — and nothing in an emulation-only program can find out. Until
+   something does, the sweep carries both points and claims neither.
