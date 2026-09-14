@@ -25,9 +25,10 @@ What an emulation-only program can honestly produce:
    c930 NPU ships today. An electro-optic tile on thin-film lithium niobate,
    which settles in picoseconds, is the check on that claim, and §2.1 runs it:
    with its weights scanned in by the host it still wants the fix; with every
-   weight set held at the tile it wants the shipped loop nest back. Finding
-   that, fixing it, and measuring the fix is a real result, and it is entirely a
-   digital-RTL result.
+   weight set held at the tile it wants the shipped loop nest back. Its
+   lower-drift sibling, thin-film lithium tantalate, is the tile this program
+   targets (§4.4). Finding that, fixing it, and measuring the fix is a real
+   result, and it is entirely a digital-RTL result.
 2. **The numerics.** How much accuracy survives a 4–6 effective-bit analog
    channel with drift, and what digital correction buys it back. Answerable
    against a seeded, bit-deterministic model.
@@ -158,11 +159,12 @@ cancels. The interchange pays exactly when
 restore is folded. The `Tw`-to-`Ts` ratio sets how much the winner wins by;
 `Tw` against `Td` sets which order it is.
 
-**TFLN-class tiles.** An electro-optic tile on thin-film lithium niobate is the
-case that tests this. Its phase shifters are Pockels modulators — 45 GHz of
-3-dB bandwidth from a 20 mm device in the 2018 CMOS-voltage demonstration
-(Wang et al., *Nature* 562, 101, 2018) — and a single-pole response at that
-bandwidth settles to half an 8-bit LSB in ln(512) / (2π · 45 GHz) ≈ 22 ps. The
+**Pockels-class tiles.** An electro-optic tile on thin-film lithium niobate
+(TFLN) or lithium tantalate (TFLT) is the case that tests this. Its phase
+shifters are Pockels modulators — for TFLN, 45 GHz of 3-dB bandwidth from a
+20 mm device in the 2018 CMOS-voltage demonstration (Wang et al., *Nature* 562,
+101, 2018) — and a single-pole response at that bandwidth settles to half an
+8-bit LSB in ln(512) / (2π · 45 GHz) ≈ 22 ps, or 25 ps at TFLT's 40 GHz. The
 settle is gone. What is left of `Tw` is whatever delivers the weights, and that
 splits the regime in two:
 
@@ -182,25 +184,26 @@ shot:
 | Tile | `Tw` | `Ts` | As shipped | Interchanged | Faster order |
 |---|---|---|---|---|---|
 | thermo-optic | 10.6 µs (scan + 10 µs settle) | 50 ns | 21.9 ms | 0.61 ms | interchange, 36× |
-| TFLN, scanned | 640 ns (scan) | 10 ns | 1.34 ms | 0.20 ms | interchange, 6.5× |
-| TFLN, resident | 0 (sub-cycle) | 10 ns | 25.6 µs | 184 µs | **as shipped, 7.2×** |
+| Pockels, scanned | 640 ns (scan) | 10 ns | 1.34 ms | 0.20 ms | interchange, 6.5× |
+| Pockels, resident | 0 (sub-cycle) | 10 ns | 25.6 µs | 184 µs | **as shipped, 7.2×** |
 
 The c930's own row write costs the thermal tile some of its 49× and none of the
-argument. A scanned TFLN tile still wants the interchange, by an amount the host
-sets — 64 cycles of scan against 8 of row write, whatever the modulator does. A
-resident one wants the shipped order back: there is no weight cost left to
-amortize, only row writes to multiply. Its 25.6 µs is 20.5 µs of one-cycle
+argument. A scanned Pockels tile still wants the interchange, by an amount the
+host sets — 64 cycles of scan against 8 of row write, whatever the modulator
+does. A resident one wants the shipped order back: there is no weight cost left
+to amortize, only row writes to multiply. Its 25.6 µs is 20.5 µs of one-cycle
 shots and 5.1 µs of row writes, so it is bound by the host — its feed and its
 writes — not by the tile: the review's operand-supply finding
 ([`pta_tpaqcn_review.md`](pta_tpaqcn_review.md) §7) arriving from the tile
 side.
 
-What a TFLN tile pays instead of settle is bias drift. Lithium niobate
-modulators drift under a held DC bias: side by side, a quadrature-biased TFLN
-modulator's output power fluctuated by 5 dB over 46 hours, against under 1 dB
-for thin-film lithium tantalate (Powell et al., *Opt. Express* 32, 44115, 2024).
-At this end, accuracy over a long run is a calibration question (§5.1), not a
-loop-nest one.
+What a Pockels tile pays instead of settle is bias drift, and it is where the
+two materials part. Lithium niobate modulators drift under a held DC bias: side
+by side, a quadrature-biased TFLN modulator's output power fluctuated by 5 dB
+over 46 hours, against under 1 dB for thin-film lithium tantalate (Powell et
+al., *Opt. Express* 32, 44115, 2024). At this end, accuracy over a long run is
+a calibration question (§5.1), not a loop-nest one — and that drift gap is most
+of why §4.4 picks lithium tantalate.
 
 [`pta_material_scorecard.py`](pta_material_scorecard.py) puts thermo-optic
 silicon, thin-film lithium tantalate and non-volatile barium titanate through
@@ -208,7 +211,8 @@ the same model. Resident, every one of them lands on the same 25.6 µs. What
 differs is what holding the weights costs — about 25 W of heater power for one
 GEMM's 2,048 thermo-optic shifters, under a milliwatt for barium titanate — and
 how far they drift. Rewritten per tile, barium titanate's 80 ns switch lands
-within 2% of the 78.7 ns break-even.
+within 2% of the 78.7 ns break-even. §4.4 turns the comparison into the choice
+of material.
 
 ### 2.2 What the interchange costs
 
@@ -446,6 +450,83 @@ rule unenforceable, and the project quietly loses its ability to distinguish a
 model bug from a backend bug. Seeded determinism keeps RTL↔C parity a bitwise
 question.
 
+### 4.4 The target material: thin-film lithium tantalate
+
+**Decision.** The tile this program targets is an electro-optic mesh on
+thin-film lithium tantalate (TFLT). The Pockels points of the §6.2 sweep stand
+for it, and the error model's drift term (§4.3) and the §5.1 calibration
+schedulers are tuned to it. Thermo-optic silicon and thin-film lithium niobate
+stay in, as stress cases.
+
+**The criterion is holding, not speed.** §2.1 and §5.5 put the design's
+destination at resident weights, and once weights are resident every candidate
+gives the same GEMM time — 25.6 µs at `M = 64, N = 8, K = 256` with the c930 as
+host, bound by its operand feed and row writes, not by the tile. Speed matters
+only until a material settles inside a host cycle, after which the host's scan
+sets `Tw` (§2.1). What separates the candidates beyond that is what holding a
+weight costs: power, drift and precision.
+[`pta_material_scorecard.py`](pta_material_scorecard.py) prices each:
+
+| | Thermo-optic Si | TFLN | TFLT | BTO, non-volatile |
+|---|---|---|---|---|
+| Settles inside a 10 ns host cycle | no: 7.6 µs | yes: 22 ps | yes: 25 ps | no: 80 ns, on the §2.1 break-even |
+| Holding one GEMM's 2,048 resident shifters | 25 W of heaters | a DAC-held voltage each | a DAC-held voltage each | 0.57 mW static |
+| Drift over the same 46 h test, in 6-bit LSBs | not measured | 11–15 | under 2–4 | "stable", not quantified |
+| Weight levels demonstrated | continuous | continuous | continuous | eight |
+
+- **Thermo-optic silicon** fails on both settling and holding. The interchange
+  keeps it workable (36×, §2.1), which is why it stays as the loop-order stress
+  case — and on a foundry PDK it remains the cheapest physical demonstration.
+- **TFLN** has the speed and a commercial product behind it, and the worse
+  drift of the two Pockels materials. It stays as the drift stress case for
+  §5.1's calibration schedulers.
+- **TFLT** keeps TFLN's speed — 40 GHz of 3-dB bandwidth at 1.96 V·cm
+  (C. Wang et al., *Nature* 629, 784, 2024) — with a fraction of its drift
+  (§2.1), on wafers already made in volume for 5G radio-frequency filters.
+- **Non-volatile barium titanate** holds best, at 0.57 mW of static power
+  across all 2,048 shifters. But eight levels fall short of the 4–6 effective
+  bits the numerics study assumes (§1), and a tiled GEMM rewrites 2,048
+  weights per call, an endurance question nothing in hand answers. It is the
+  candidate for a mesh that holds a whole layer untiled, not for this tile.
+
+**What it sets.**
+
+- *Timing.* TFLT is Pockels-class: a 40 GHz single-pole response settles in
+  25 ps, so the Pockels points of §6.2 apply unchanged. Scanned, the tile still
+  wants the interchange (6.5×); with resident banks it wants the shipped order
+  (7.2×).
+- *Drift.* The error model's `delta_ij(t)` (§4.3) — stepped and timed by
+  `PTA_DRIFT` — defaults to a setting fitted to TFLT, with a TFLN setting as
+  the stress case. Fitting both is part of the calibration work (§5.1); the
+  46-hour comparison is their anchor, not their value.
+- *Priorities.* A Pockels weight's cost is set by its DAC and its host, not by
+  the material, so the multi-bank tile (§8 item 3) and the host's operand feed
+  (§8 item 2) move ahead of further loop-order work.
+- *Nonlinearity.* Unchanged by the material: electronic, at the tile boundary,
+  as the review concludes — on measured numbers no candidate beats an analog
+  optoelectronic neuron ([`pta_tpaqcn_review.md`](pta_tpaqcn_review.md) §4.5).
+  The all-optical branch waits on the S_ACT chain experiment (grx930
+  `c930/doc/npu_act_stage_design_note.md`, A3), which measures how many
+  optical nonlinearities can run between digital resets.
+
+**What would reopen it.**
+
+- A partner or product that needs a platform now: TFLN, the commercial choice,
+  with calibration carrying its drift.
+- A physical demonstration on the cheapest route: thermo-optic silicon.
+- Non-volatile barium titanate at 4–6 bits, with an endurance figure that
+  covers a rewrite on every GEMM call.
+- A3 finding a long reset interval, which makes the χ(2) platform matter — and
+  poled lithium niobate leads there.
+
+**Caveats.** TFLT is the youngest platform in this comparison: modulators,
+low-loss waveguides and soliton microcombs are demonstrated, but no
+programmable mesh at scale in the sources checked. Neither lithium tantalate
+nor lithium niobate is CMOS-monolithic. The integration route to watch is
+heterogeneous: TFLT on silicon photonics chips, with modulators past 70 GHz and
+no change to the standard silicon photonics process design kit (M. Niels et
+al., *Nat. Photonics*, 2025; arXiv:2503.10557).
+
 ---
 
 ## 5. Ideas worth building that are not in the source analysis
@@ -533,7 +614,7 @@ reprograms during a model's execution, with the digital array handling
 everything else. That conclusion is *available from this program*: sweep
 `PTA_TW` and find the crossover.
 
-The sweep has a second end, and the TFLN-class points of §2.1 reach it. There
+The sweep has a second end, and the Pockels-class points of §2.1 reach it. There
 the hypothesis inverts: a resident electro-optic tile wants the shipped
 `m`-outer order, 7.2× ahead of the interchange, because a bank select leaves no
 weight cost to amortize. Weight residency is the destination at both ends, for
@@ -600,7 +681,7 @@ accuracy. *Ablation:* the START-during-calibration regression from §3.2.
 test suite, and a Vivado run on the Arty A7-200T.
 *Gate:* real utilization and timing, not estimates; the five existing full-SoC
 tests still pass; the §6.2 sweep produced at both ends, thermo-optic and
-TFLN-class, with EO-res labelled a model evaluation until a multi-bank tile
+Pockels-class, with EO-res labelled a model evaluation until a multi-bank tile
 exists.
 
 ### 6.1 Does it fit?
@@ -644,15 +725,15 @@ was.** `PTA_TW` counts from a program's last weight write, on top of the core's
 own 64-cycle scan, so with `PTA_TS` at its floor the smallest `Tw`-to-`Ts` ratio
 a two-bank tile can show is 64, not 1. That floor is not an artifact to design
 out. It is the host's cost of delivering weights, and it is exactly what a
-scanned TFLN-class tile runs into (§2.1). So the sweep names four points and
+scanned Pockels-class tile runs into (§2.1). So the sweep names four points and
 sweeps between them:
 
 | Point | Models | `PTA_TW` | `PTA_TS` | `Tw` | As shipped | Interchanged | Faster order |
 |---|---|---|---|---|---|---|---|
 | TO-1ms | thermo-optic, 1 ms settle | 100,000 | 5 | 100,064 | 205 M | 3.23 M | interchange, 63× |
 | TO-10µs | thermo-optic, 10 µs settle | 1,000 | 5 | 1,064 | 2.19 M | 60.7 k | interchange, 36× |
-| EO-scan | TFLN-class, scanned | 0 | 1 | 64 | 134 k | 20.5 k | interchange, 6.5× |
-| EO-res | TFLN-class, resident | 0 | 1 | 0 | 2,560 | 18.4 k | as shipped, 7.2× |
+| EO-scan | Pockels-class (TFLT, §4.4), scanned | 0 | 1 | 64 | 134 k | 20.5 k | interchange, 6.5× |
+| EO-res | Pockels-class (TFLT, §4.4), resident | 0 | 1 | 0 | 2,560 | 18.4 k | as shipped, 7.2× |
 
 Cycles as §2.1 predicts them at `M = 64, N = 8, K = 256`, `Td` = 8, restore
 folded; at 10 ns a cycle, TO-10µs, EO-scan and EO-res are §2.1's table.
@@ -660,7 +741,7 @@ Sweeping `PTA_TW` between the points is what checks C2's affine claim, but no
 value of it crosses the §2.1 break-even: that sits at 8 cycles, and a two-bank
 tile's `Tw` never drops below the scan's 64.
 
-Three rules hold at the TFLN-class end:
+Three rules hold at the Pockels-class end:
 
 - **EO-res is a model evaluation until a multi-bank tile exists.** It needs
   `Nt · Kt` resident banks and the tile has two (§8 item 3). Report it as the
@@ -734,16 +815,17 @@ Recorded so the next reader knows what was considered and deliberately deferred.
    source analysis. It is orthogonal to everything measurable here: the c930's
    AXI4 master already feeds the tile faster than a thermally-limited weight
    bank can consume, so coherence changes no result this program can produce.
-   That holds at the thermal end of the §6.2 sweep only. At the TFLN-class end
-   the host's feed is the binding cost (§2.1), so reporting those points
-   reopens this item, with their `DMA_CT` as the evidence. It belongs to the
-   GRXIConnect work, not here.
+   That holds at the thermal end of the §6.2 sweep only. At the Pockels-class
+   end — where the TFLT target sits (§4.4) — the host's feed is the binding
+   cost (§2.1), so this item reopens as soon as those points are reported, with
+   their `DMA_CT` as the evidence. It belongs to the GRXIConnect work, not here.
 3. **Multiple weight banks beyond two.** §5.5's hypothesis may make weight-set
    capacity the interesting axis, in which case `N` banks and a bank-allocation
    policy is the follow-on. Not before the `Tw`-to-`Ts` ratio sweep says so.
    The exception is §6.2's EO-res point, which cannot be measured at all
-   without `Nt · Kt` banks: if the TFLN-class end matters, this stops being a
-   follow-on.
+   without `Nt · Kt` banks. With TFLT the target (§4.4), the Pockels-class end
+   is the one that matters, so that part is not deferred: measuring the
+   target's resident point waits on the multi-bank tile.
 4. **A second tile.** The grx930 team's notes observe 41.5% LUT headroom is
    "enough for a second NPU tile." Two tiles with independent weight sets is
    how a real machine hides `Tw` completely, and it is the obvious C5. It is
@@ -779,7 +861,7 @@ Recorded so the next reader knows what was considered and deliberately deferred.
    RTL simulation, and dominated by GEMM. A two-layer MLP on MNIST is
    defensible and boring; anything transformer-shaped will not fit the
    `MAX_N = 8` output width without tiling that muddies the measurement.
-5. **Which weight drive would a real TFLN tile have?** §2.1 shows the loop nest
+5. **Which weight drive would a real TFLT tile have?** §2.1 shows the loop nest
    turns on it — scanned wants the interchange, resident wants the shipped
    order — and nothing in an emulation-only program can find out. Until
    something does, the sweep carries both points and claims neither.
