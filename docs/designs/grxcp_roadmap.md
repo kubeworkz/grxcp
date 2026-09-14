@@ -2097,7 +2097,7 @@ even at these small grids, so nothing survives.
 claim that per-core counters are independent was never measured — it was
 inferred from MCYCLE being per-core *storage*, and storage being per core does
 not make *time* per core. Asked directly
-(`tests/repro/cross_core_clock/align_probe`), simx at 4 SMs over one launch and
+(`tests/repro/cross_core_clock/align_probe.cpp`), simx at 4 SMs over one launch and
 64 warps:
 
 | core | warps | first start | last end |
