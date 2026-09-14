@@ -4,11 +4,12 @@
 [`heterogeneous_devices.md`](heterogeneous_devices.md).
 **Source analysis:** GRX_PTA_Integration.md in this repository's `docs/`.
 
-**Status: DESIGN, staged behind the CPU path, nothing built.** This document
-exists now rather than later for one reason: the shared IP — the tile model and
-its error budget — is being written for the c930 first, and if it is written
-without knowing what the GPU needs it will be rewritten. Everything here is a
-constraint on that IP, plus the design that follows once it exists.
+**Status: DESIGN, staged behind the CPU path except G1 (§7), nothing built.**
+This document exists now rather than later for one reason: the shared IP — the
+tile model and its error budget — is being written for the c930 first, and if
+it is written without knowing what the GPU needs it will be rewritten.
+Everything here is a constraint on that IP, plus the design that follows once
+it exists.
 
 **Boundary rule, first.** GRXCP does not patch grxgpu. If any of this lands it
 lands as a proposal in that repository's own proposals directory, authored by
@@ -258,7 +259,16 @@ is the wrong place for a photonic tile at all
 ([`pta_cpu_integration.md`](pta_cpu_integration.md) §5.5) — which would change
 what the GPU path should be, or whether it should exist.
 
-The order once it does start:
+**Re-staged by the program plan (D4 of
+[`pta_program_plan.md`](pta_program_plan.md)).** Neither reason touches G1,
+which has no RTL and shares no IP, and the question it answers — how many
+weight sets a cluster must keep hot — is the one the c930's multi-bank step
+asks too. G1 therefore starts now, sweeping bank count `W` beside `Tw`, since at
+the Pockels points `Tw` is the host's scan and `W` is what varies. G0 is
+numerics only and waits for the error model, so it starts when C1 is green. G2
+and G3 keep the C2 dependency.
+
+The order once each starts:
 
 **G0 — the numerics backend.** `VX_tcu_fedp_analog`, sharing the c930 error
 model. *Gate:* bit-identical to TFR with impairments off, across the existing
@@ -317,7 +327,9 @@ shared IP.
    (`AGENTS.md` §2 is one-directional), and neither RTL repository depends on
    the other. The honest answer is probably that it lives in grx930, and
    grxgpu vendors it — which is a coupling neither repo has today and which
-   somebody has to agree to.
+   somebody has to agree to. *Settled by the program plan (D1):* grx930 owns
+   it, and grxgpu vendors tagged releases in one direction, the way grxcp
+   vendors grx930's DPI shim.
 3. **What happens to warp occupancy?** A tile with `W` weight banks caps the
    number of concurrently schedulable weight sets per cluster, which is a
    second occupancy limit alongside LMEM slots and register pressure. The

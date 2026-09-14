@@ -4,10 +4,12 @@
 [`pta_gpu_integration.md`](pta_gpu_integration.md),
 [`pta_tpaqcn_review.md`](pta_tpaqcn_review.md).
 
-**Status: PLAN, scope agreed, the decisions of §2 open.** This document orders
-the next stretch of photonic-tile work across the c930, the G100 and grxcp. It
-designs nothing new. Where it changes an earlier document's staging it says so,
-and §7 lists the edits that follow once §2 is settled.
+**Status: PLAN, in progress.** The decisions of §2 were settled on 2026-09-14,
+all four as recommended, and §7 lists the edits that carried them into the
+integration documents. F0 is measured and F1 has made its predictions (§3.3).
+This document orders the next stretch of photonic-tile work across the c930,
+the G100 and grxcp. It designs nothing new; where it changes an earlier
+document's staging, it says so.
 
 **Scope, unchanged.** FPGA emulation and numerics, as the CPU document states
 before anything else. This plan covers the tile on both devices, the operand
@@ -31,6 +33,7 @@ either names its document or is this one's.
 | S_ACT activation stage | RTL through gate A2, tied off in `c930_npu_top`; not synthesized |
 | Target material | TFLT, [`pta_cpu_integration.md`](pta_cpu_integration.md) §4.4 |
 | Models | [`pta_tw_sweep.py`](pta_tw_sweep.py), [`pta_material_scorecard.py`](pta_material_scorecard.py), [`pta_operand_supply.py`](pta_operand_supply.py) |
+| Feed, measured and modelled (F0, F1) | Done: `make npu_feed` and the SoC's F0 mode in grx930, and [`pta_feed_model.py`](pta_feed_model.py) (§3.3) |
 | Tile: PTM-C, error model, PTM-B, calibration (C0, C1, C2 tile, C3) | Not started |
 | SoC integration, firmware, Vivado (C4) | Not started |
 | G100 tile (G0–G3) | Not started; staged behind C2 |
@@ -48,13 +51,13 @@ Three things the TFLT decision changed, and this plan hangs on them.
    (§2.1), and the fetch of its 18,432 operands is no longer small beside it
    (§6.2). The core already counts the wait: under the interchanged order it
    walks every row of A in the first K tile and sits in `S_AROW` until the DMA
-   lands the next one. A comment in the DMA records that an 18× margin between
-   the DMA and the core once hid a one-cycle bug there. The digital array
-   takes 18 cycles over a K tile where a shot takes one, so at the Pockels
-   points that margin is unlikely to survive; F0 and F1 find out. At system
-   scale the review's operand-supply model puts one PCIe 6.0 x16 link at
-   0.011 POPS of feed, against the 1.07 POPS the proposal's chip computes
-   unfed.
+   lands the next one. F0 found that wait on the digital array before grx930's
+   half-rate hop, when the core finished a row every 26 cycles and the DMA's
+   row prefetch delivered one every 36; since the hop the core takes 72 and
+   never waits. A one-cycle shot finishes a row every 9, and F1 puts the wait
+   at about 1,600 cycles a GEMM. At system scale the review's operand-supply
+   model puts one PCIe 6.0 x16 link at 0.011 POPS of feed, against the
+   1.07 POPS the proposal's chip computes unfed.
 3. **Accuracy over time is a calibration question.** Drift, not settle, is
    what a Pockels tile pays, so C3's schedulers are tuned to TFLT's drift and
    stressed with TFLN's.
@@ -63,8 +66,8 @@ Three things the TFLT decision changed, and this plan hangs on them.
 
 ## 2. Decisions to settle first
 
-Each one blocks building, none needs a measurement, and each has a recommended
-answer.
+Each one blocked building and needed no measurement. **All four were settled on
+2026-09-14 as recommended below.**
 
 **D1 — Who owns the shared tile IP.** The tile model and its error budget are
 written once and used by both devices, and neither RTL repository depends on
@@ -151,8 +154,8 @@ requirements where it cannot.
 
 | Step | What | Gate | Needs |
 |---|---|---|---|
-| F0 | Run the `M = 64, N = 8, K = 256` GEMM on the Verilator SoC and record `DMA_LAST`, `STALL_CT` and the core's A-row wait (`arow_stall_cnt`, not yet on a CSR), split into the initial load, PF1 (A rows fetched during compute) and PF2 (the next GEMM's operands, fetched while C is written) | *New:* fetch cycles per operand, and the A-row wait on the digital array, identical run to run | — |
-| F1 | Add a feed term to the §2.1 model, built from F0's fetch rate | *New:* the model predicts the A-row wait and `DMA_CT` at C2 tile and MB, before they are measured | F0 |
+| F0 | **Done, below.** Run the `M = 64, N = 8, K = 256` GEMM on the Verilator SoC and record `DMA_LAST`, `STALL_CT` and the core's A-row wait (`arow_stall_cnt`, not yet on a CSR), split into the initial load, PF1 (A rows fetched during compute) and PF2 (the next GEMM's operands, fetched while C is written) | *New:* fetch cycles per operand, and the A-row wait on the digital array, identical run to run | — |
+| F1 | **Predictions made, below; checked at C2 tile and MB.** Add a feed term to the §2.1 model, built from F0's fetch rate | *New:* the model predicts the A-row wait and `DMA_CT` at C2 tile and MB, before they are measured | F0 |
 | F2 | Feed options at the Pockels points: PF1 and PF2 as built; B tiles prefetched straight into resident banks; the whole GEMM staged before launch | *New:* chosen by measured total cycles, A-row wait included, at EO-scan and EO-res | C2 tile, MB |
 | F3 | Requirements for the fabric plan: operands per second at each §6.2 point, which operands are resident and which streamed, and how long the tile can wait | *New:* every number traced to F0–F2 or to a model F1 checked | F1, F2, C4 |
 
@@ -161,6 +164,59 @@ F3 says so: the fabric plan gets rates and access patterns, not this SoC's
 latency. The G100 tile is fed differently — from LMEM, by the DXA, at cluster
 scope — so G2 reports its DXA transfer cycles as its feed term, and G3 sets the
 two feeds side by side.
+
+**F0, measured.** In grx930, `make npu_feed` runs the NPU bench
+(`c930/tb/tb_npu_feed.sv`), and the Verilator SoC built with `F0=1` runs the
+same four queued GEMMs through the DMA arbiter, the crossbar and the L2. Both
+repeat byte for byte and check C. Two cores were measured: grx930 8cceb33, and
+the core after the grx930 team's half-rate hop (0afeb6e), which runs `S_RUN`
+at 64 cycles a K tile for every precision instead of 18. Nothing on the DMA
+side moved between them. One GEMM on the digital array:
+
+| | NPU bench | SoC |
+|---|---|---|
+| Initial load: A row 0 and B, 2,304 operands | 580 cycles | 586 |
+| PF1: A rows 1–63, 16,128 operands | a row every 36 cycles, 34 of them busy | every 39, 37 busy |
+| Read request to first beat | 1 cycle | 2 |
+| C writeback, 512 words | 1,283 | 1,410 |
+| A-row wait (`S_AROW`), before / after the hop | 566 / 0 | 755 / 0 |
+| Whole GEMM, before / after the hop | 73,601 / 167,242 | 73,923 / 167,375 |
+
+- Before the hop, the A-row wait was all in the first K tile, where the core
+  finished a row every 26 cycles and PF1 delivered one every 36 or 39. After
+  it the core takes 72 cycles a row, slower than PF1, and never waits.
+- C writeback, about five cycles a beat, is the largest fixed feed cost.
+- PF2 as built is a net loss at this shape. It unpacks one element per cycle,
+  so when writeback ends it has fetched 143 of the 288 beats of the next
+  GEMM's first A row and B. `P_DONE` then drains the abandoned burst for 145
+  cycles (132 on the SoC), holding `o_done` high, and the next GEMM loads cold
+  anyway.
+- The SoC path costs 322 cycles a GEMM, with no throttling inside a burst. Its
+  first GEMM after boot took 8 more.
+
+**F1, predicted.** [`pta_feed_model.py`](pta_feed_model.py) adds the feed to
+the §2.1 model: load, core, A-row wait, hand-off and writeback, with the wait
+taken from a row-by-row race between the core and PF1 that F0's per-row
+timeline pins down with no free constant. It reproduces all four measurements —
+both levels, both cores — to the hop's one-cycle phase alignment. Its first
+version did not: taking PF1's period as its busy cycles alone, and fitting a
+row offset to the pre-hop wait, it predicted 27 cycles of wait on the hop core,
+where the RTL measured none. The two idle cycles a row were what the fit had
+hidden. Its predictions, for C2 tile and MB to check, with the restore
+unfolded as built (NPU bench / SoC):
+
+| Point, loop order | A-row wait | Whole GEMM | Feed share |
+|---|---|---|---|
+| TO-10µs, interchanged | 385 / 574 | 78,796 / 79,118 | 2.9% / 3.3% |
+| EO-scan, interchanged | 1,637 / 1,826 | 39,856 / 40,178 | 8.8% / 9.5% |
+| EO-res, interchanged | 1,701 / 1,890 | 37,872 / 38,194 | 9.4% / 10.2% |
+| EO-res, shipped | 0 / 0 | 4,427 / 4,560 | 42% / 44% |
+
+The shipped order still wins at EO-res once the feed counts, but by less: 5.0×
+with the restore folded (4.9× on the SoC), against 7.2× for the core alone,
+because 1,900 to 2,000 fixed feed cycles now sit beside a 2,560-cycle core.
+That puts writeback and PF2 first among F2's candidates, ahead of anything in
+the core.
 
 ### 3.4 Track G — the G100 (grxgpu, by proposal)
 
@@ -188,8 +244,8 @@ grxgpu's RTL owners, under the boundary rule of `AGENTS.md` §2.
 
 | Wave | Starts when | Steps |
 |---|---|---|
-| Now | Immediately, in parallel | D1–D4 settled, then S0; C0; A3; A-synth; F0; G1 |
-| Next | C0 green, D1–D3 settled | C1, with F1 beside it; G0 and C3 once C1 is green |
+| Now | Immediately, in parallel | S0; C0; A3; A-synth; G1 (D1–D4 settled, F0 done) |
+| Next | C0 green | C1; G0 and C3 once C1 is green (F1 done) |
 | Then | C1 green | C2 tile, then MB; F2 once both are in; G2 once MB and G1 have reported |
 | Last | C2 tile, MB, C3 and A-synth green | C4; then S1 and S2 on its CSR map, F3 on its numbers, and G3 |
 
@@ -229,6 +285,8 @@ above.
 | Risk | Where it bites | Response |
 |---|---|---|
 | Timing at 100 MHz: the shot path adds a multiply, a square-root approximation and two adds (CPU document §6.1), and S_ACT's stage 1 is a wide one-cycle multiply | C4 | A-synth now. A pipeline cut goes into `PTA_TS`, `ACT_P` and the §2.1 model, never around them |
+| The SoC as built cannot run the §6.2 shape: `MAX_M` 8, `MAX_K` 16, and a 64 KB DDR window fixed in the crossbar | C4 | F0 runs the shape on a Verilator build resized with `F0=1`. C4 sizes the synthesized SoC for it and prices the area, which the CPU document's §6.1 does not |
+| grx930's half-rate hop changed the systolic array's timing contract: `S_RUN` went from 18 to 64 cycles a K tile for every precision, with rows and seeds presented on hop windows | C0 | PTM-C matches the hop schedule, or C0's exact-swap gate cannot pass. The CPU document's §2.3 cycles and `pta_tw_sweep.py`'s asserts stay as the record of the core before the hop |
 | A bank select is not free in RTL | MB | The gate takes the RTL's select cycles as `Tw`; one cycle leaves EO-res resident |
 | Bitwise RTL↔C parity may not survive the DPI path (CPU document §9, question 3) | C1, S2 | Keep the tile model's arithmetic integer, and weaken the gate deliberately, in writing, if it has to weaken |
 | F0 measures this SoC's simulated DDR | F3 | F3 labels its numbers as this SoC's and passes on rates and access patterns |
@@ -237,13 +295,15 @@ above.
 
 ---
 
-## 7. Edits that follow
+## 7. Edits that followed §2
 
-Once §2 is settled:
+Made on 2026-09-14, when §2 was settled:
 
-- [`pta_cpu_integration.md`](pta_cpu_integration.md): the status line, which
-  still says nothing is built; step MB added to §6 between C2 and C3; §8
-  item 3 pointed at MB; §9 question 4 answered by D3.
-- [`pta_gpu_integration.md`](pta_gpu_integration.md): §7's staging per D4;
-  §9 question 2 answered by D1.
+- [`pta_cpu_integration.md`](pta_cpu_integration.md): the status line; step MB
+  in §6 between C2 and C3, with F1's predictions in C2's and MB's gates; D2 in
+  §7; §8 item 3 pointed at MB; §9 question 4 answered by D3; a note in §6.1
+  that its baseline cannot run the §6.2 shape; and a note in §2.3 that its
+  measured cycles predate the half-rate hop.
+- [`pta_gpu_integration.md`](pta_gpu_integration.md): the status line and §7's
+  staging per D4; §9 question 2 answered by D1.
 - The S_ACT design note in grx930: nothing until A3 reports.
