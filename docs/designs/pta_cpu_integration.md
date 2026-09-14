@@ -4,9 +4,11 @@
 [`pta_gpu_integration.md`](pta_gpu_integration.md).
 **Source analysis:** GRX_PTA_Integration.md in this repository's `docs/`.
 
-**Status: DESIGN, nothing built.** No RTL, no model, no CSR. This document
-fixes what gets built, in what order, and — more importantly — what each stage
-is allowed to claim.
+**Status: DESIGN, partly built.** The C2 loop interchange is in grx930 (§6), and
+so is the S_ACT activation stage; the tile, its error model and the PTA CSRs
+are not. [`pta_program_plan.md`](pta_program_plan.md) orders what comes next.
+This document fixes what gets built, in what order, and — more importantly —
+what each stage is allowed to claim.
 
 **Scope decision, made before anything else.** This program terminates at FPGA
 emulation and numerics. There is no photonic PDK, no MPW shuttle, no
@@ -256,6 +258,12 @@ directly (`tb/tb_core_m64.sv`):
 **2.37× on the shipping NPU, with no photonics involved**, results
 bit-identical and `op_count` unchanged to the last operation — the array does
 exactly the same arithmetic, just without reloading the same weights 64 times.
+
+These totals, and the asserts in `pta_tw_sweep.py` that check them, are for the
+core before grx930's half-rate hop (0afeb6e), which runs `S_RUN` at 64 cycles a
+K tile for every precision instead of 18. On that core the same interchanged
+GEMM takes 165,375 cycles: compute grows 3.6-fold and the 17,920 cycles of
+weight and accumulator movement do not change (program plan §3.3).
 
 The remaining 71,168 splits as 36,864 cycles of compute, 16,384 of result
 writeback and 17,920 of weight and accumulator movement, so two further steps
@@ -667,8 +675,17 @@ turns into NaN, and NPU operand reads served from L2 lines nothing invalidates
 — plus a silent-corruption bug the A-row interlock introduced, a core left
 waiting after the DMA abandons a GEMM.
 *Remaining for the tile:* total cycles matching the §2.1 model, `Td` term
-included, at every §6.2 sweep point in both loop orders — affine in `PTA_TW`,
-with slope `PTA_WLOAD_CT`.
+included, at every §6.2 sweep point in the interchanged order — the shipped
+order returns with MB — affine in `PTA_TW`, with slope `PTA_WLOAD_CT`; and,
+with the DMA counted, the A-row wait and `DMA_CT` that
+[`pta_feed_model.py`](pta_feed_model.py) predicted before the tile existed.
+
+**MB — the multi-bank tile.** `Nt · Kt` resident weight banks, and a loop order
+selectable at launch that restores the `m`-outer FSM the interchange replaced,
+so that EO-res is measured rather than modelled (§8 item 3).
+*Gate:* EO-res totals match §2.1 in both orders, with `Tw` set to the RTL's
+bank-select cycles, and C is bit-identical between orders; with the DMA
+counted, they match the feed model's predictions for both orders.
 
 **C3 — calibration.** Per-column affine correction, calibration FSM,
 three schedulers, and the `cal_busy` dispatch guard.
@@ -681,8 +698,7 @@ accuracy. *Ablation:* the START-during-calibration regression from §3.2.
 test suite, and a Vivado run on the Arty A7-200T.
 *Gate:* real utilization and timing, not estimates; the five existing full-SoC
 tests still pass; the §6.2 sweep produced at both ends, thermo-optic and
-Pockels-class, with EO-res labelled a model evaluation until a multi-bank tile
-exists.
+Pockels-class, with EO-res measured on MB's tile rather than modelled.
 
 ### 6.1 Does it fit?
 
@@ -705,6 +721,14 @@ room to spare, on hardware already on the desk. Timing is the risk, not area —
 the shot path adds a multiply, a square-root approximation and two adds where
 the systolic PE had one registered product, and the array feed logic already
 carries comments about paths that had to be broken by registration.
+
+One cost the table leaves out: the baseline is the SoC as synthesized, with
+`MAX_M` 8 and `MAX_K` 16, and the §6.2 shape needs `MAX_M` 64 and `MAX_K` 256.
+A's storage grows 128-fold, `MAX_M · MAX_K` elements in each bank and again in
+PF2's staging buffer, and one GEMM's operands take 20 KB of the 64 KB DDR window
+the crossbar decodes, so a second operand set does not fit beside the firmware.
+F0 ran that shape only on a resized Verilator build (program plan §3.3); C4 has
+to size and price the synthesized SoC for it.
 
 ### 6.2 The cycle-time honesty note
 
@@ -768,7 +792,10 @@ caller asked for; it is computing a noisy approximation of it. That is exactly
 the class of thing `warpShuffleIsEmulated` exists for. It needs a property —
 `gemmIsAnalogEmulated`, or better a small struct carrying the effective bits
 and the seed — and `grx-smi` should print it in the same "software stand-ins in
-effect" section that already exists for this purpose.
+effect" section that already exists for this purpose. The program plan settled
+the shape (D2): a struct carrying the effective activation, weight and ADC bits
+(`PTA_BITS`), the seed (`PTA_SEED`) and the impairment mask (`PTA_IMPAIR`), not
+a flag.
 
 **"Every library kernel has a CPU reference and a numerical gate (bitwise or
 ULP-bounded); 'close enough' is not a gate"** (`AGENTS.md` §4). An analog
@@ -825,7 +852,7 @@ Recorded so the next reader knows what was considered and deliberately deferred.
    The exception is §6.2's EO-res point, which cannot be measured at all
    without `Nt · Kt` banks. With TFLT the target (§4.4), the Pockels-class end
    is the one that matters, so that part is not deferred: measuring the
-   target's resident point waits on the multi-bank tile.
+   target's resident point waits on the multi-bank tile, step MB of §6.
 4. **A second tile.** The grx930 team's notes observe 41.5% LUT headroom is
    "enough for a second NPU tile." Two tiles with independent weight sets is
    how a real machine hides `Tw` completely, and it is the obvious C5. It is
@@ -861,6 +888,8 @@ Recorded so the next reader knows what was considered and deliberately deferred.
    RTL simulation, and dominated by GEMM. A two-layer MLP on MNIST is
    defensible and boring; anything transformer-shaped will not fit the
    `MAX_N = 8` output width without tiling that muddies the measurement.
+   *Settled by the program plan (D3):* that MLP, fixed once so that C1, C3 and
+   A3 report on the same network.
 5. **Which weight drive would a real TFLT tile have?** §2.1 shows the loop nest
    turns on it — scanned wants the interchange, resident wants the shipped
    order — and nothing in an emulation-only program can find out. Until
