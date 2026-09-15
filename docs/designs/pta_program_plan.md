@@ -6,8 +6,8 @@
 
 **Status: PLAN, in progress.** The decisions of §2 were settled on 2026-09-14,
 all four as recommended, and §7 lists the edits that carried them into the
-integration documents. F0 is measured, F1 has made its predictions (§3.3), and
-C0 is green (§3.1).
+integration documents. F0 is measured, F1 has made its predictions (§3.3), C0
+is green, and C1 is under way (§3.1).
 This document orders the next stretch of photonic-tile work across the c930,
 the G100 and grxcp. It designs nothing new; where it changes an earlier
 document's staging, it says so.
@@ -36,7 +36,8 @@ either names its document or is this one's.
 | Models | [`pta_tw_sweep.py`](pta_tw_sweep.py), [`pta_material_scorecard.py`](pta_material_scorecard.py), [`pta_operand_supply.py`](pta_operand_supply.py) |
 | Feed, measured and modelled (F0, F1) | Done: `make npu_feed` and the SoC's F0 mode in grx930, and [`pta_feed_model.py`](pta_feed_model.py) (§3.3) |
 | PTM-C, the compatibility shim (C0) | Done: bit-identical to the systolic array on grx930's NPU benches under `PTM_C=1` (§3.1) |
-| Tile: error model, PTM-B, calibration (C1, C2 tile, C3) | Not started |
+| Error model (C1) | In progress: QUANT, THERMAL, SHOT and PROG_ERR built in grx930 and bitwise against the C reference; drift, crosstalk and the accuracy sweep remain (§3.1) |
+| Tile: PTM-B, calibration (C2 tile, C3) | Not started |
 | SoC integration, firmware, Vivado (C4) | Not started |
 | G100 tile (G0–G3) | Not started; staged behind C2 |
 | grxcp NPU backend | Host side built and gated against register models and the vendored grx930 DPI shim; no PTA surface |
@@ -118,7 +119,7 @@ it is marked *new*.
 | Step | What | Gate | Needs |
 |---|---|---|---|
 | C0 | **Done, below.** PTM-C swapped in for the systolic array, impairments off | CPU document §6, unchanged | — |
-| C1 | Error model, one impairment at a time; `PTA_DRIFT` defaults fitted to TFLT, with a TFLN setting as the stress case | CPU document §6, unchanged | C0, D1–D3 |
+| C1 | **In progress, below.** Error model, one impairment at a time; `PTA_DRIFT` defaults fitted to TFLT, with a TFLN setting as the stress case | CPU document §6, unchanged | C0, D1–D3 |
 | C2 tile | PTM-B in the interchanged core | Total cycles match §2.1 at every §6.2 point, affine in `PTA_TW` | C1 |
 | MB | Multi-bank tile with `Nt·Kt` resident banks, and a selectable loop order that restores `m`-outer | *New:* EO-res totals match §2.1 in both orders, with `Tw` set to the RTL's bank-select cycles, and C bit-identical between orders | C2 tile |
 | C3 | Calibration FSM and the three schedulers | CPU document §6, run with drift at TFLT's fitted rate and again at TFLN's | C1, D3 |
@@ -142,6 +143,32 @@ edges and takes the samples each column's cascade would meet (CPU document
 bench's log is byte-identical to the array's, and a lockstep bench finds no
 difference on any cycle. With one row's de-skew a window late, the benches go
 red. The CPU document's §6 has the counts.
+
+**C1, decided.** Four choices were settled on 2026-09-14, all as recommended,
+before any error-model RTL. They are recorded with the fixed-point contract in
+grx930's `c930/doc/pta_error_model_design_note.md`.
+
+- *E1:* the core marks each result it captures, and the tile draws in the
+  core's loop order — N tile, K tile, output row, column. A result then
+  depends only on the seed, the shape and the operands, which is what lets
+  grxcp's host predict it (CPU document §7, gate 1).
+- *E2:* the generators reload from `PTA_SEED` at every GEMM start, as S_ACT's
+  do, so queued GEMMs stay independent.
+- *E3:* weight errors act after the DAC, `q_w(w) + eps + delta`, correcting
+  the CPU document's §4.3.
+- *E4:* the ADC's scale is a shift chosen per GEMM, a new field in
+  `PTA_BITS`.
+
+The model is integer and covers the integer precisions only. Drift's clock and
+crosstalk's topology stay open until those impairments are built.
+
+**C1, first four impairments.** QUANT, THERMAL, SHOT and PROG_ERR are built into
+PTM-C, and a C reference, `c930/sim/pta_tile_model.c`, agrees with the RTL bit
+for bit: C and the ADC saturation count match at every shape of the core-level
+harness, the sweep's shape included, at both operand widths. With every
+impairment clear, C0's benches still pass. The CPU document's §6 has the
+counts and ablations. Still to come: drift, crosstalk, and gate (a), the
+accuracy sweep on the D3 network.
 
 ### 3.2 Track A — activation (grx930)
 

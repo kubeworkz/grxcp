@@ -5,10 +5,11 @@
 **Source analysis:** GRX_PTA_Integration.md in this repository's `docs/`.
 
 **Status: DESIGN, partly built.** The C2 loop interchange is in grx930 (§6), and
-so are the S_ACT activation stage and PTM-C, exact at C0; PTM-B, the error
-model and the PTA CSRs are not. [`pta_program_plan.md`](pta_program_plan.md)
-orders what comes next. This document fixes what gets built, in what order,
-and — more importantly — what each stage is allowed to claim.
+so are the S_ACT activation stage, PTM-C, exact at C0, and four of the error
+model's six impairments (§6, C1); PTM-B, drift, crosstalk and the PTA CSRs are
+not. [`pta_program_plan.md`](pta_program_plan.md) orders what comes next. This
+document fixes what gets built, in what order, and — more importantly — what
+each stage is allowed to claim.
 
 **Scope decision, made before anything else.** This program terminates at FPGA
 emulation and numerics. There is no photonic PDK, no MPW shuttle, no
@@ -322,11 +323,11 @@ document nobody trusts.
 | 0x40 | `PTA_CTRL` | RW | bit0 EN, bit1 CAL_NOW, bit2 CAL_AUTO, bit3 MODEL_RST, bits[6:4] CAL_SCHED |
 | 0x44 | `PTA_STATUS` | R | bit0 CAL_BUSY, bit1 CAL_VALID, bit2 SAT_STICKY, bit3 DRIFT_ALARM, bits[23:8] last calibration residual |
 | 0x48 | `PTA_IMPAIR` | RW | one enable bit per impairment: QUANT, THERMAL, SHOT, DRIFT, XTALK, MZM_NL, PROG_ERR |
-| 0x4C | `PTA_BITS` | RW | [3:0] activation bits, [7:4] weight bits, [11:8] ADC bits |
-| 0x50 | `PTA_SEED` | RW | LFSR seed; a write resets every noise generator |
+| 0x4C | `PTA_BITS` | RW | [3:0] activation bits, [7:4] weight bits, [11:8] ADC bits, [17:12] ADC shift `S`, so `LSB_adc` = 2^S |
+| 0x50 | `PTA_SEED` | RW | seed for every noise generator; each reloads from it at a GEMM start (§4.3) |
 | 0x54 | `PTA_SIGMA_TH` | RW | thermal/TIA noise σ, Q8.8 in ADC LSB |
-| 0x58 | `PTA_SIGMA_SH` | RW | shot-noise coefficient `k`, so σ_shot = k·√\|y\| |
-| 0x5C | `PTA_SIGMA_PR` | RW | weight-programming error σ |
+| 0x58 | `PTA_SIGMA_SH` | RW | shot-noise coefficient `k`, Q8.8, so σ_shot = k·√\|y\| with σ and y in ADC LSB |
+| 0x5C | `PTA_SIGMA_PR` | RW | weight-programming error σ, Q8.8 in weight LSB |
 | 0x60 | `PTA_DRIFT` | RW | [15:0] drift step σ, [31:16] log2 update interval |
 | 0x64 | `PTA_XTALK` | RW | nearest-neighbour coupling, Q0.8 |
 | 0x68 | `PTA_TW` | RW | settle after a program's last weight write, in core cycles; 0 is legal (§6.2) |
@@ -439,7 +440,7 @@ uniform ±8 LSB — is not defensible in a paper and should not be built. The
 first-order model that is:
 
 ```
-  y_j = g_j · Σ_i  q_w(w_ij + eps_ij + delta_ij(t)) · q_a(x_i)
+  y_j = g_j · Σ_i  (q_w(w_ij) + eps_ij + delta_ij(t)) · q_a(x_i)
       + Σ_{i'~i} chi · q_w(w_i'j) · q_a(x_i')          crosstalk, nearest neighbour
       + n_th                                            thermal / TIA, sigma_th
       + n_sh(y)                                         shot, sigma = k*sqrt(|y|)
@@ -452,6 +453,18 @@ residual when MZM_NL is enabled), `q_w` a weight quantizer at `B_w` bits,
 `eps_ij` a fixed programming error drawn once per weight load, and
 `delta_ij(t)` a bounded random walk updated every `2^PTA_DRIFT[31:16]` cycles
 and reset by calibration.
+
+**Settled for C1** (2026-09-14). The weight errors act after the DAC, as the
+formula now reads: a Pockels weight is a DAC level that the device's error then
+moves, and the source analysis's `q_w(w + eps + delta)` would erase any error
+smaller than one DAC step. `LSB_adc` is `2^S`, with the shift `S` set per GEMM:
+the activation-scaling knob below. The model is integer and covers the integer
+precisions only. Its generators reload from `PTA_SEED` at every GEMM start and
+draw in the core's loop order — N tile, K tile, output row, column — for the
+results the core marks as captured, so a result depends on the seed, the shape
+and the operands, and on nothing the DMA's timing can move. Drift's clock is
+still open, because a cycle clock would reintroduce that timing. grx930's
+`c930/doc/pta_error_model_design_note.md` holds the fixed-point contract.
 
 **Shot noise is signal-dependent and that is the whole point.** Modelling
 detector noise as a constant additive term — which every casual model does —
@@ -688,6 +701,18 @@ behind its `PTA_IMPAIR` bit, each with its own directed test.
 curves; (b) RTL and the C model agree **bitwise** for a fixed `PTA_SEED`,
 driven through the existing NPU DPI wrapper. *Ablation:* corrupt one LFSR tap
 and confirm the parity check fails.
+*In progress in grx930:* QUANT, THERMAL, SHOT and PROG_ERR are built into PTM-C,
+with a C reference, `c930/sim/pta_tile_model.c`. At all 14 shapes of the
+core-level Verilator harness, `M=64, N=8, K=256` included, and at 8- and 16-bit
+operands, C and the ADC saturation count agree bitwise with the C reference for
+each impairment alone and all four together, and hand-worked cases pin the
+quantisers' and the ADC's rounding. With every impairment clear, C0's benches
+still pass and the feed log is still byte-identical to the array's.
+*Ablations, red:* one xorshift32 shift changed fails every shape carrying
+thermal, shot or programming noise; dropping the quantiser's rounding term
+fails both hand-worked quantiser cases and 10 of the 14 quantised shapes. Gate
+(b) runs in that harness, not the DPI wrapper, until C4 puts the configuration
+on a CSR (§9, question 3). Drift, crosstalk and gate (a) remain.
 
 **C2 — loop interchange and the broadside tile.** The `m`-inner FSM landed
 first, on the digital array, ahead of any tile work — see §2.3. PTM-B then
@@ -913,6 +938,10 @@ Recorded so the next reader knows what was considered and deliberately deferred.
    crosses it that is sensitive to bit-level arithmetic ordering. If the
    floating-point accumulator paths cannot be made to agree exactly, gate C1(b)
    has to weaken, and it should weaken deliberately rather than by discovery.
+   *Partly answered by C1:* the error model is integer, so no floating-point
+   ordering reaches the parity gate, and parity holds bitwise in the core
+   harness. The DPI wrapper cannot reach the configuration until C4 maps it
+   onto a CSR, so the wrapper half of the question waits for C4.
 4. **What is the right small model for the accuracy sweep?** It needs
    published quantization curves to compare against, small enough to run in
    RTL simulation, and dominated by GEMM. A two-layer MLP on MNIST is
