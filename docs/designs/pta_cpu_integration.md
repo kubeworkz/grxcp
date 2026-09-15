@@ -5,10 +5,10 @@
 **Source analysis:** GRX_PTA_Integration.md in this repository's `docs/`.
 
 **Status: DESIGN, partly built.** The C2 loop interchange is in grx930 (§6), and
-so is the S_ACT activation stage; the tile, its error model and the PTA CSRs
-are not. [`pta_program_plan.md`](pta_program_plan.md) orders what comes next.
-This document fixes what gets built, in what order, and — more importantly —
-what each stage is allowed to claim.
+so are the S_ACT activation stage and PTM-C, exact at C0; PTM-B, the error
+model and the PTA CSRs are not. [`pta_program_plan.md`](pta_program_plan.md)
+orders what comes next. This document fixes what gets built, in what order,
+and — more importantly — what each stage is allowed to claim.
 
 **Scope decision, made before anything else.** This program terminates at FPGA
 emulation and numerics. There is no photonic PDK, no MPW shuttle, no
@@ -388,27 +388,45 @@ calibration, three times back to back, occupancy checked at each step.
 
 ### 4.1 PTM-C — the compatibility shim
 
-A module with the port list of `c930_systolic_array`, byte for byte, that
-absorbs the skew at its own boundary: it de-skews `i_act` into an N-element
-register over `NUM_ROWS` cycles, fires one broadside shot, and re-emits
-`o_ps_out` on the exact cycles the core's staggered capture
-(`t >= NUM_ROWS + 2`) expects.
+A module with the port list of `c930_systolic_array`, parameter for parameter,
+that absorbs the skew at its own boundary. It is built, as grx930's
+`c930/rtl/pta/c930_ptm_c.sv`.
+
+The array's ports carry no start strobe, and PTM-C needs none, because the
+array is a fixed transform of its input streams. Since grx930's half-rate hop
+(§2.3), every PE register that carries the activation or the partial sum
+updates on hop edges, so each PE delays both by two hop windows, and the core
+changes `i_act` and `i_ps_in` only on hop edges. With `R = NUM_ROWS`, column
+`c`'s output in hop window `i` is the seed from window `i − 2R`, plus each row
+`r`'s product with the activation from window `i − 2(R − r) − 2c`, added top
+row first. PTM-C keeps each input's history on hop edges and takes exactly
+those samples (the de-skew), evaluates each column in one combinational pass
+(the shot), and registers the result on the hop edge (the re-skew). It reads
+weights and the bank select at the shot, which is exact because the core
+writes weights only in `S_WLOAD` and holds the bank through `S_RUN`. Float
+columns chain a combinational copy of `c930_fp16_acc` in the cascade's row
+order, since IEEE addition does not associate. As built, PTM-C is a simulation
+model: a float column is `NUM_ROWS` multiplies and additions in one pass, and
+nothing has timed it.
 
 Its purpose is not performance. **With every impairment disabled it must be
 bit-identical to the systolic array on the existing self-checking testbench.**
 That single property is what makes every later numerical difference
 attributable: if the shim is not proven exact first, an accuracy delta observed
 in phase C1 could be the error model or could be a de-skew bug, and there is no
-experiment that separates them after the fact.
+experiment that separates them after the fact. C0's gate (§6) says it is.
 
-Zero changes to core, DMA or CSR. One line in the Makefile's `NPU_RTL` list.
+Zero changes to core, DMA or CSR. `make <bench> PTM_C=1` builds any NPU bench
+with the shim in place of `rtl/c930_systolic_array.sv`, into its own build
+directory.
 
 ### 4.2 PTM-B — the broadside tile
 
 The tile the architecture actually wants: takes a whole K-tile activation
 vector, returns a whole column of results after `PTA_TS`. Requires the core's
-`S_RUN` to become a shot-and-wait rather than an 18-cycle skewed drain, and it
-is the variant the §2 loop interchange is written against.
+`S_RUN` to become a shot-and-wait rather than a skewed drain (18 cycles a K
+tile before grx930's half-rate hop, 64 after), and it is the variant the §2
+loop interchange is written against.
 
 PTM-B is where the speedup lives and PTM-C is where the trust lives. Build
 both; keep both; run the numerics on whichever is convenient, since with
@@ -608,8 +626,9 @@ top-`k` weights per tile in a digital side path, subtract their analog
 contribution and add the exact one.
 
 On the c930 this is unusually cheap, because if PTM-C rather than PTM-B is
-instantiated the digital PEs have not been deleted — the tile can compute the
-`k`-term correction on the same hardware in `k` extra cycles. The experiment is:
+instantiated the digital multipliers have not been deleted — PTM-C removes the
+PEs' skew, not their arithmetic — so the tile can compute the `k`-term
+correction on the same hardware in `k` extra cycles. The experiment is:
 sweep `k` from 0 to 8 and measure recovered accuracy per cycle spent. If the
 curve is steep at small `k`, mixed analog/digital tensor units are a result; if
 flat, that is a negative result worth publishing too.
@@ -650,6 +669,17 @@ for the systolic array, with zero output differences across all five precision
 modes. *Ablation:* flip one de-skew index and confirm the testbench goes red.
 Nothing else in this document may start before this gate is green — every later
 number depends on it.
+*Met in grx930:* built with `PTM_C=1`, `tb_c930_npu` passes, `tb_npu_float_prec`
+passes 24/24 across the five precisions, and `tb_npu_feed`'s four
+`M=64, N=8, K=256` GEMMs check, with a log — every DMA phase and core state
+count — byte-identical to the array's. A lockstep bench, `tb_ptm_c_lockstep`,
+drives PTM-C and the array with the same random weights, row enables and input
+streams, and finds no difference on any of 12,195 cycles at 8×8 in all five
+precisions, or at 4×4 in the integer ones; it also holds the float adder to
+`c930_fp16_acc` over 80,196 operand pairs. *Ablation, red:* with row 3's
+de-skew one window late, `tb_c930_npu` passes its K = 2 GEMM and stops at the
+next, K = 5, and `tb_npu_float_prec` fails 22 of 24, passing only the two with
+K = 1. No GEMM whose K tile reaches row 3 survives it.
 
 **C1 — the error model, one impairment at a time.** Quantization, then
 thermal, then shot, then programming error, then drift, then crosstalk. Each

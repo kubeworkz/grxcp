@@ -6,7 +6,8 @@
 
 **Status: PLAN, in progress.** The decisions of §2 were settled on 2026-09-14,
 all four as recommended, and §7 lists the edits that carried them into the
-integration documents. F0 is measured and F1 has made its predictions (§3.3).
+integration documents. F0 is measured, F1 has made its predictions (§3.3), and
+C0 is green (§3.1).
 This document orders the next stretch of photonic-tile work across the c930,
 the G100 and grxcp. It designs nothing new; where it changes an earlier
 document's staging, it says so.
@@ -34,7 +35,8 @@ either names its document or is this one's.
 | Target material | TFLT, [`pta_cpu_integration.md`](pta_cpu_integration.md) §4.4 |
 | Models | [`pta_tw_sweep.py`](pta_tw_sweep.py), [`pta_material_scorecard.py`](pta_material_scorecard.py), [`pta_operand_supply.py`](pta_operand_supply.py) |
 | Feed, measured and modelled (F0, F1) | Done: `make npu_feed` and the SoC's F0 mode in grx930, and [`pta_feed_model.py`](pta_feed_model.py) (§3.3) |
-| Tile: PTM-C, error model, PTM-B, calibration (C0, C1, C2 tile, C3) | Not started |
+| PTM-C, the compatibility shim (C0) | Done: bit-identical to the systolic array on grx930's NPU benches under `PTM_C=1` (§3.1) |
+| Tile: error model, PTM-B, calibration (C1, C2 tile, C3) | Not started |
 | SoC integration, firmware, Vivado (C4) | Not started |
 | G100 tile (G0–G3) | Not started; staged behind C2 |
 | grxcp NPU backend | Host side built and gated against register models and the vendored grx930 DPI shim; no PTA surface |
@@ -115,7 +117,7 @@ it is marked *new*.
 
 | Step | What | Gate | Needs |
 |---|---|---|---|
-| C0 | PTM-C swapped in for the systolic array, impairments off | CPU document §6, unchanged | — |
+| C0 | **Done, below.** PTM-C swapped in for the systolic array, impairments off | CPU document §6, unchanged | — |
 | C1 | Error model, one impairment at a time; `PTA_DRIFT` defaults fitted to TFLT, with a TFLN setting as the stress case | CPU document §6, unchanged | C0, D1–D3 |
 | C2 tile | PTM-B in the interchanged core | Total cycles match §2.1 at every §6.2 point, affine in `PTA_TW` | C1 |
 | MB | Multi-bank tile with `Nt·Kt` resident banks, and a selectable loop order that restores `m`-outer | *New:* EO-res totals match §2.1 in both orders, with `Tw` set to the RTL's bank-select cycles, and C bit-identical between orders | C2 tile |
@@ -131,6 +133,15 @@ wants. Storage is small — 2,048 weights — and the cost is the select path. I
 bank select takes a cycle in RTL, the gate counts that cycle as `Tw`; the §2.1
 break-even sits at 8 cycles, so one cycle still leaves EO-res in the resident
 regime.
+
+**C0, met.** PTM-C needs no start strobe: the systolic array is a fixed
+transform of its input streams, so the shim keeps each input's history on hop
+edges and takes the samples each column's cascade would meet (CPU document
+§4.1). In grx930, `PTM_C=1` builds any NPU bench with it in place of the array.
+`tb_c930_npu`, `tb_npu_float_prec` and `tb_npu_feed` pass with it, the feed
+bench's log is byte-identical to the array's, and a lockstep bench finds no
+difference on any cycle. With one row's de-skew a window late, the benches go
+red. The CPU document's §6 has the counts.
 
 ### 3.2 Track A — activation (grx930)
 
@@ -244,8 +255,8 @@ grxgpu's RTL owners, under the boundary rule of `AGENTS.md` §2.
 
 | Wave | Starts when | Steps |
 |---|---|---|
-| Now | Immediately, in parallel | S0; C0; A3; A-synth; G1 (D1–D4 settled, F0 done) |
-| Next | C0 green | C1; G0 and C3 once C1 is green (F1 done) |
+| Now | Immediately, in parallel | S0; A3; A-synth; G1 (D1–D4 settled; F0 and C0 done) |
+| Next | C0 green, as it now is | C1; G0 and C3 once C1 is green (F1 done) |
 | Then | C1 green | C2 tile, then MB; F2 once both are in; G2 once MB and G1 have reported |
 | Last | C2 tile, MB, C3 and A-synth green | C4; then S1 and S2 on its CSR map, F3 on its numbers, and G3 |
 
@@ -286,7 +297,7 @@ above.
 |---|---|---|
 | Timing at 100 MHz: the shot path adds a multiply, a square-root approximation and two adds (CPU document §6.1), and S_ACT's stage 1 is a wide one-cycle multiply | C4 | A-synth now. A pipeline cut goes into `PTA_TS`, `ACT_P` and the §2.1 model, never around them |
 | The SoC as built cannot run the §6.2 shape: `MAX_M` 8, `MAX_K` 16, and a 64 KB DDR window fixed in the crossbar | C4 | F0 runs the shape on a Verilator build resized with `F0=1`. C4 sizes the synthesized SoC for it and prices the area, which the CPU document's §6.1 does not |
-| grx930's half-rate hop changed the systolic array's timing contract: `S_RUN` went from 18 to 64 cycles a K tile for every precision, with rows and seeds presented on hop windows | C0 | PTM-C matches the hop schedule, or C0's exact-swap gate cannot pass. The CPU document's §2.3 cycles and `pta_tw_sweep.py`'s asserts stay as the record of the core before the hop |
+| grx930's half-rate hop changed the systolic array's timing contract: `S_RUN` went from 18 to 64 cycles a K tile for every precision, with rows and seeds presented on hop windows | C0 | Closed: PTM-C is built on the hop schedule and C0's exact-swap gate passed. The CPU document's §2.3 cycles and `pta_tw_sweep.py`'s asserts stay as the record of the core before the hop |
 | A bank select is not free in RTL | MB | The gate takes the RTL's select cycles as `Tw`; one cycle leaves EO-res resident |
 | Bitwise RTL↔C parity may not survive the DPI path (CPU document §9, question 3) | C1, S2 | Keep the tile model's arithmetic integer, and weaken the gate deliberately, in writing, if it has to weaken |
 | F0 measures this SoC's simulated DDR | F3 | F3 labels its numbers as this SoC's and passes on rates and access patterns |
