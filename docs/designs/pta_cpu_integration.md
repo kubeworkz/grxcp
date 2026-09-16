@@ -5,9 +5,9 @@
 **Source analysis:** GRX_PTA_Integration.md in this repository's `docs/`.
 
 **Status: DESIGN, partly built.** The C2 loop interchange is in grx930 (§6), and
-so are the S_ACT activation stage, PTM-C, exact at C0, and four of the error
-model's six impairments (§6, C1); PTM-B, drift, crosstalk and the PTA CSRs are
-not. [`pta_program_plan.md`](pta_program_plan.md) orders what comes next. This
+so are the S_ACT activation stage, PTM-C, exact at C0, and all six of the
+error model's impairments (§6, C1); PTM-B and the PTA CSRs are not.
+[`pta_program_plan.md`](pta_program_plan.md) orders what comes next. This
 document fixes what gets built, in what order, and — more importantly — what
 each stage is allowed to claim.
 
@@ -328,8 +328,8 @@ document nobody trusts.
 | 0x54 | `PTA_SIGMA_TH` | RW | thermal/TIA noise σ, Q8.8 in ADC LSB |
 | 0x58 | `PTA_SIGMA_SH` | RW | shot-noise coefficient `k`, Q8.8, so σ_shot = k·√\|y\| with σ and y in ADC LSB |
 | 0x5C | `PTA_SIGMA_PR` | RW | weight-programming error σ, Q8.8 in weight LSB |
-| 0x60 | `PTA_DRIFT` | RW | [15:0] drift step σ, [31:16] log2 update interval |
-| 0x64 | `PTA_XTALK` | RW | nearest-neighbour coupling, Q0.8 |
+| 0x60 | `PTA_DRIFT` | RW | [15:0] drift step σ, Q8.8 in weight LSB; [31:16] log2 optical shots per step |
+| 0x64 | `PTA_XTALK` | RW | coupling between neighbouring inputs of a bank, Q0.8 (§4.3) |
 | 0x68 | `PTA_TW` | RW | settle after a program's last weight write, in core cycles; 0 is legal (§6.2) |
 | 0x6C | `PTA_TS` | RW | shot + ADC latency, in core cycles |
 | 0x70 | `PTA_CAL_PER` | RW | calibration period for the periodic scheduler |
@@ -342,6 +342,7 @@ document nobody trusts.
 | 0x8C | `PTA_ERR_MAX` | R | max \|measured − expected\| from the last calibration |
 | 0x90–0xAC | `PTA_GAIN[j]` | RW | per-column gain, Q8.8 |
 | 0xB0–0xCC | `PTA_OFFS[j]` | RW | per-column offset, signed |
+| 0xD0 | `PTA_DRIFT_MAX` | RW | drift clamp, Q8.8 in weight LSB; the first word past the block, shared with S_ACT's scalars at C4 |
 
 `PTA_CAL_CYC` and `PTA_WLOAD_CT` are not diagnostics. They exist so a reported
 GEMM time can be decomposed into compute, weight programming, and calibration.
@@ -441,7 +442,8 @@ first-order model that is:
 
 ```
   y_j = g_j · Σ_i  (q_w(w_ij) + eps_ij + delta_ij(t)) · q_a(x_i)
-      + Σ_{i'~i} chi · q_w(w_i'j) · q_a(x_i')          crosstalk, nearest neighbour
+      + Σ_i Σ_{i'~i} chi · (q_w(w_i'j) + eps_i'j + delta_i'j(t)) · q_a(x_i)
+                                            crosstalk, neighbouring inputs
       + n_th                                            thermal / TIA, sigma_th
       + n_sh(y)                                         shot, sigma = k*sqrt(|y|)
       + o_j
@@ -450,9 +452,10 @@ first-order model that is:
 
 with `q_a` an activation quantizer at `B_a` bits (plus the MZM's sinusoidal
 residual when MZM_NL is enabled), `q_w` a weight quantizer at `B_w` bits,
-`eps_ij` a fixed programming error drawn once per weight load, and
-`delta_ij(t)` a bounded random walk updated every `2^PTA_DRIFT[31:16]` cycles
-and reset by calibration.
+`eps_ij` a fixed programming error drawn once per weight load,
+`delta_ij(t)` a bounded random walk updated every `2^PTA_DRIFT[31:16]` optical
+shots and reset by calibration, and `i' ~ i` the inputs either side of `i` in
+output `j`'s bank.
 
 **Settled for C1** (2026-09-14). The weight errors act after the DAC, as the
 formula now reads: a Pockels weight is a DAC level that the device's error then
@@ -462,9 +465,20 @@ the activation-scaling knob below. The model is integer and covers the integer
 precisions only. Its generators reload from `PTA_SEED` at every GEMM start and
 draw in the core's loop order — N tile, K tile, output row, column — for the
 results the core marks as captured, so a result depends on the seed, the shape
-and the operands, and on nothing the DMA's timing can move. Drift's clock is
-still open, because a cycle clock would reintroduce that timing. grx930's
+and the operands, and on nothing the DMA's timing can move. grx930's
 `c930/doc/pta_error_model_design_note.md` holds the fixed-point contract.
+
+**Drift and crosstalk, settled** (2026-09-15). Drift's clock is optical shots —
+one core run, one output row over one K tile — not cycles, which would bring
+back the timing dependence above. Drift is device state: it accumulates across
+GEMMs until a model reset (`PTA_CTRL.MODEL_RST`, and in C3 a calibration), so a
+drifting GEMM also depends on the GEMMs run since, and is clamped at a set
+bound. Crosstalk couples neighbouring inputs in the same output's bank: input
+`i`'s light also passes the rings of `i − 1` and `i + 1`, so it sees `chi`
+times their analog weights, as the formula now reads. The version before
+multiplied each neighbour's weight by the neighbour's own input, which is a gain
+error, not crosstalk. An input outside the current K tile holds no weight for
+its neighbour, as a ring tuned off resonance holds none.
 
 **Shot noise is signal-dependent and that is the whole point.** Modelling
 detector noise as a constant additive term — which every casual model does —
@@ -701,18 +715,25 @@ behind its `PTA_IMPAIR` bit, each with its own directed test.
 curves; (b) RTL and the C model agree **bitwise** for a fixed `PTA_SEED`,
 driven through the existing NPU DPI wrapper. *Ablation:* corrupt one LFSR tap
 and confirm the parity check fails.
-*In progress in grx930:* QUANT, THERMAL, SHOT and PROG_ERR are built into PTM-C,
-with a C reference, `c930/sim/pta_tile_model.c`. At all 14 shapes of the
-core-level Verilator harness, `M=64, N=8, K=256` included, and at 8- and 16-bit
-operands, C and the ADC saturation count agree bitwise with the C reference for
-each impairment alone and all four together, and hand-worked cases pin the
-quantisers' and the ADC's rounding. With every impairment clear, C0's benches
-still pass and the feed log is still byte-identical to the array's.
+*Built in grx930:* all six impairments are in PTM-C, with a C reference,
+`c930/sim/pta_tile_model.c`. At all 14 shapes of the core-level Verilator
+harness, `M=64, N=8, K=256` included, and at 8- and 16-bit operands, C and the
+ADC saturation count agree bitwise with the C reference for each impairment
+alone and for all six together. Hand-worked cases pin the quantisers' and the
+ADC's rounding, crosstalk's coupling, and drift's semantics: zero after a model
+reset, clamped at its bound, unmoved when its step is zero, and zero again
+after another reset. Drift's fourteen GEMMs run on one device, since drift
+accumulates across them, and a model reset pulsed while the core is busy is
+ignored, as it must be. With every impairment clear, C0's benches still pass
+and the feed log is still byte-identical to the array's.
 *Ablations, red:* one xorshift32 shift changed fails every shape carrying
-thermal, shot or programming noise; dropping the quantiser's rounding term
-fails both hand-worked quantiser cases and 10 of the 14 quantised shapes. Gate
-(b) runs in that harness, not the DPI wrapper, until C4 puts the configuration
-on a CSR (§9, question 3). Drift, crosstalk and gate (a) remain.
+thermal, shot, programming or drift noise; dropping the quantiser's rounding
+term fails both hand-worked quantiser cases and 10 of the 14 quantised shapes;
+clearing drift at every GEMM start fails 13 of the 14 drift shapes; and letting
+rows outside the K tile couple fails the stale-row case and exactly the three
+shapes whose K tiles are partial. Gate (b) runs in that harness, not the DPI
+wrapper, until C4 puts the configuration on a CSR (§9, question 3). Gate (a),
+the accuracy sweep, remains.
 
 **C2 — loop interchange and the broadside tile.** The `m`-inner FSM landed
 first, on the digital array, ahead of any tile work — see §2.3. PTM-B then
@@ -913,12 +934,12 @@ Recorded so the next reader knows what was considered and deliberately deferred.
    how a real machine hides `Tw` completely, and it is the obvious C5. It is
    deferred because a two-tile result is uninterpretable until the one-tile
    loop nest is right.
-5. **Crosstalk topology.** The model uses nearest-neighbour coupling on the
-   column index, which is what a linear microring bank looks like. An MZI mesh
-   couples along its triangular structure instead, and the two are not the same
-   matrix. Since no mesh is being built, the topology is a parameter with no
-   ground truth; the model should carry a pluggable coupling matrix and the
-   document should keep saying it is a hypothesis.
+5. **Crosstalk topology.** The model couples nearest-neighbour inputs within
+   each output's bank, which is what a linear microring bank looks like (§4.3).
+   An MZI mesh couples along its triangular structure instead, and the two are
+   not the same matrix. Since no mesh is being built, the topology is a
+   parameter with no ground truth; the model should carry a pluggable coupling
+   matrix and the document should keep saying it is a hypothesis.
 
 ---
 

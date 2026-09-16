@@ -36,7 +36,7 @@ either names its document or is this one's.
 | Models | [`pta_tw_sweep.py`](pta_tw_sweep.py), [`pta_material_scorecard.py`](pta_material_scorecard.py), [`pta_operand_supply.py`](pta_operand_supply.py) |
 | Feed, measured and modelled (F0, F1) | Done: `make npu_feed` and the SoC's F0 mode in grx930, and [`pta_feed_model.py`](pta_feed_model.py) (§3.3) |
 | PTM-C, the compatibility shim (C0) | Done: bit-identical to the systolic array on grx930's NPU benches under `PTM_C=1` (§3.1) |
-| Error model (C1) | In progress: QUANT, THERMAL, SHOT and PROG_ERR built in grx930 and bitwise against the C reference; drift, crosstalk and the accuracy sweep remain (§3.1) |
+| Error model (C1) | All six impairments built in grx930 and bitwise against the C reference; the accuracy sweep, gate (a), remains (§3.1) |
 | Tile: PTM-B, calibration (C2 tile, C3) | Not started |
 | SoC integration, firmware, Vivado (C4) | Not started |
 | G100 tile (G0–G3) | Not started; staged behind C2 |
@@ -159,16 +159,31 @@ grx930's `c930/doc/pta_error_model_design_note.md`.
 - *E4:* the ADC's scale is a shift chosen per GEMM, a new field in
   `PTA_BITS`.
 
-The model is integer and covers the integer precisions only. Drift's clock and
-crosstalk's topology stay open until those impairments are built.
+The model is integer and covers the integer precisions only.
 
-**C1, first four impairments.** QUANT, THERMAL, SHOT and PROG_ERR are built into
-PTM-C, and a C reference, `c930/sim/pta_tile_model.c`, agrees with the RTL bit
-for bit: C and the ADC saturation count match at every shape of the core-level
-harness, the sweep's shape included, at both operand widths. With every
-impairment clear, C0's benches still pass. The CPU document's §6 has the
-counts and ablations. Still to come: drift, crosstalk, and gate (a), the
-accuracy sweep on the D3 network.
+Four more were settled on 2026-09-15, again all as recommended, before drift
+and crosstalk were built:
+
+- *E5:* drift's clock is optical shots — one core run, one output row over one
+  K tile — so it tracks the tile's work without bringing back the timing E1
+  removed.
+- *E6:* drift is device state, accumulating across GEMMs until a model reset
+  (and, from C3, a calibration). It is the one exception to E2.
+- *E7:* drift is clamped at a set bound, a new configuration field.
+- *E8:* crosstalk couples neighbouring inputs within an output's bank, and an
+  input outside the K tile holds no weight for its neighbour. This corrects the
+  CPU document's §4.3 formula and §8 item 5.
+
+**C1, six impairments built.** Quantisation, thermal noise, shot noise,
+programming error, drift and crosstalk are in PTM-C, and a C reference,
+`c930/sim/pta_tile_model.c`, agrees with the RTL bit for bit: C and the ADC
+saturation count match at every shape of the core-level harness, the sweep's
+shape included, at both operand widths, for each impairment alone and for all
+six together. Drift is device state, so its shapes run as one sequence on one
+modelled device. With every impairment clear, C0's benches still pass. The CPU
+document's §6 has the counts and the four ablations. Still to come: gate (a),
+the accuracy sweep on the D3 network, which needs a shot rate for the drift
+settings (grx930's design note, §7).
 
 ### 3.2 Track A — activation (grx930)
 
