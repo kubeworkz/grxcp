@@ -1,4 +1,4 @@
-The intersection of AI and photonics is a rapidly advancing field. For a researcher at your level, the landscape can be broken down into two main areas: using AI to design photonic *components* (structures) and using AI to discover or optimize specialized *materials* like TPA-QCN.
+The intersection of AI and photonics is a rapidly advancing field. The landscape can be broken down into two main areas: using AI to design photonic *components* (structures) and using AI to discover or optimize specialized *materials* like TPA-QCN.
 
 ### 🧠 AI for Photonic Component Design: The Paradigm Shift to Inverse Design
 
@@ -36,17 +36,7 @@ Based on recent comprehensive reviews, here is a summary of the core AI methodol
   <tr><td>Large Language Models (LLMs)</td><td>Fine-tuned LLMs that can understand design prompts and output device geometries or material candidates.</td><td>Automating the design process and enabling more intuitive, language-based human-AI collaboration.</td></tr>
 </table>
 
-### 📚 Recommended Reading for a PhD Researcher
-
-To dive deeper, these recent review articles are essential starting points:
-
-- **For a broad overview of AI in nanophotonics**: *"Data driven approaches in nanophotonics: a review of AI-enabled metadevices"* (Nanoscale, 2025). This review takes a model-centric perspective on how deep learning is supplanting traditional design.
-- **For inverse design techniques**: *"Inverse design of nanophotonic devices enabled by optimization algorithms and deep learning: recent achievements and future prospects"* (Nanophotonics, 2025). This paper categorizes methods from meta-heuristics to deep learning and provides a comprehensive list of designed devices.
-- **For a focus on communication and sensing systems**: *"Machine learning driven inverse design of devices and components for optical communication and sensing systems: a comprehensive review"* (Advanced Photonics Nexus, 2026). This work categorizes deep learning architectures into five paradigms and highlights applications in lasers, amplifiers, and passive components.
-
-In summary, for your research, the most promising directions are likely **physics-guided generative models** for designing novel nonlinear photonic structures that exploit materials like TPA-QCN, and **deep generative models** for discovering new organic molecules with even better second-order nonlinearities. The field is moving from pure data-driven approaches toward hybrid models that are more interpretable, data-efficient, and fabrication-aware.
-
-If you would like to explore a specific methodology (e.g., diffusion models for inverse design) or a particular application area in more detail, feel free to ask.
+In summary, for our research, the most promising directions are likely **physics-guided generative models** for designing novel nonlinear photonic structures that exploit materials like TPA-QCN, and **deep generative models** for discovering new organic molecules with even better second-order nonlinearities. The field is moving from pure data-driven approaches toward hybrid models that are more interpretable, data-efficient, and fabrication-aware.
 
 ---
 
@@ -87,7 +77,7 @@ Key advantages for PTA integration:
 
 ## 🤖 Physics-Guided Generative Models for Design
 
-Your proposed approach—using physics-guided generative models to design nonlinear photonic structures exploiting TPA-QCN—maps directly onto the state of the art in inverse design. The most relevant framework is **AdjointDiffusion**, which integrates adjoint sensitivity gradients into the denoising sampling process of a diffusion model.
+Our proposed approach—using physics-guided generative models to design nonlinear photonic structures exploiting TPA-QCN—maps directly onto the state of the art in inverse design. The most relevant framework is **AdjointDiffusion**, which integrates adjoint sensitivity gradients into the denoising sampling process of a diffusion model.
 
 ### How AdjointDiffusion works
 
@@ -111,7 +101,7 @@ A production-ready example of this philosophy exists in the **"Precision with Li
 
 ## 🔬 Proposed Research Workflow
 
-Here is a concrete, staged workflow for your PhD project:
+Here is a concrete, staged workflow for our PhD project:
 
 ### Phase 1: Forward Model Development
 
@@ -173,15 +163,13 @@ Fabricate a proof-of-concept device (e.g., a single nonlinear activation unit or
 
 ## 📌 Summary
 
-Your research direction sits at the convergence of three emerging frontiers:
+Our research direction sits at the convergence of three emerging frontiers:
 
 1. **All-optical nonlinear activation** using $χ⁽²⁾$ organic materials (TPA-QCN and its derivatives) that can be deposited directly on silicon with spontaneous alignment and built-in phase matching.
 2. **Physics-guided generative inverse design** (AdjointDiffusion, MxDiffusion) that produces fabrication-ready free-form structures with orders-of-magnitude fewer simulations than pure data-driven approaches.
 3. **PTA architecture co-design** (DxPTA, hypermultiplexed tensor processors) where the nonlinear element's properties become a first-class design variable rather than a fixed constraint.
 
 The key technical challenge - and the core of your contribution - is **defining a differentiable, multi-objective FoM that captures both linear tensor-core performance and nonlinear activation fidelity, and embedding it into a physics-guided generative sampling loop**. If you can demonstrate that a TPA-QCN-based nonlinear element can be inverse-designed to match a target activation function while meeting fabrication constraints, you will have established a new material–algorithm co-design paradigm for photonic computing.
-
-Would you like me to go deeper into any specific phase—for example, the formulation of the nonlinear coupled-mode equations for $χ⁽²⁾$ activation, or the architecture of the conditional diffusion model for multi-objective photonic design?
 
 ---
 
@@ -1761,12 +1749,12 @@ The grand vision is a multi-year, multi-disciplinary effort. But a surprising am
 **How DeepSeek helps**:
 
 - Paste abstracts and papers into DeepSeek and ask it to extract structured data: χ⁽²⁾ values, phase-matching geometries, loss coefficients, waveguide dimensions, deposition conditions, molecular structures, etc.
-- Ask DeepSeek to cross-reference and flag inconsistencies between papers.
-- Have DeepSeek generate a Python schema (SQLite or Pandas DataFrame) for storing these parameters.
+- Ask AI to cross-reference and flag inconsistencies between papers.
+- Have AI generate a Python schema (SQLite or Pandas DataFrame) for storing these parameters.
 
 **Deliverable**: A structured, queryable database of TPA-QCN parameters that will feed your forward solver and diffusion model.
 
-**Immediate DeepSeek prompt**:
+**Immediate AI prompt**:
 
 ```plaintext
 I'm building a parameter database for TPA-QCN organic nonlinear
@@ -1786,16 +1774,16 @@ Output as a Python dictionary I can load into a Pandas DataFrame.
 
 **What**: Write the differentiable coupled-mode solver in JAX or PyTorch, validate it against published TPA-QCN SHG data, and map the phase-matching design space.
 
-**How DeepSeek helps**:
+**How AI helps**:
 
-- Generate the full solver code (I provided a sketch earlier—DeepSeek can complete, debug, and optimize it).
+- Generate the full solver code (I provided a sketch earlier—AI can complete, debug, and optimize it).
 - Help you set up automatic differentiation through the ODE solver using `torchdiffeq` or `jax.experimental.ode`.
 - Generate unit tests: energy conservation, undepleted-pump limit, phase-matching condition.
 - Help you fit the solver to experimental data by optimizing material parameters.
 
 **Deliverable**: A validated, differentiable forward model that maps waveguide geometry + material parameters → activation transfer function.
 
-**Immediate DeepSeek prompt**:
+**Immediate AI prompt**:
 
 ```plaintext
 Here is a coupled-mode solver for type-I SHG in a TPA-QCN waveguide.
@@ -1822,7 +1810,7 @@ waveguide width, height, and length using torchdiffeq. Add:
 
 **Deliverable**: A phase-matching map that defines the feasible design space for TPA-QCN activation units.
 
-**Immediate DeepSeek prompt**:
+**Immediate AI prompt**:
 
 ```plaintext
 I have a differentiable coupled-mode solver for TPA-QCN SHG.
@@ -1840,7 +1828,7 @@ Write a JAX script that:
 
 **What**: Run the forward solver on a large parameter sweep to generate a dataset of (geometry, material params) → (activation transfer function) pairs. This dataset will train a neural surrogate that replaces the slow solver during diffusion training.
 
-**How DeepSeek helps**:
+**How AI helps**:
 
 - Generate the data generation pipeline (parallelized, checkpointed, resumable).
 - Design the dataset schema: input features (width, height, length, χ⁽²⁾, losses, Δβ) and output targets (P_out vs P_in curve, phase curve, conversion efficiency).
@@ -1848,7 +1836,7 @@ Write a JAX script that:
 
 **Deliverable**: A 10,000–100,000 sample dataset of coupled-mode solver outputs.
 
-**Immediate DeepSeek prompt**:
+**Immediate AI prompt**:
 
 ```plaintext
 Write a Python script that generates a training dataset for a
@@ -1878,7 +1866,7 @@ For each, compute the full activation transfer function
 
 **Deliverable**: A trained neural surrogate that evaluates the activation transfer function in <1 ms (vs. ~1 s for the full solver).
 
-**Immediate DeepSeek prompt**:
+**Immediate AI prompt**:
 
 ```plaintext
 I have a dataset of 50,000 (geometry, material) → activation transfer
@@ -1901,7 +1889,7 @@ the output is a 100-point curve. Include:
 
 **What**: Build the conditional diffusion model with the composite loss function (DDPM + physics + activation + fabrication + linear).
 
-**How DeepSeek helps**:
+**How AI helps**:
 
 - Generate the full diffusion model architecture: U-Net backbone, FiLM conditioning, noise schedule.
 - Implement the composite loss with proper weighting between terms.
@@ -1910,7 +1898,7 @@ the output is a 100-point curve. Include:
 
 **Deliverable**: A trained diffusion model that generates TPA-QCN waveguide geometries conditioned on target activation functions.
 
-**Immediate DeepSeek prompt**:
+**Immediate AI prompt**:
 
 ```plaintext
 Implement a conditional diffusion model in PyTorch for inverse
@@ -1932,7 +1920,7 @@ design of TPA-QCN nonlinear activation units. Requirements:
 
 **What**: Use DxPTA or similar design-space exploration frameworks to establish baseline performance for a PTA without TPA-QCN nonlinearities. This gives you a benchmark to beat.
 
-**How DeepSeek helps**:
+**How AI helps**:
 
 - Help you understand and adapt the DxPTA codebase.
 - Generate a baseline PTA model with electronic activation and compare against your all-optical TPA-QCN design.
@@ -1940,7 +1928,7 @@ design of TPA-QCN nonlinear activation units. Requirements:
 
 **Deliverable**: A quantitative baseline showing the advantage of TPA-QCN activation over O-E-O.
 
-**Immediate DeepSeek prompt**:
+**Immediate AI prompt**:
 
 ```plaintext
 I want to establish a baseline for a photonic tensor accelerator
@@ -1961,7 +1949,7 @@ Compute the system-level improvement for a 12-layer transformer.
 
 **What**: Formalize the multi-objective conditioning space and implement preference-conditioned sampling for Pareto frontier traversal.
 
-**How DeepSeek helps**:
+**How AI helps**:
 
 - Help you define the conditioning vector: activation target parameters (threshold, slope, saturation), material constraints (χ⁽²⁾, loss), fabrication constraints (min feature, sidewall angle), linear performance targets (insertion loss, crosstalk).
 - Implement the preference-conditioned guidance strength modulation.
@@ -1969,7 +1957,7 @@ Compute the system-level improvement for a 12-layer transformer.
 
 **Deliverable**: A working multi-objective inverse design framework that can generate designs across the Pareto frontier.
 
-**Immediate DeepSeek prompt**:
+**Immediate AI prompt**:
 
 ```plaintext
 Implement preference-conditioned sampling for my diffusion model.
@@ -1990,7 +1978,7 @@ vs. fabrication robustness).
 
 **What**: Fabricate a single TPA-QCN waveguide designed by the diffusion model and measure its activation transfer function.
 
-**How DeepSeek helps**:
+**How AI helps**:
 
 - Generate the layout (GDSII) for the waveguide and deposition mask.
 - Help you design the experimental setup: input coupling, output collection, power sweeps, spectral characterization.
@@ -2005,7 +1993,7 @@ vs. fabrication robustness).
 
 **What**: Combine the activation unit with an MZI mesh or ring-based tensor core to demonstrate a full neural network layer.
 
-**How DeepSeek helps**:
+**How AI helps**:
 
 - Help you design the interface between the tensor core and the activation unit.
 - Generate the calibration and characterization protocols.
@@ -2033,9 +2021,9 @@ vs. fabrication robustness).
 
 ---
 
-## 🧠 How to Use DeepSeek Most Effectively
+## 🧠 How to Use AI Most Effectively
 
-**For code generation**: Paste your existing code and ask for specific modifications. DeepSeek excels at completing, debugging, and optimizing code when given context.
+**For code generation**: Paste your existing code and ask for specific modifications. AI excels at completing, debugging, and optimizing code when given context.
 
 **For literature synthesis**: Paste abstracts or full papers and ask for structured extraction. DeepSeek can process multiple papers and identify patterns.
 
