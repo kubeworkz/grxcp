@@ -6,7 +6,8 @@
 
 **Status: DESIGN, partly built.** The C2 loop interchange is in grx930 (§6), and
 so are the S_ACT activation stage, PTM-C, exact at C0, and all six of the
-error model's impairments (§6, C1); PTM-B and the PTA CSRs are not.
+error model's impairments, with C1 closed on its accuracy sweep (§6); PTM-B and
+the PTA CSRs are not.
 [`pta_program_plan.md`](pta_program_plan.md) orders what comes next. This
 document fixes what gets built, in what order, and — more importantly — what
 each stage is allowed to claim.
@@ -328,7 +329,7 @@ document nobody trusts.
 | 0x54 | `PTA_SIGMA_TH` | RW | thermal/TIA noise σ, Q8.8 in ADC LSB |
 | 0x58 | `PTA_SIGMA_SH` | RW | shot-noise coefficient `k`, Q8.8, so σ_shot = k·√\|y\| with σ and y in ADC LSB |
 | 0x5C | `PTA_SIGMA_PR` | RW | weight-programming error σ, Q8.8 in weight LSB |
-| 0x60 | `PTA_DRIFT` | RW | [15:0] drift step σ, Q8.8 in weight LSB; [31:16] log2 optical shots per step |
+| 0x60 | `PTA_DRIFT` | RW | [15:0] drift step σ, Q8.8 in weight LSB; [31:16] log2 optical shots per step. Defaults to TFLT's fit: σ 55, a step every 2^31 shots (§4.4) |
 | 0x64 | `PTA_XTALK` | RW | coupling between neighbouring inputs of a bank, Q0.8 (§4.3) |
 | 0x68 | `PTA_TW` | RW | settle after a program's last weight write, in core cycles; 0 is legal (§6.2) |
 | 0x6C | `PTA_TS` | RW | shot + ADC latency, in core cycles |
@@ -342,7 +343,7 @@ document nobody trusts.
 | 0x8C | `PTA_ERR_MAX` | R | max \|measured − expected\| from the last calibration |
 | 0x90–0xAC | `PTA_GAIN[j]` | RW | per-column gain, Q8.8 |
 | 0xB0–0xCC | `PTA_OFFS[j]` | RW | per-column offset, signed |
-| 0xD0 | `PTA_DRIFT_MAX` | RW | drift clamp, Q8.8 in weight LSB; the first word past the block, shared with S_ACT's scalars at C4 |
+| 0xD0 | `PTA_DRIFT_MAX` | RW | drift clamp, Q8.8 in weight LSB, defaulting to TFLT's 8,643 (§4.4); the first word past the block, shared with S_ACT's scalars at C4 |
 
 `PTA_CAL_CYC` and `PTA_WLOAD_CT` are not diagnostics. They exist so a reported
 GEMM time can be decomposed into compute, weight programming, and calibration.
@@ -550,8 +551,14 @@ weight costs: power, drift and precision.
   (7.2×).
 - *Drift.* The error model's `delta_ij(t)` (§4.3) — stepped and timed by
   `PTA_DRIFT` — defaults to a setting fitted to TFLT, with a TFLN setting as
-  the stress case. Fitting both is part of the calibration work (§5.1); the
-  46-hour comparison is their anchor, not their value.
+  the stress case. C1 fitted both at the EO-res shot rate, 80 M shots/s, with
+  a step every 2^31 shots and σ set so the RMS drift at 46 hours matches the
+  material's swing: σ 55 and 200 in Q8.8 weight LSB, clamped at 8,643 and
+  31,413. On the D3 network, accuracy holds within half a point for about an
+  hour at TFLT's fit and loses about a point in six minutes at TFLN's
+  (grx930's `c930/doc/pta_error_model_design_note.md`, §5). The 46-hour
+  comparison stays their anchor, not their value; what they size is
+  calibration (§5.1).
 - *Priorities.* A Pockels weight's cost is set by its DAC and its host, not by
   the material, so the multi-bank tile (§8 item 3) and the host's operand feed
   (§8 item 2) move ahead of further loop-order work.
@@ -732,8 +739,22 @@ term fails both hand-worked quantiser cases and 10 of the 14 quantised shapes;
 clearing drift at every GEMM start fails 13 of the 14 drift shapes; and letting
 rows outside the K tile couple fails the stale-row case and exactly the three
 shapes whose K tiles are partial. Gate (b) runs in that harness, not the DPI
-wrapper, until C4 puts the configuration on a CSR (§9, question 3). Gate (a),
-the accuracy sweep, remains.
+wrapper, until C4 puts the configuration on a CSR (§9, question 3).
+*Gate (a), not met at one width:* the D3 network, a 784-100-10 MLP with ReLU on
+MNIST, was trained five times at each weight width from 1 to 10 bits, as
+Gorsline, Smith and Merkel trained theirs (arXiv:2105.00227) but from a 16-bit
+network of the same seed, and run through the C reference at 16-bit operands.
+Against their Fig. 3(c), the five-network mean was within 0.5 points at every
+width from 4 to 10 bits and within 1.0 at 2 bits, but 0.61 under at 3 bits,
+outside the 0.5 fixed before training. The tile's accuracy equalled the digital
+network's on 48 of the 50 networks and was one image off on the other two, so
+the miss is in the training, against a paper that states neither its quantiser
+nor its stopping rule. It is recorded, and C1 closes on it. *Ablation, red:* a
+quantiser that truncates fails every width from 2 to 7 bits. *Reported beside
+it,* at 8-bit operands and 6-bit weights: 5 activation bits and a 6-bit ADC
+each stay within a quarter point of 97.45%, and thermal noise of 1 ADC LSB,
+shot noise at 3 photons per ADC LSB, programming error of 4 weight LSB and 10%
+crosstalk each cost under half a point; drift's cost is in §4.4.
 
 **C2 — loop interchange and the broadside tile.** The `m`-inner FSM landed
 first, on the digital array, ahead of any tile work — see §2.3. PTM-B then
@@ -969,7 +990,9 @@ Recorded so the next reader knows what was considered and deliberately deferred.
    defensible and boring; anything transformer-shaped will not fit the
    `MAX_N = 8` output width without tiling that muddies the measurement.
    *Settled by the program plan (D3):* that MLP, fixed once so that C1, C3 and
-   A3 report on the same network.
+   A3 report on the same network. C1 fixed it as 784-100-10 with ReLU, compared
+   with Gorsline, Smith and Merkel's Fig. 3(c); C3 and A3 take its five
+   networks at 8-bit operands and 6-bit weights.
 5. **Which weight drive would a real TFLT tile have?** §2.1 shows the loop nest
    turns on it — scanned wants the interchange, resident wants the shipped
    order — and nothing in an emulation-only program can find out. Until

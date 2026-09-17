@@ -7,7 +7,7 @@
 **Status: PLAN, in progress.** The decisions of §2 were settled on 2026-09-14,
 all four as recommended, and §7 lists the edits that carried them into the
 integration documents. F0 is measured, F1 has made its predictions (§3.3), C0
-is green, and C1 is under way (§3.1).
+is green, and C1 is closed (§3.1).
 This document orders the next stretch of photonic-tile work across the c930,
 the G100 and grxcp. It designs nothing new; where it changes an earlier
 document's staging, it says so.
@@ -36,7 +36,7 @@ either names its document or is this one's.
 | Models | [`pta_tw_sweep.py`](pta_tw_sweep.py), [`pta_material_scorecard.py`](pta_material_scorecard.py), [`pta_operand_supply.py`](pta_operand_supply.py) |
 | Feed, measured and modelled (F0, F1) | Done: `make npu_feed` and the SoC's F0 mode in grx930, and [`pta_feed_model.py`](pta_feed_model.py) (§3.3) |
 | PTM-C, the compatibility shim (C0) | Done: bit-identical to the systolic array on grx930's NPU benches under `PTM_C=1` (§3.1) |
-| Error model (C1) | All six impairments built in grx930 and bitwise against the C reference; the accuracy sweep, gate (a), remains (§3.1) |
+| Error model (C1) | Closed: all six impairments built in grx930 and bitwise against the C reference; the accuracy sweep ran, missed its allowance at 3 bits, and the miss is recorded (§3.1) |
 | Tile: PTM-B, calibration (C2 tile, C3) | Not started |
 | SoC integration, firmware, Vivado (C4) | Not started |
 | G100 tile (G0–G3) | Not started; staged behind C2 |
@@ -93,7 +93,11 @@ must have answers.
 second stage all need one network with published quantization curves, small
 enough for RTL simulation (§9, question 4 of the CPU document).
 *Recommended:* the two-layer MLP on MNIST that question calls defensible, fixed
-once so all three report on the same network. *Needed by:* C1.
+once so all three report on the same network. *Needed by:* C1. *Fixed in C1:*
+a 784-100-10 MLP with ReLU, trained as Gorsline, Smith and Merkel trained the
+network of their Fig. 3(c), the curve gate (a) compares against, but from a
+16-bit start. C3 and A3 take its five networks at 8-bit operands and 6-bit
+weights.
 
 **D4 — Re-stage the GPU work: G1 now, G0 after C1.** The GPU document holds
 every phase behind C2, for two reasons: the shared IP should stabilize on the
@@ -119,7 +123,7 @@ it is marked *new*.
 | Step | What | Gate | Needs |
 |---|---|---|---|
 | C0 | **Done, below.** PTM-C swapped in for the systolic array, impairments off | CPU document §6, unchanged | — |
-| C1 | **In progress, below.** Error model, one impairment at a time; `PTA_DRIFT` defaults fitted to TFLT, with a TFLN setting as the stress case | CPU document §6, unchanged | C0, D1–D3 |
+| C1 | **Closed, below.** Error model, one impairment at a time; `PTA_DRIFT` defaults fitted to TFLT, with a TFLN setting as the stress case | CPU document §6, unchanged | C0, D1–D3 |
 | C2 tile | PTM-B in the interchanged core | Total cycles match §2.1 at every §6.2 point, affine in `PTA_TW` | C1 |
 | MB | Multi-bank tile with `Nt·Kt` resident banks, and a selectable loop order that restores `m`-outer | *New:* EO-res totals match §2.1 in both orders, with `Tw` set to the RTL's bank-select cycles, and C bit-identical between orders | C2 tile |
 | C3 | Calibration FSM and the three schedulers | CPU document §6, run with drift at TFLT's fitted rate and again at TFLN's | C1, D3 |
@@ -174,16 +178,26 @@ and crosstalk were built:
   input outside the K tile holds no weight for its neighbour. This corrects the
   CPU document's §4.3 formula and §8 item 5.
 
-**C1, six impairments built.** Quantisation, thermal noise, shot noise,
+**C1, closed.** Quantisation, thermal noise, shot noise,
 programming error, drift and crosstalk are in PTM-C, and a C reference,
 `c930/sim/pta_tile_model.c`, agrees with the RTL bit for bit: C and the ADC
 saturation count match at every shape of the core-level harness, the sweep's
 shape included, at both operand widths, for each impairment alone and for all
 six together. Drift is device state, so its shapes run as one sequence on one
 modelled device. With every impairment clear, C0's benches still pass. The CPU
-document's §6 has the counts and the four ablations. Still to come: gate (a),
-the accuracy sweep on the D3 network, which needs a shot rate for the drift
-settings (grx930's design note, §7).
+document's §6 has the counts and the four ablations.
+
+Gate (a), the accuracy sweep on the D3 network, ran on 2026-09-16 against a
+criterion fixed before any network was trained. It was not met: at 3 weight
+bits the five-network mean fell 0.61 points under the published curve, outside
+the 0.5 allowed, while every other gated width was inside its band. The tile
+gave exactly the digital networks' accuracy on 48 of 50 networks, and one image
+different on the other two, so the miss belongs to the training, not the error
+model; it is recorded, and C1 closes on it. The drift settings are fitted at
+EO-res, run flat out: 80 M shots/s. At TFLT's fit, accuracy on the D3 network
+holds within half a point for about an hour; at TFLN's, it loses about a point
+in six minutes. That is what C3's schedulers are sized against. grx930's
+design note, §5, has the tables, the ablation and the reported sweeps.
 
 ### 3.2 Track A — activation (grx930)
 
@@ -345,6 +359,7 @@ above.
 | F0 measures this SoC's simulated DDR | F3 | F3 labels its numbers as this SoC's and passes on rates and access patterns |
 | D1 couples two repositories that have no dependency today | G0 | Tagged vendoring in one direction, as grxcp already does with the DPI shim |
 | A3 finds a short reset interval | A-CSR | A result, not a setback: the mainline's electronic nonlinearity is unaffected, and A-CSR is dropped |
+| Drift at TFLN's fit costs about a point on the D3 network in six minutes, and at TFLT's half a point in an hour | C3 | Size the schedulers against both, and keep in mind that the fits rest on a shot rate (EO-res, flat out) and a 46-hour swing, not a measured drift walk |
 
 ---
 
