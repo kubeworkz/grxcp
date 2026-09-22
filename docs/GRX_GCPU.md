@@ -367,6 +367,8 @@ You have several options, each with tradeoffs:
 
 Use **TileLink** as a starting point. It is open, designed for RISC‑V, and supports multiple cache levels and atomics. You can extend it with GPU‑specific messages (e.g., “clean‑shared”, “flush‑line‑to‑memory”, “barrier‑with‑scope”). Because TileLink is an open standard, you can add custom opcodes without breaking compatibility. Later, if needed, you can map TileLink to a physical UCIe layer.
 
+> **Superseded for the development board, 2026-09-21** ([`board_program_plan.md`](designs/board_program_plan.md), B1 and B3). The board joins the GRX930 and the GRX-G100 with CXL 2.0 over PCIe 5.0, with the GRX930 as the host and the GRX-G100 as a Type-2 device. Two things changed the answer. On the board's first revision the CPU and the GPU sit in separate packages (B1), which is where CXL is at home, so the objection above — too heavy for on-package — no longer applies. And a standard edge buys standard enumeration and drivers, controller and PHY IP that can be licensed, and chiplets that can be swapped. Inside each chip the fabric stays its own, and the extensions below remain candidates for it. The hybrid memory model of the Pragmatic View, a coherent shared region beside private GPU memory, stands.
+
 **Example custom extensions to TileLink:**
 
 - **Range‑based clean/invalidate** for non‑coherent to coherent transitions.

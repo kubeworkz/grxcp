@@ -8,7 +8,8 @@
 [`heterogeneous_devices.md`](heterogeneous_devices.md),
 [GRX_GCPU.md](../GRX_GCPU.md).
 
-**Status: PLAN, drafted 2026-09-21. None of §2's decisions is settled yet.**
+**Status: PLAN, drafted 2026-09-21. B1 and B3 were settled the same day, both
+as recommended; the rest of §2 is open.**
 
 The strategy document settles the product: a PCB development board carrying
 the GRX930 SoC (the c930 RV64 cores and their NPU), the GRX-G100 GPU, and a
@@ -44,7 +45,7 @@ already on record now collide with it.
 
 | Topic | Already on record | The board decision | Here |
 |---|---|---|---|
-| CPU–GPU coherence protocol | [GRX_GCPU.md](../GRX_GCPU.md) §2: TileLink, with CXL.cache "too heavyweight for on-package" | CXL | Reversed; B3 |
+| CPU–GPU coherence protocol | [GRX_GCPU.md](../GRX_GCPU.md) §2: TileLink, with CXL.cache "too heavyweight for on-package" | CXL | Reversed; B3, settled |
 | Where the GPU's PTA sits | [`pta_gpu_integration.md`](pta_gpu_integration.md) §2: inside the G100, one per cluster, beside the DXA | A separate chiplet | Re-architected; B4 |
 | Photonic platform | [`pta_cpu_integration.md`](pta_cpu_integration.md) §4.4: TFLT, a Pockels material | The strategy and motherboard documents assume heater-tuned silicon rings | Aligned to TFLT; B5 |
 | The CPU's silicon | grx930's `c930/doc/GRX930_manufacturing_plan.md`: SKY130, then TSMC N28, with the RTL frozen | UCIe and CXL need PHYs neither node offers readily | B6 |
@@ -72,7 +73,8 @@ on them; §6 lists the rest.
 ## 2. Decisions to settle first
 
 Each one blocks the tracks of §3 and needs no measurement to decide. B1 and B3
-come first; the rest follow from them.
+come first; the rest follow from them. **B1 and B3 were settled on 2026-09-21,
+as recommended below,** and §9 lists the edits that followed.
 
 **B1 — Where the packages end.** UCIe only joins dies that share a package, so
 "UCIe for the interconnect" is a statement about packaging. There are three
@@ -90,7 +92,7 @@ an order of magnitude under the NVLink-C2C figure the strategy document
 proposes as a target, which a development kit can live with. The single
 package holding all three, with CXL over UCIe between the CPU and the GPU, is
 the Phase 2 module. *Needed by:* everything; B2, B6 and P0 cannot start
-without it.
+without it. *Settled on 2026-09-21, as recommended.*
 
 **B2 — The first board's memory.** HBM needs a silicon interposer or bridge,
 which puts every die beside it into a 2.5D package — the packaging the
@@ -120,7 +122,7 @@ Linux CXL subsystem; CXL controller and PHY IP can be bought; and a standard
 edge keeps the chiplets swappable, which is the strategy document's point.
 Inside each chip the fabric stays its own — the SoC specification's roadmap
 names CHI for the NPU's coherent port (its step 5) — and is bridged to CXL at
-the edge. *Needed by:* L1 and L2.
+the edge. *Needed by:* L1 and L2. *Settled on 2026-09-21, as recommended.*
 
 **B4 — Where the PTA attaches, and what its interface chip holds.** The PTA
 chiplet is a photonic die (PIC) and an electronic interface chip (EIC),
@@ -334,7 +336,8 @@ joint budget is the next step.
 
 ## 5. Order
 
-1. Settle §2, with B1 and B3 first.
+1. Settle the rest of §2. B1 and B3 are settled; B2 and B6, which follow from
+   B1, come next.
 2. On paper, now: P0, X1's joint budget, X2 and X4.
 3. C3 continues in the PTA program, as X3.
 4. P2, as soon as B6 names the FPGA platform.
@@ -354,7 +357,7 @@ Each lands when its decision settles, in its own document's repository.
   photonic compute; Raw mode has no CRC or retry, and one control path is
   enough (B7); FP8 reaches the tile block-scaled (§4.2).
 - [GRX_GCPU.md](../GRX_GCPU.md) §2: CXL, and why it reverses the TileLink
-  recommendation (B3).
+  recommendation (B3). *Made; §9.*
 - [`pta_gpu_integration.md`](pta_gpu_integration.md): its scope line; §2's
   cluster-scope placement, superseded by the chiplet (B4); G2, re-scoped.
 - [`pta_cpu_integration.md`](pta_cpu_integration.md): its scope line; C4's
@@ -397,3 +400,17 @@ Each lands when its decision settles, in its own document's repository.
 4. **Does the PTA ever need coherent access to host memory?** B3 gives it none;
    revisit that if the dispatch model (S3) says otherwise.
 5. **Where does the board controller come from, and who writes its firmware?**
+
+---
+
+## 9. Edits that followed B1 and B3
+
+Made on 2026-09-21, when B1 and B3 settled:
+
+- [GRX_GCPU.md](../GRX_GCPU.md) §2: a note that CXL 2.0 supersedes its
+  TileLink recommendation for the board, and why. B1 moves the CPU–GPU link
+  between packages, where that document's objection to CXL.cache — too heavy
+  for on-package — no longer applies.
+- [`chip_vs_board_strategy.md`](chip_vs_board_strategy.md): its author is still
+  writing it, so B1's correction is handed over rather than made. UCIe joins
+  dies within one package, and on rev A the CPU–GPU link is CXL over PCIe.
