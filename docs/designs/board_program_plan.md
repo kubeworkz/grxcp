@@ -8,8 +8,8 @@
 [`heterogeneous_devices.md`](heterogeneous_devices.md),
 [GRX_GCPU.md](../GRX_GCPU.md).
 
-**Status: PLAN, drafted 2026-09-21. B1 and B3 were settled the same day, both
-as recommended; the rest of §2 is open.**
+**Status: PLAN, drafted 2026-09-21. B1 and B3 were settled that day and B2 and
+B6 on 2026-09-22, all as recommended; B4, B5 and B7 are open.**
 
 The strategy document settles the product: a PCB development board carrying
 the GRX930 SoC (the c930 RV64 cores and their NPU), the GRX-G100 GPU, and a
@@ -48,8 +48,8 @@ already on record now collide with it.
 | CPU–GPU coherence protocol | [GRX_GCPU.md](../GRX_GCPU.md) §2: TileLink, with CXL.cache "too heavyweight for on-package" | CXL | Reversed; B3, settled |
 | Where the GPU's PTA sits | [`pta_gpu_integration.md`](pta_gpu_integration.md) §2: inside the G100, one per cluster, beside the DXA | A separate chiplet | Re-architected; B4 |
 | Photonic platform | [`pta_cpu_integration.md`](pta_cpu_integration.md) §4.4: TFLT, a Pockels material | The strategy and motherboard documents assume heater-tuned silicon rings | Aligned to TFLT; B5 |
-| The CPU's silicon | grx930's `c930/doc/GRX930_manufacturing_plan.md`: SKY130, then TSMC N28, with the RTL frozen | UCIe and CXL need PHYs neither node offers readily | B6 |
-| Memory | The motherboard document: HBM | A development board | B2 |
+| The CPU's silicon | grx930's `c930/doc/GRX930_manufacturing_plan.md`: SKY130, then TSMC N28, with the RTL frozen | UCIe and CXL need PHYs neither node offers readily | B6, settled |
+| Memory | The motherboard document: HBM | A development board | B2, settled |
 | Addresses in grxcp | [`heterogeneous_devices.md`](heterogeneous_devices.md) §4.1: every device has its own address space, and the spaces overlap | A CXL coherent region is one space | Extended; S2 |
 | Scope | The PTA documents: emulation and numerics only | A photonic chiplet | Rewritten; §6 |
 
@@ -74,7 +74,8 @@ on them; §6 lists the rest.
 
 Each one blocks the tracks of §3 and needs no measurement to decide. B1 and B3
 come first; the rest follow from them. **B1 and B3 were settled on 2026-09-21,
-as recommended below,** and §9 lists the edits that followed.
+and B2 and B6 on 2026-09-22, all as recommended below.** §9 lists the edits
+that followed.
 
 **B1 — Where the packages end.** UCIe only joins dies that share a package, so
 "UCIe for the interconnect" is a statement about packaging. There are three
@@ -101,7 +102,9 @@ priced.
 *Recommended:* GDDR6 or LPDDR5X for the GPU and DDR5 or LPDDR5 for the CPU, on
 organic substrates, for rev A; HBM for the Phase 2 module. A development kit's
 job is to prove the stack, and it can do that at lower memory bandwidth.
-*Needed by:* P0 and P1.
+*Needed by:* P0 and P1. *Settled on 2026-09-22:* GDDR6 for the GPU and DDR5 for
+the CPU, both packages on organic substrates, so UCIe-S carries the link to the
+chiplet and no interposer is needed before the Phase 2 module.
 
 **B3 — Which CXL, and each chip's role in it.** CXL is asymmetric: a host holds
 the home agent, and devices cache host memory (CXL.cache), expose memory of
@@ -201,7 +204,8 @@ onto a CXL-capable part, with the PTA as C1's error-model tile. Most FPGA CXL
 IP serves the device side, so the RISC-V host's root port may have to be soft
 IP; L1 settles that. This plan reads the manufacturing plan's freeze as the
 SKY130 tapeout's; the CXL host is new RTL beyond it. *Needed by:* P2, L1 and
-L3.
+L3. *Settled on 2026-09-22, as recommended.* Which CXL-capable FPGA platform
+hosts rev 0 is still open (§8).
 
 **B7 — One control path to the PTA.** The strategy document proposes three: a
 low-speed I2C or SPI bus from the CPU, the UCIe sideband, and Raw-mode traffic
@@ -223,7 +227,7 @@ UCIe sideband carries the link's own management. *Needed by:* X4.
 | Step | What | Gate | Needs |
 |---|---|---|---|
 | P0 | System block diagram and interface control document: every link's protocol, width, rate and owner; power, clock, reset and debug trees at block level | Review: every link has an owner on each side, and every number a source | B1–B7 |
-| P1 | Package study of the GPU package with the PTA chiplet: floorplan, UCIe-S or UCIe-A, fiber attach, and a thermal co-simulation with TFLT's drift in place of heater terms | The model predicts the PIC's temperature range under the GPU's power map, and C1's drift fits say what that costs in calibration | B1, B2, B5 |
+| P1 | Package study of the GPU package with the PTA chiplet: floorplan, UCIe-S on the organic substrate B2 chose, fiber attach, and a thermal co-simulation with TFLT's drift in place of heater terms | The model predicts the PIC's temperature range under the GPU's power map, and C1's drift fits say what that costs in calibration | B1, B2, B5 |
 | P2 | Board rev 0, on B6's FPGA platform: the GPU partition as a CXL Type-2 device, and the PTA as the error-model tile | Linux on a CXL host enumerates the device, and the D3 network runs through the emulated PTA bit-identical to `pta_mnist`'s C reference | B6, L2, X4, X5 |
 | P3 | Board rev A, on silicon | Scoped after P1 and the silicon plans; no gate yet | P1, L1–L4 |
 
@@ -283,8 +287,8 @@ tree. So L4 is planned alongside L1, not after it.
 ### 4.1 To grx930
 
 - The CXL 2.0 host of L1, and the firmware of L4.
-- A node with PCIe 5.0-class PHYs for the board's CPU (B6), and a PCIe 5.0 x16
-  root port.
+- A node with PCIe 5.0-class PHYs for the board's CPU (B6), a PCIe 5.0 x16 root
+  port, and a DDR5 controller (B2).
 - A RISC-V IOMMU for device DMA, and AIA's message-signalled interrupts for
   devices, both of which [GRX_GCPU.md](../GRX_GCPU.md)'s summary already lists.
 - The SoC specification's roadmap already names DDR5/HBM, PCIe/CXL and
@@ -298,7 +302,7 @@ tree. So L4 is planned alongside L1, not after it.
   and its step G2.
 - The G100's microscaling path (the GPU document, §5) as the PTA's numeric
   format: FP8-class inputs reach the analog tile as block-scaled integers.
-- The memory controller B2 chooses.
+- A GDDR6 controller and PHY (B2).
 
 ### 4.3 To the PTA chiplet: EIC requirements, version 0
 
@@ -336,8 +340,7 @@ joint budget is the next step.
 
 ## 5. Order
 
-1. Settle the rest of §2. B1 and B3 are settled; B2 and B6, which follow from
-   B1, come next.
+1. Settle the rest of §2: B4, B5 and B7. B1, B2, B3 and B6 are settled.
 2. On paper, now: P0, X1's joint budget, X2 and X4.
 3. C3 continues in the PTA program, as X3.
 4. P2, as soon as B6 names the FPGA platform.
@@ -379,7 +382,7 @@ Each lands when its decision settles, in its own document's repository.
 | Risk | Where it bites | Response |
 |---|---|---|
 | UCIe and PCIe 5.0-class PHY IP: which nodes, availability, license cost | B6, L1–L3 | Source it early, and prototype on FPGA hard IP first |
-| Advanced-packaging capacity and cost | B2, P3 | Organic substrates and non-HBM memory for rev A |
+| Advanced-packaging capacity and cost | B2, P3 | Settled for rev A by B2: organic substrates, GDDR6 and DDR5, with HBM left to the Phase 2 module |
 | TFLT dies not available in the volume or quality needed | B5, Track X | TFLN as the fallback, with calibration sized to its drift |
 | RISC-V support in Linux's CXL subsystem | L4, S1 | Firmware planned alongside L1, not after it |
 | Coherence verified across a chip boundary, in the c930's L2 and the G100's | L1, L2 | Begin with GRX_GCPU.md's small, configurable coherent region, and grow it |
@@ -400,6 +403,9 @@ Each lands when its decision settles, in its own document's repository.
 4. **Does the PTA ever need coherent access to host memory?** B3 gives it none;
    revisit that if the dispatch model (S3) says otherwise.
 5. **Where does the board controller come from, and who writes its firmware?**
+6. **Which CXL-capable FPGA platform hosts rev 0?** B6 settles that there is
+   one; the part, its CXL IP and whether that IP can act as a host rather than
+   a device are P2's first question.
 
 ---
 
@@ -414,3 +420,12 @@ Made on 2026-09-21, when B1 and B3 settled:
 - [`chip_vs_board_strategy.md`](chip_vs_board_strategy.md): its author is still
   writing it, so B1's correction is handed over rather than made. UCIe joins
   dies within one package, and on rev A the CPU–GPU link is CXL over PCIe.
+
+And on 2026-09-22, when B2 and B6 settled:
+
+- This document: P1 now names UCIe-S on an organic substrate; §4.1 asks grx930
+  for a DDR5 controller and §4.2 asks grxgpu for a GDDR6 one; the packaging
+  risk records what B2 settled; and §8 gains the question of which FPGA
+  platform hosts rev 0.
+- Nothing else changes yet. The board's node (B6) reaches grx930 as the
+  requirement in §4.1, not as an edit to that team's manufacturing plan.
