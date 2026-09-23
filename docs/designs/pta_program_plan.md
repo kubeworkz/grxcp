@@ -7,7 +7,10 @@
 **Status: PLAN, in progress.** The decisions of §2 were settled on 2026-09-14,
 all four as recommended, and §7 lists the edits that carried them into the
 integration documents. F0 is measured, F1 has made its predictions (§3.3), C0
-is green, and C1 is closed (§3.1).
+is green, and C1 is closed (§3.1). The development board now has a plan of its
+own, [`board_program_plan.md`](board_program_plan.md), which carries the fabric
+requirements and the photonic chiplet; §6 of that plan lists what it changes
+here.
 This document orders the next stretch of photonic-tile work across the c930,
 the G100 and grxcp. It designs nothing new; where it changes an earlier
 document's staging, it says so.
@@ -127,7 +130,7 @@ it is marked *new*.
 | C2 tile | PTM-B in the interchanged core | Total cycles match §2.1 at every §6.2 point, affine in `PTA_TW` | C1 |
 | MB | Multi-bank tile with `Nt·Kt` resident banks, and a selectable loop order that restores `m`-outer | *New:* EO-res totals match §2.1 in both orders, with `Tw` set to the RTL's bank-select cycles, and C bit-identical between orders | C2 tile |
 | C3 | Calibration FSM and the three schedulers | CPU document §6, run with drift at TFLT's fitted rate and again at TFLN's | C1, D3 |
-| C4 | CSR decode, firmware, full SoC, Vivado on the Arty A7-200T | CPU document §6, with EO-res measured rather than modelled | C2 tile, MB, C3, A-synth |
+| C4 | CSR decode, firmware, full SoC, Vivado on the Arty A7-200T. On the board the same block is MMIO behind the GPU's CXL.io (board plan, B7) | CPU document §6, with EO-res measured rather than modelled | C2 tile, MB, C3, A-synth |
 
 **Step MB, in more detail.** At `Tw = 0` the §2.1 model gives EO-res 2,560
 cycles in the `m`-outer order and 18.4 k interchanged. The `m`-outer FSM does
@@ -224,7 +227,7 @@ requirements where it cannot.
 | F0 | **Done, below.** Run the `M = 64, N = 8, K = 256` GEMM on the Verilator SoC and record `DMA_LAST`, `STALL_CT` and the core's A-row wait (`arow_stall_cnt`, not yet on a CSR), split into the initial load, PF1 (A rows fetched during compute) and PF2 (the next GEMM's operands, fetched while C is written) | *New:* fetch cycles per operand, and the A-row wait on the digital array, identical run to run | — |
 | F1 | **Predictions made, below; checked at C2 tile and MB.** Add a feed term to the §2.1 model, built from F0's fetch rate | *New:* the model predicts the A-row wait and `DMA_CT` at C2 tile and MB, before they are measured | F0 |
 | F2 | Feed options at the Pockels points: PF1 and PF2 as built; B tiles prefetched straight into resident banks; the whole GEMM staged before launch | *New:* chosen by measured total cycles, A-row wait included, at EO-scan and EO-res | C2 tile, MB |
-| F3 | Requirements for the fabric plan: operands per second at each §6.2 point, which operands are resident and which streamed, and how long the tile can wait | *New:* every number traced to F0–F2 or to a model F1 checked | F1, F2, C4 |
+| F3 | Requirements for the fabric plan: operands per second at each §6.2 point, which operands are resident and which streamed, and how long the tile can wait. They are handed to the board plan's X2, which adds the die-to-die term | *New:* every number traced to F0–F2 or to a model F1 checked | F1, F2, C4 |
 
 F0's numbers belong to this SoC and its simulated DDR, not to any fabric, and
 F3 says so: the fabric plan gets rates and access patterns, not this SoC's
@@ -294,7 +297,7 @@ grxgpu's RTL owners, under the boundary rule of `AGENTS.md` §2.
 |---|---|---|---|
 | G1 | SimX study of the three weight-set policies, with bank count `W` beside `Tw` | GPU document §7, plus the `W` axis | D4 |
 | G0 | `VX_tcu_fedp_analog`, vendoring the c930 error model | GPU document §7, unchanged | C1, D1 |
-| G2 | Cluster-scope tile beside the DXA | GPU document §7, with DXA transfer cycles reported as the feed term | C2 tile, MB, G1 |
+| G2 | Cluster-scope tile beside the DXA. On the board this becomes the chiplet attach (board plan, B4) | GPU document §7, with DXA transfer cycles reported as the feed term | C2 tile, MB, G1 |
 | G3 | The same block-scaled GEMM on both tiles | GPU document §7, with the two feeds compared | G2, C4 |
 
 ### 3.5 Track S — grxcp
