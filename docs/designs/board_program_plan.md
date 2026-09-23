@@ -10,7 +10,9 @@
 
 **Status: PLAN, drafted 2026-09-21. All seven decisions of §2 are settled, each
 as recommended: B1 and B3 that day, and B2, B4, B5, B6 and B7 on 2026-09-22.
-X2 has made its predictions (§3.3) and X1 its budget (§4.3).**
+X2 has made its predictions (§3.3), X1 its budget (§4.3), and P0 and X4 are
+drafted as [`board_icd.md`](board_icd.md) and
+[`pta_chiplet_regmap.md`](pta_chiplet_regmap.md).**
 
 The strategy document settles the product: a PCB development board carrying
 the GRX930 SoC (the c930 RV64 cores and their NPU), the GRX-G100 GPU, and a
@@ -238,7 +240,7 @@ UCIe sideband carries the link's own management. *Needed by:* X4. *Settled on
 
 | Step | What | Gate | Needs |
 |---|---|---|---|
-| P0 | System block diagram and interface control document: every link's protocol, width, rate and owner; power, clock, reset and debug trees at block level | Review: every link has an owner on each side, and every number a source | B1–B7 |
+| P0 | **Drafted:** [`board_icd.md`](board_icd.md), with the block diagram, the nine links, power, clocks, resets and debug, and a list of what it cannot source yet | Review: every link has an owner on each side, and every number a source | B1–B7 |
 | P1 | Package study of the GPU package with the PTA chiplet: floorplan, UCIe-S on the organic substrate B2 chose, fiber attach, and a thermal co-simulation with TFLT's drift in place of heater terms | The model predicts the PIC's temperature range under the GPU's power map, and C1's drift fits say what that costs in calibration | B1, B2, B5 |
 | P2 | Board rev 0, on B6's FPGA platform: the GPU partition as a CXL Type-2 device, and the PTA as the error-model tile | Linux on a CXL host enumerates the device, and the D3 network runs through the emulated PTA bit-identical to `pta_mnist`'s C reference | B6, L2, X4, X5 |
 | P3 | Board rev A, on silicon | Scoped after P1 and the silicon plans; no gate yet | P1, L1–L4 |
@@ -280,7 +282,7 @@ tree. So L4 is planned alongside L1, not after it.
 | X1 | **Budgeted, §4.3.** Version 0 came from C1, one impairment at a time; version 1 from `sim/pta_mnist.sh joint` in grx930, with every impairment on at once | Every number traced to grx930's design note §5 or to a new run | C1, done |
 | X2 | **Predicted, below.** Link sizing in [`pta_chiplet_link.py`](pta_chiplet_link.py), which adds the die-to-die term to F1's model and carries the PTA plan's F3 handoff | Predictions stated before any RTL, and every number traced, as F1's were | B4, F1 |
 | X3 | The calibration engine on the EIC: the PTA plan's C3, specified for the chiplet | C3's own gate, at TFLT's and TFLN's drift | C3 |
-| X4 | The register map over CXL.io: the CPU document's §3.1 block in the GPU's BAR, with §3.2's completion contract restated for a device behind a link | Review | B4, B7 |
+| X4 | **Drafted:** [`pta_chiplet_regmap.md`](pta_chiplet_regmap.md) — the §3.1 block at its own offsets in the GPU's BAR, with identity, interrupts and 64-bit counters added, and §3.2's contract restated for a device behind a link | Review | B4, B7 |
 | X5 | The digital twin: `pta_tile_model.c` behind X4's map, so that drivers and grxcp can bring the PTA up before silicon | grxcp's backend gates pass against it, bitwise against the model | X4 |
 
 **X2, predicted.** [`pta_chiplet_link.py`](pta_chiplet_link.py) prices the
@@ -439,8 +441,9 @@ than its numbers do.
 ## 5. Order
 
 1. ~~Settle §2.~~ **Done:** B1 and B3 on 2026-09-21, the rest on 2026-09-22.
-2. On paper, now: P0 and X4. ~~X1's joint budget~~ (**done**, §4.3) and ~~X2~~
-   (**done**, §3.3) are in.
+2. ~~On paper, now: P0, X1, X2 and X4.~~ **All four are in:**
+   [`board_icd.md`](board_icd.md),
+   [`pta_chiplet_regmap.md`](pta_chiplet_regmap.md), §4.3 and §3.3.
 3. C3 continues in the PTA program, as X3.
 4. P2, as soon as B6 names the FPGA platform.
 5. L1–L4, in grx930's and grxgpu's silicon plans.
@@ -557,3 +560,9 @@ And later that day, when X2 had run:
   F3's handoff from [`pta_program_plan.md`](pta_program_plan.md) §3.3.
 - X1's joint budget in §4.3, with the risk it exposed, and grx930's
   `sim/pta_mnist.sh` gains the `joint` phase that produced it.
+- [`board_icd.md`](board_icd.md) is new: P0's interface control document, whose
+  §7 lists what it cannot source yet and §8 answers P0's gate.
+- [`pta_chiplet_regmap.md`](pta_chiplet_regmap.md) is new: X4's map, which keeps
+  the CPU document's offsets and adds what a link needs — identity, interrupts,
+  64-bit counters, a seed the chiplet derives per GEMM, and a completion test
+  that never spans two reads.
