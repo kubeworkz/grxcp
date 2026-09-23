@@ -6,7 +6,8 @@ split), [`pta_chiplet_regmap.md`](pta_chiplet_regmap.md),
 grx930's `c930/doc/pta_error_model_design_note.md` §4, which defines the error
 this corrects.
 
-**Status: X3 of the board plan, drafted 2026-09-22.** The CPU document's C3 —
+**Status: X3 of the board plan, drafted 2026-09-22 and measured the same day
+in C3(a)** — §8 has the numbers, and one claim in §4 did not survive them. The CPU document's C3 —
 per-column affine correction, a calibration FSM, three schedulers and the
 `cal_busy` guard — specified for a chiplet behind a link. Two things change
 there, and both are in this document's favour: the tile has more idle time, not
@@ -64,15 +65,18 @@ far more often than the cell loop.
 The cell trim has to be applied where the weight is held, which is the weight
 DAC. That imposes a requirement X1's budget does not yet carry:
 
-> **The weight DAC needs resolution below the weight code's LSB.** Weights are
-> 6-bit (X1); trimming a cell's drift on that same grid would snap the
-> correction to a whole weight LSB and undo the point of it. Enough bits below
-> to resolve a quarter of a weight LSB is the starting figure, which makes an
-> 8-bit DAC behind a 6-bit weight code.
+> **The weight DAC wants resolution below the weight code's LSB.** Weights are
+> 6-bit (X1), and a trim held on that same grid can only move a cell by whole
+> codes. Enough bits below to resolve a quarter of a code is the comfortable
+> figure, which makes an 8-bit DAC behind a 6-bit weight code.
 
-Without those bits, the only correction available is the column affine, and the
-per-cell drift C1 measured stays uncorrected. That is the single most important
-sentence in this document.
+*What C3(a) measured, and where this section was wrong.* An earlier draft said
+that without those bits the per-cell drift stays uncorrected, and called it the
+most important sentence here. It is not true. Trimming on the bare 6-bit grid
+still recovers almost everything, because drift is many codes wide and a whole
+code is a fine enough step to chase it. §8 has the figures: a quarter of a code
+costs nothing measurable, half a code 0.04 points, a whole code 0.16, and two
+codes 1.05. Sub-code resolution is worth buying; it is not a precondition.
 
 The column affine is applied digitally, after the ADC, as the CPU document
 intends. Both corrections saturate rather than wrap, and a cell whose trim
@@ -134,22 +138,67 @@ periodic one at equal accuracy. For the chiplet:
   §3.2, which on this chiplet means commands arriving while CAL_BUSY is set —
   three back to back, with the queue's occupancy checked at each step.
 
-## 8. What has to exist before the margin can be measured
+## 8. What C3(a) measured
 
-The C reference implements the error, not its correction: there is no trim path
-and no per-column affine in `pta_tile_model.c` today, so **no recovery number
-exists yet, and this document does not report one**. C3 adds both, in grx930,
-and the harness that measured drift's cost — `sim/pta_mnist.sh`, with the
-`joint` phase X1 added — is what then measures the recovery. Until that lands,
-every figure here is a cost or a budget, never a result.
+The C reference gained both corrections on 2026-09-22 — a trim per cell and an
+affine per column — and `sim/pta_mnist.sh calib` in grx930 ran the probe this
+document specifies. Every figure below is five networks at `DIN_W` 8 and
+`B_w` 6, at version 1's settings from the plan's §4.3, each network on its own
+seed. **Version 1 with no drift reads 97.20**, and that is what the margin is
+measured against.
+
+**Recovery is complete, at both fits and every age.**
+
+| Drift | Uncalibrated | Calibrated |
+|---|---|---|
+| TFLT, 1 hour | 96.64 | 97.23 |
+| TFLT, 4 hours | 92.27 | 97.24 |
+| TFLT, 46 hours | 31.91 | 97.21 |
+| TFLN, 1 hour | 74.83 | 97.19 |
+| TFLN, 4 hours | 40.79 | 97.21 |
+| TFLN, 46 hours | 10.81 | 97.20 |
+
+The worst calibrated figure is 0.01 points off the no-drift baseline, against
+the 0.2 the gate allows. A tile at chance — TFLN after 46 hours — comes back
+whole, and its ADC saturations fall from 3.3 per thousand elements to 1.4 per
+hundred thousand, which is the baseline's own rate.
+
+**Four probes are enough.** At TFLT's four-hour point: one probe gives 97.00,
+four give 97.25, sixteen give 97.24. The averaging is there to beat the
+programming error redrawn at every weight write, and four draws beat it.
+
+**The trim's resolution, measured at TFLN's 46 hours**, the hardest case. Steps
+are in 8-bit weight LSB, and a 6-bit weight code's LSB is four of them:
+
+| Trim step | ¼ code | ½ code | 1 code | 2 codes |
+|---|---|---|---|---|
+| Accuracy | 97.20 | 97.16 | 97.04 | 96.15 |
+
+**How long a calibration holds**, at TFLT's fit, calibrating at zero and then
+ageing:
+
+| After | 15 min | 30 min | 1 hour | 4 hours | 46 hours |
+|---|---|---|---|---|---|
+| Accuracy | 97.06 | 96.82 | 96.56 | 92.15 | 32.03 |
+
+So the interval that holds the gate's 0.2 points is **about a quarter of an
+hour** at TFLT's fitted drift, not the hour §1 assumed from C1's sweep. At
+TFLN's it will be far shorter, and that is what the schedulers are for.
+
+**What is still unmeasured.** The affine loop corrects error classes the model
+does not emulate — there is no per-column gain error in the contract — so it is
+implemented for the RTL to match and exercised only by directed cases.
+Crosstalk is left at version 1's 2% and not corrected: undoing it means solving
+a tridiagonal system per column, which is a different piece of work. And all of
+this is the C reference; the RTL, the FSM and the schedulers are C3(b).
 
 ## 9. Open
 
-1. **The averaging depth `m`**, which trades calibration time against the
-   residual, and follows from the receiver's actual noise rather than X1's
-   budget for it.
-2. **How often the cell loop must run against the column loop**, which needs
-   the recovery measurement of §8.
+1. ~~The averaging depth `m`.~~ **Four**, measured in §8, at X1's budgeted
+   receiver noise. A noisier receiver moves it.
+2. **How often the cell loop must run against the column loop.** §8 dates the
+   cell loop at about every quarter hour under TFLT's fit; the column loop's
+   own interval needs an error class the model does not yet emulate.
 3. **The watermark** the shadow scheduler fires on, which follows from the
    chiplet's buffer sizes (X2) and the link's round trip.
 4. **Whether a failed trim is recoverable in the field** — the DRIFT_ALARM path
