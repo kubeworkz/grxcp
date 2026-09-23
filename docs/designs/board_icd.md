@@ -74,7 +74,8 @@ and RISC-V boards mostly boot with a device tree, so firmware carries that gap
 16–32 GT/s the raw error rate is around one in 10^15 bits, which an operand
 stream can absorb beside the analog noise and a register write cannot. The
 PTA's register block — the CPU document's §3.1 — is MMIO in the GPU's BAR over
-CXL.io, so the GPU driver owns it, and X4 will lay it out. The UCIe sideband
+CXL.io, so the GPU driver owns it, and
+[`pta_chiplet_regmap.md`](pta_chiplet_regmap.md) lays it out. The UCIe sideband
 carries link management only.
 
 **Link 3.** This is the only interface where the error budget is a wiring
