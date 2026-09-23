@@ -282,7 +282,7 @@ tree. So L4 is planned alongside L1, not after it.
 |---|---|---|---|
 | X1 | **Budgeted, §4.3.** Version 0 came from C1, one impairment at a time; version 1 from `sim/pta_mnist.sh joint` in grx930, with every impairment on at once | Every number traced to grx930's design note §5 or to a new run | C1, done |
 | X2 | **Predicted, below.** Link sizing in [`pta_chiplet_link.py`](pta_chiplet_link.py), which adds the die-to-die term to F1's model and carries the PTA plan's F3 handoff | Predictions stated before any RTL, and every number traced, as F1's were | B4, F1 |
-| X3 | **Specified and measured:** [`pta_chiplet_calibration.md`](pta_chiplet_calibration.md), with C3(a)'s recovery in its §8 — the trim returns a tile at chance to within 0.01 points of the no-drift case. The FSM and the schedulers are C3(b)'s, in grx930 | C3's own gate, at TFLT's and TFLN's drift | C3 |
+| X3 | **Specified, measured and built:** [`pta_chiplet_calibration.md`](pta_chiplet_calibration.md), with C3(a)'s recovery and C3(b)'s RTL in its §8 — the trim returns a tile at chance to within 0.01 points of the no-drift case, and the engine that writes it agrees with the C reference cell for cell | C3's own gate, at TFLT's and TFLN's drift | Done |
 | X4 | **Drafted:** [`pta_chiplet_regmap.md`](pta_chiplet_regmap.md) — the §3.1 block at its own offsets in the GPU's BAR, with identity, interrupts and 64-bit counters added, and §3.2's contract restated for a device behind a link | Review | B4, B7 |
 | X5 | The digital twin: `pta_tile_model.c` behind X4's map, so that drivers and grxcp can bring the PTA up before silicon | grxcp's backend gates pass against it, bitwise against the model | X4 |
 
@@ -422,14 +422,24 @@ to this instead:
 | Recalibration | about hourly at TFLT's fit | hourly costs 0.81 points, six minutes 0.37 |
 
 v1 costs 0.81 points on the D3 network at hourly calibration, and 0.37 if the
-schedulers can recalibrate every six minutes — which is what C3 has to price.
+schedulers can recalibrate every six minutes — which is what C3 had to price.
 It is still one small network (§8), so the shape of this result — that error
 compounds, and that every allowance tightens about fourfold — travels further
 than its numbers do.
 
+*What C3 priced, 2026-09-23.* Both halves. C3(a) measured the interval: a
+calibration holds about a quarter of an hour at TFLT's fit, not the hour this
+table assumed, and the correction itself is complete at every age and both fits
+([`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) §8). C3(b) measured
+the cost: in RTL a calibration is a few thousand cycles, and the shadow scheduler
+hid three quarters of that in stalls the tile was waiting through anyway — so the
+interval this table wants is affordable, and the recalibration row is a schedule
+rather than a tax.
+
 ### 4.4 To the PTA program
 
-- C3, the calibration engine, continues, and becomes X3.
+- ~~C3, the calibration engine, continues, and becomes X3.~~ **Done**, both
+  halves: C3(a) measured, C3(b) built (X3's §8).
 - C4's target moves: the CSR map goes to CXL.io behind the GPU (X4), not to the
   Arty A7 SoC's bus.
 - Step F3's requirements for the fabric go to X2.

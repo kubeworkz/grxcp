@@ -6,9 +6,11 @@ split), [`pta_chiplet_regmap.md`](pta_chiplet_regmap.md),
 grx930's `c930/doc/pta_error_model_design_note.md` §4, which defines the error
 this corrects.
 
-**Status: X3 of the board plan, drafted 2026-09-22 and measured the same day
-in C3(a)** — §8 has the numbers, and one claim in §4 did not survive them. The CPU document's C3 —
-per-column affine correction, a calibration FSM, three schedulers and the
+**Status: X3 of the board plan, drafted 2026-09-22, measured the same day in
+C3(a), and built on 2026-09-23 in C3(b)** — §8 has both sets of numbers. Four
+claims in these pages did not survive being measured or built: one in §4, which
+C3(a) corrected, and three in §5, which C3(b) did. The CPU document's C3 —
+per-column affine correction, a calibration FSM, four schedulers and the
 `cal_busy` guard — specified for a chiplet behind a link. Two things change
 there, and both are in this document's favour: the tile has more idle time, not
 less, and the correction has somewhere better to go.
@@ -39,8 +41,19 @@ common to a column.
 | **Column affine** — a gain and an offset per column, `PTA_GAIN[j]` and `PTA_OFFS[j]` | Receiver gain and offset, ADC offset, laser power drift, anything common to the column | Per-cell programming error and per-cell drift, which is most of what C1 measured |
 | **Cell trim** — a correction per weight cell, applied when the weight is written | Each cell's programming error and accumulated drift | Anything that changes faster than the weight is rewritten |
 
-C3 on the c930 has the first. A chiplet whose weights sit in DAC-held voltages
-(B5) can have the second, and it is the one that addresses drift.
+The chiplet's weights sit in DAC-held voltages (B5), so it can have the second,
+and that is the one that addresses drift. On the c930 the tile is a model and its
+weight DAC is a register, so C3(b) built both there.
+
+*What C3(b) settled.* Both stores are built and the tile applies both, but only
+the cell loop has an estimator. The error model has no per-column gain error and
+no per-column offset error — nothing in grx930's contract §4 is common to a
+column — so a column loop run against it would be measuring its own receiver
+noise and would make the tile worse, not better. The affine is therefore
+host-written, exercised by directed cases in gate P7, and waiting for an error
+class the model does not yet emulate. That is a gap in the error model, not in
+the engine, and it is the one thing in this document that silicon will need and
+the twin cannot yet give.
 
 ## 3. Measuring
 
@@ -102,6 +115,44 @@ backstop the CPU document specifies.
 `PTA_CAL_CT` and `PTA_CAL_CYC`, 64-bit on this map, are what make the four
 modes comparable rather than arguable.
 
+*What C3(b) built, and what it needed that this section did not say.* The four
+modes are in `grx930/c930/rtl/pta/c930_pta_cal.sv`, with the c930's window being
+a row the DMA has not landed yet. What building them settled:
+
+- **It has to extrapolate what a calibration *found*, not what it left.** This
+  section and the CPU document's §5.1 both say to extrapolate the last two
+  *residuals*. A residual is what a calibration leaves behind, and one that
+  worked leaves almost nothing — so the rate it implies is almost zero and the
+  scheduler stops scheduling. P9 measured exactly that: one calibration in fifty
+  thousand cycles where the periodic scheduler took four, and no recovery to show
+  for it. The quantity the scheduler needs is the widest correction the first
+  pass had to make, before any of it was applied, which is the error that
+  accumulated over the interval. The engine publishes both, and they answer
+  different questions: `PTA_ERR_FOUND` is what accumulated and drives the
+  scheduler, `PTA_ERR_MAX` is what is left and is what this document's gate
+  reports.
+- **The predictive rule is a comparison of products.** With `r1` what the last
+  calibration found over `L1` cycles, and `r0`, `L0` the pair before it, the
+  error predicted after `E` cycles is `E · max(r1/L1, r0/L0)`, and the scheduler
+  fires when it reaches `PTA_CAL_THR`. Compared as `E·r ≥ thr·L` there is no
+  divider on the tile.
+- **Zero counts as one unit**, because a rate of zero predicts no error however
+  long the wait and would switch the scheduler off permanently the first time a
+  calibration came back clean.
+- **`PTA_CAL_PER` is a floor on the interval** for both predicting modes, not
+  only a period for the periodic one. Without it the extrapolation runs away: the
+  measurement has a noise floor that a short interval does not divide out, so a
+  short interval reads as a steep rate, which fires again sooner, which shortens
+  the interval further. With a grant point at every output row C3(b) watched it
+  calibrate continuously and never finish the work. A prediction can now only ask
+  for *fewer* calibrations than the periodic scheduler would take, which is also
+  what makes the comparison in §8 a comparison of policy rather than of budget.
+- **The shadow's floor is `PTA_CAL_THR/4`**, derived rather than given a register
+  of its own, with the predictive rule as the backstop this section asks for. The
+  request is *withdrawn* when the window closes, which is what keeps a shadow
+  calibration inside one; a periodic request is held until the tile can take it,
+  which is what makes it pay.
+
 ## 6. The engine, and the contract
 
 The FSM lives on the interface chip (B4) and owns: the probe sequence, the
@@ -117,8 +168,26 @@ estimator, the two correction stores, and the scheduler. Its obligations under
   `PTA_IRQ_STATUS.ERR`.
 - Completion raises `PTA_IRQ_STATUS.CAL_DONE`, and `PTA_STATUS.CAL_VALID` says
   whether the result was used.
-- The residual goes to `PTA_ERR_MAX`, which the predictive scheduler reads and
-  C3's gate reports.
+- The residual goes to `PTA_ERR_MAX`, which C3's gate reports, and the error the
+  calibration found goes to `PTA_ERR_FOUND`, which is what the predictive
+  scheduler reads. An earlier draft had the scheduler reading the residual; §5
+  says why that does not work.
+
+*Against C3(b), 2026-09-23.* On the c930 all of this is built except the
+interrupt, which has nowhere to go until C4 maps the register block: the engine
+raises a completion pulse and the core carries `CAL_BUSY`, `CAL_VALID`,
+`DRIFT_ALARM`, `PTA_ERR_MAX`, `PTA_CAL_CT` and `PTA_CAL_CYC` as ports. Two
+additions the list did not have. **A calibration must not report BUSY** — the
+c930's `o_busy` excludes one that ran between GEMMs, because a calibration is not
+a command and BUSY is per-command; without that the dispatch guard is never
+exercised and `CAL_BUSY` means nothing. And **a START that reaches the tile
+during a calibration anyway is reported**, not dropped and not taken: the guard
+is what prevents it, and `PTA_IRQ_STATUS.ERR` is what says the guard failed. A
+`MODEL_RST` during a calibration raises the same bit.
+
+The engine also needs configuration no map had a place for — the probe's
+amplitude, its repeat count, the DAC's step and clamp, and its own seed. Three
+words, in [`pta_chiplet_regmap.md`](pta_chiplet_regmap.md) §4.
 
 ## 7. The gate, for the chiplet
 
@@ -133,7 +202,9 @@ periodic one at equal accuracy. For the chiplet:
   silicon.
 - **Both fits are run**, TFLT's and TFLN's, as the PTA plan's C3 row says.
 - **The comparison of schedulers** runs on the twin first, where wall-clock is
-  countable exactly, and then in RTL.
+  countable exactly, and then in RTL. *On the c930 those are the same thing* —
+  PTM-C is the twin — so C3(b) ran it once, in RTL, and §8 has it. The chiplet's
+  own twin is X5's.
 - *Ablation:* the START-during-calibration regression from the CPU document's
   §3.2, which on this chiplet means commands arriving while CAL_BUSY is set —
   three back to back, with the queue's occupancy checked at each step.
@@ -184,6 +255,63 @@ ageing:
 So the interval that holds the gate's 0.2 points is **about a quarter of an
 hour** at TFLT's fitted drift, not the hour §1 assumed from C1's sweep. At
 TFLN's it will be far shorter, and that is what the schedulers are for.
+
+### What C3(b) built, and what it measured, 2026-09-23
+
+The two correction paths are in grx930's `c930/rtl/pta/c930_ptm_c.sv`, the engine
+in `c930/rtl/pta/c930_pta_cal.sv`, and the dispatch guard in
+`c930/rtl/c930_npu_csr.sv`; the gates are P7 to P9 of that repository's design
+note §5, at `DIN_W` 8 and 16.
+
+**The engine writes what the C reference writes, cell for cell.** Drift and
+programming error accumulated over three GEMMs; one calibration of four repeats
+over three passes took 7,321 cycles; every trim it wrote matched
+`pta_cal_bank()`, checked by reading the tile back one cell at a time where a
+single disagreement shows, and so did both numbers it publishes — 3,584 found and
+4,608 left, Q.8 weight LSB. C1's fourteen shapes then matched the model again
+with those trims in place. Parity is only possible because a calibration's noise
+is reproducible: the streams load once from a seed of its own and then run
+through every repeat and pass, which is also what makes the repeats differ.
+
+**Against drift alone the recovery is total.** A trim cannot anticipate a
+programming error redrawn at every weight write, so the measurement of what a
+trim is *for* turns that off: the tile read back a cell at a time goes from a mean
+of 408 to **0.00** at the ADC's resolution, 3,328 found and 256 left. With the
+programming error on, the same calibration halves the error and no more — that is
+the floor the redraw sets, not the trim's limit, and it is why §3's averaging is
+there.
+
+**The scheduling, in wall-clock.** Four GEMMs whose A rows arrive every 1,200
+cycles against rows that take about 80 to compute, so the tile waits on its
+operands — which is what X2 says the link does to this tile anyway, and what makes
+an idle window long enough to hide a calibration in. Every mode ran the same work
+with the same operands and the same arrivals, and calibration was switched off
+for the read-back so the measurement is of the tile, not of the scheduler:
+
+| Scheduler | Wall-clock cycles | Calibrations | Cycles calibrating | Last found | Mean \|cell\| left |
+|---|---|---|---|---|---|
+| off | 48,801 | 0 | 0 | 0 | 340.00 |
+| periodic | 57,593 | 4 | 8,540 | 2,304 | 172.00 |
+| drift-predictive | 53,197 | 2 | 4,270 | 3,584 | 284.00 |
+| shadow | 50,999 | 4 | 8,540 | 2,816 | 76.00 |
+
+The periodic scheduler and the shadow one ran the same number of calibrations
+and spent the same 8,540 cycles inside them, and that is the whole of the
+difference: periodic cost 8,792 cycles of wall-clock where the shadow cost
+2,198, so **75% of the calibration was free** — hidden in stalls the tile was
+waiting through anyway. It was also the more accurate of the two, 76.00 against
+172.00 per cell against 340.00 uncalibrated, because it calibrated at moments
+the tile was not using.
+
+**What C3(b) had to correct.** Three things in this document and the CPU
+document's §5.1 did not survive being built, and §5 has them: the predictive
+scheduler must extrapolate what a calibration found rather than what it left, a
+found error of zero must count as one unit, and `PTA_CAL_PER` must floor the
+interval or the extrapolation runs away. A fourth was in the RTL rather than the
+specification: `CAL_BUSY` has to cover the handover back to the core, not just
+the work, or there is one cycle in which a dispatcher believes the tile is free
+and the command it sends is lost — the guard's own failure, one cycle wide, found
+by the only scheduler that fires between GEMMs.
 
 **What is still unmeasured.** The affine loop corrects error classes the model
 does not emulate — there is no per-column gain error in the contract — so it is
