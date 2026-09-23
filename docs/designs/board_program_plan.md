@@ -10,8 +10,9 @@
 
 **Status: PLAN, drafted 2026-09-21. All seven decisions of §2 are settled, each
 as recommended: B1 and B3 that day, and B2, B4, B5, B6 and B7 on 2026-09-22.
-X2 has made its predictions (§3.3), X1 its budget (§4.3), and P0 and X4 are
-drafted as [`board_icd.md`](board_icd.md) and
+X2 has made its predictions (§3.3), X1 its budget (§4.3), and P0, X3 and X4
+are drafted as [`board_icd.md`](board_icd.md),
+[`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) and
 [`pta_chiplet_regmap.md`](pta_chiplet_regmap.md).**
 
 The strategy document settles the product: a PCB development board carrying
@@ -281,7 +282,7 @@ tree. So L4 is planned alongside L1, not after it.
 |---|---|---|---|
 | X1 | **Budgeted, §4.3.** Version 0 came from C1, one impairment at a time; version 1 from `sim/pta_mnist.sh joint` in grx930, with every impairment on at once | Every number traced to grx930's design note §5 or to a new run | C1, done |
 | X2 | **Predicted, below.** Link sizing in [`pta_chiplet_link.py`](pta_chiplet_link.py), which adds the die-to-die term to F1's model and carries the PTA plan's F3 handoff | Predictions stated before any RTL, and every number traced, as F1's were | B4, F1 |
-| X3 | The calibration engine on the EIC: the PTA plan's C3, specified for the chiplet | C3's own gate, at TFLT's and TFLN's drift | C3 |
+| X3 | **Specified:** [`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) — two correction loops, the four schedulers with the chiplet's own shadow, and the margin its gate is held to. The engine itself is C3's, in grx930 | C3's own gate, at TFLT's and TFLN's drift | C3 |
 | X4 | **Drafted:** [`pta_chiplet_regmap.md`](pta_chiplet_regmap.md) — the §3.1 block at its own offsets in the GPU's BAR, with identity, interrupts and 64-bit counters added, and §3.2's contract restated for a device behind a link | Review | B4, B7 |
 | X5 | The digital twin: `pta_tile_model.c` behind X4's map, so that drivers and grxcp can bring the PTA up before silicon | grxcp's backend gates pass against it, bitwise against the model | X4 |
 
@@ -413,7 +414,7 @@ to this instead:
 |---|---|---|
 | Activation DAC | 5 bits | 6 bits |
 | ADC | 6 bits | 7 bits |
-| Weight resolution | 6 bits | 6 bits, where the networks are trained |
+| Weight resolution | 6 bits | 6 bits, where the networks are trained, on a DAC with enough bits below that LSB to trim a cell — 8 bits is the starting figure ([`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) §4) |
 | Receiver noise | 1 LSB of an 8-bit ADC, rms | 0.25 LSB |
 | Light at each detector | 3 photons per ADC LSB | 30 |
 | Weight programming error | 4 LSB of an 8-bit weight, rms | 1 LSB |
@@ -444,7 +445,7 @@ than its numbers do.
 2. ~~On paper, now: P0, X1, X2 and X4.~~ **All four are in:**
    [`board_icd.md`](board_icd.md),
    [`pta_chiplet_regmap.md`](pta_chiplet_regmap.md), §4.3 and §3.3.
-3. C3 continues in the PTA program, as X3.
+3. C3 continues in the PTA program, building what X3 specifies.
 4. P2, as soon as B6 names the FPGA platform.
 5. L1–L4, in grx930's and grxgpu's silicon plans.
 6. P1, before any package is committed.
@@ -566,3 +567,6 @@ And later that day, when X2 had run:
   the CPU document's offsets and adds what a link needs — identity, interrupts,
   64-bit counters, a seed the chiplet derives per GEMM, and a completion test
   that never spans two reads.
+- [`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) is new: X3's
+  specification, and with it §4.3 gains the trim bits the weight DAC needs
+  below the weight code's LSB.
