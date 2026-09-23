@@ -9,7 +9,8 @@
 [GRX_GCPU.md](../GRX_GCPU.md).
 
 **Status: PLAN, drafted 2026-09-21. All seven decisions of §2 are settled, each
-as recommended: B1 and B3 that day, and B2, B4, B5, B6 and B7 on 2026-09-22.**
+as recommended: B1 and B3 that day, and B2, B4, B5, B6 and B7 on 2026-09-22.
+X2 has made its predictions (§3.3) and X1 its budget (§4.3).**
 
 The strategy document settles the product: a PCB development board carrying
 the GRX930 SoC (the c930 RV64 cores and their NPU), the GRX-G100 GPU, and a
@@ -159,7 +160,12 @@ mode drops both, and nothing yet justifies that. X2 sizes the link.
 *Needed by:* L3, X2 and X4. *Settled on 2026-09-22, as recommended:* the
 interface chip holds the converters, the resident weights, the activation
 buffers, the accumulation and the calibration engine. Whether the activation
-stage joins them is left until X2 has sized the link.
+stage joins them is left until X2 has sized the link. *Addendum, 2026-09-22,
+once X2 had:* it joins them. X2 puts the saving at 38% of the traffic that is
+not weights on the D3 network and 75% on a four-layer block, and that share
+grows with depth and with weight residency — which is where this design is
+going. The cost is chiplet area and a nonlinearity fixed in silicon, which
+S_ACT has designed once already.
 
 **B5 — The photonic platform, and the laser.** The strategy and motherboard
 documents assume silicon photonics tuned by heaters: ring resonators held on
@@ -271,11 +277,62 @@ tree. So L4 is planned alongside L1, not after it.
 
 | Step | What | Gate | Needs |
 |---|---|---|---|
-| X1 | EIC requirements. Version 0 is §4.3, from C1; the next is a joint budget, with every impairment on at once | Every number traced to grx930's design note §5 or to a new run | C1, done |
-| X2 | Link sizing: [`pta_feed_model.py`](pta_feed_model.py) with a die-to-die term — bandwidth, latency and the EIC's buffers. The PTA plan's F3 hands its requirements here | Predictions stated before any RTL, and every number traced, as F1's were | B4, F1 |
+| X1 | **Budgeted, §4.3.** Version 0 came from C1, one impairment at a time; version 1 from `sim/pta_mnist.sh joint` in grx930, with every impairment on at once | Every number traced to grx930's design note §5 or to a new run | C1, done |
+| X2 | **Predicted, below.** Link sizing in [`pta_chiplet_link.py`](pta_chiplet_link.py), which adds the die-to-die term to F1's model and carries the PTA plan's F3 handoff | Predictions stated before any RTL, and every number traced, as F1's were | B4, F1 |
 | X3 | The calibration engine on the EIC: the PTA plan's C3, specified for the chiplet | C3's own gate, at TFLT's and TFLN's drift | C3 |
 | X4 | The register map over CXL.io: the CPU document's §3.1 block in the GPU's BAR, with §3.2's completion contract restated for a device behind a link | Review | B4, B7 |
 | X5 | The digital twin: `pta_tile_model.c` behind X4's map, so that drivers and grxcp can bring the PTA up before silicon | grxcp's backend gates pass against it, bitwise against the model | X4 |
+
+**X2, predicted.** [`pta_chiplet_link.py`](pta_chiplet_link.py) prices the
+link the way F1 priced the c930's feed, and carries F3's handoff in its first
+section: at the §6.2 shape the emulated tile moves 0.42 GB/s in and 0.05 GB/s
+out at EO-res, and less at every thermo-optic point, so the c930's tile would
+never trouble a link. The chiplet is a different size of object.
+
+A layer of 4096 by 4096 at batch 64, with B4's split, one UCIe-S module taken
+as 16 lanes at 32 GT/s and 0.9 of that surviving overhead — 57.6 GB/s a
+direction:
+
+| Tile | Shots a layer | At 1 GS/s, in | Out | Modules in |
+|---|---|---|---|---|
+| 64 × 8 | 2,097,152 | 8.1 GB/s | 0.50 GB/s | 1 |
+| 128 × 64 | 131,072 | 130 GB/s | 8.0 GB/s | 3 |
+| 256 × 64 | 65,536 | 260 GB/s | 16 GB/s | 5 |
+| 256 × 128 | 32,768 | 520 GB/s | 32 GB/s | 10 |
+
+Four things follow, and each is a number this plan can be held to.
+
+- **The link caps the tile, as B4 expected.** One module holds a 256 × 64 tile
+  to 0.22 G shots a second at batch 64, and a 64 × 8 tile to 7.1 G. Whatever
+  the optics can do, that is the rate.
+- **The batch is the lever on weights.** Inbound is `k·n/mb` bytes of weight a
+  shot beside the activations, so the same 256 × 64 tile needs 1,028 GB/s at
+  batch 16, 260 at 64 and 68 at 256. Weight residency across batches is the
+  other lever, and the one MB already studies on the c930.
+- **B4's split earns its area.** A thin interface chip, with neither activation
+  buffers nor accumulation, needs two to nine times the inbound and four to
+  eight times the outbound of the same geometries.
+- **What the chiplet must hold**, at 256 × 64: 16,384 DAC-held weights, 16.4 kB
+  of activation buffer for a K tile of a batch, and 16.4 kB of accumulators. A
+  module keeps 5.76 kB in flight across an assumed 100 ns round trip, and the
+  chiplet needs at least that again before the tile waits.
+
+**The activation stage, which B4 left open.** With the stage on the chiplet, an
+intermediate never crosses the link: the layer's outputs are already where the
+next layer's inputs are needed. Per inference of a batch of 64, on a 256 × 64
+tile:
+
+| Network | Stage on the GPU | Stage on the chiplet | Traffic that is not weights |
+|---|---|---|---|
+| D3, 784-100-10 | 232 kB | 200 kB | 84.7 kB → 52.7 kB, down 38% |
+| Four 4096-square layers | 72.4 MB | 68.4 MB | 5.24 MB → 1.31 MB, down 75% |
+
+At batch 64 the weights are most of the traffic either way, so the stage pays
+most when weights stay resident across batches and when the network is deep.
+The assumptions — one byte an operand or ADC code, four for an accumulated
+output, 0.9 link efficiency, a 100 ns round trip, and candidate geometries
+rather than a settled one (§8) — are listed in the script and marked where they
+are used.
 
 ### 3.4 Track S — grxcp
 
@@ -310,11 +367,11 @@ tree. So L4 is planned alongside L1, not after it.
   format: FP8-class inputs reach the analog tile as block-scaled integers.
 - A GDDR6 controller and PHY (B2).
 
-### 4.3 To the PTA chiplet: EIC requirements, version 0
+### 4.3 To the PTA chiplet: EIC requirements
 
-These come from C1's sweep on the D3 network — a 784-100-10 MLP on MNIST, at
-8-bit operands and 6-bit weights, 97.45% with nothing else impaired — in
-grx930's `c930/doc/pta_error_model_design_note.md` §5. Each row costs about
+**Version 0** came from C1's sweep on the D3 network — a 784-100-10 MLP on
+MNIST, at 8-bit operands and 6-bit weights, 97.45% with nothing else impaired —
+in grx930's `c930/doc/pta_error_model_design_note.md` §5. Each row costs about
 half a point or less **on its own**. The noise rows were measured with an
 8-bit ADC, at 97.42% before noise.
 
@@ -329,8 +386,43 @@ half a point or less **on its own**. The noise rows were measured with an
 | Crosstalk between neighbouring inputs | 10% | 0.16 |
 | Recalibration | about hourly at TFLT's drift fit; within minutes at TFLN's | TFLT's fit costs 0.46 points in an hour, TFLN's 0.96 in six minutes |
 
-Together these compound, and one small network is a floor, not a sign-off. X1's
-joint budget is the next step.
+**Version 1, from X1's joint runs** (2026-09-22), is what happens when they are
+not on their own. `sim/pta_mnist.sh joint` runs every impairment at once on the
+same five networks, each on its own seed:
+
+| Setting | Mean | Loss |
+|---|---|---|
+| v0's converters alone: 5 activation bits, 6-bit ADC | 97.00 | 0.45 |
+| v0 entire, no drift | 86.37 | 11.08 |
+| v0 entire, an hour of TFLT drift | 84.61 | 12.84 |
+| v0 entire, six minutes of it | 85.97 | 11.48 |
+| v0's noise halved, v0's converters, an hour | 93.88 | 3.57 |
+| v0's noise, 6 activation bits and a 7-bit ADC, an hour | 93.39 | 4.06 |
+| Both — noise halved, converters widened — an hour | 96.04 | 1.41 |
+| Noise quartered, 6 and 7 bits, an hour | 96.64 | 0.81 |
+| The same, recalibrated every six minutes | 97.08 | 0.37 |
+
+**Version 0 was never a budget.** Its items cost at most 0.45 points each, and
+about two points summed; together they cost 12.8. Analog error does not add, it
+compounds, and a network's slack is spent once. So the interface chip is held
+to this instead:
+
+| Parameter | v0, each alone | v1, all together |
+|---|---|---|
+| Activation DAC | 5 bits | 6 bits |
+| ADC | 6 bits | 7 bits |
+| Weight resolution | 6 bits | 6 bits, where the networks are trained |
+| Receiver noise | 1 LSB of an 8-bit ADC, rms | 0.25 LSB |
+| Light at each detector | 3 photons per ADC LSB | 30 |
+| Weight programming error | 4 LSB of an 8-bit weight, rms | 1 LSB |
+| Crosstalk between neighbouring inputs | 10% | 2% |
+| Recalibration | about hourly at TFLT's fit | hourly costs 0.81 points, six minutes 0.37 |
+
+v1 costs 0.81 points on the D3 network at hourly calibration, and 0.37 if the
+schedulers can recalibrate every six minutes — which is what C3 has to price.
+It is still one small network (§8), so the shape of this result — that error
+compounds, and that every allowance tightens about fourfold — travels further
+than its numbers do.
 
 ### 4.4 To the PTA program
 
@@ -347,7 +439,8 @@ joint budget is the next step.
 ## 5. Order
 
 1. ~~Settle §2.~~ **Done:** B1 and B3 on 2026-09-21, the rest on 2026-09-22.
-2. On paper, now: P0, X1's joint budget, X2 and X4.
+2. On paper, now: P0 and X4. ~~X1's joint budget~~ (**done**, §4.3) and ~~X2~~
+   (**done**, §3.3) are in.
 3. C3 continues in the PTA program, as X3.
 4. P2, as soon as B6 names the FPGA platform.
 5. L1–L4, in grx930's and grxgpu's silicon plans.
@@ -390,6 +483,7 @@ Each lands when its decision settles, in its own document's repository.
 |---|---|---|
 | UCIe and PCIe 5.0-class PHY IP: which nodes, availability, license cost | B6, L1–L3 | Source it early, and prototype on FPGA hard IP first |
 | Advanced-packaging capacity and cost | B2, P3 | Settled for rev A by B2: organic substrates, GDDR6 and DDR5, with HBM left to the Phase 2 module |
+| Analog error compounds: v0's per-item allowances cost 12.8 points together, not the two they sum to | X1, the chiplet | v1's budget (§4.3), and every later specification stated jointly, never item by item |
 | TFLT dies not available in the volume or quality needed | B5, Track X | TFLN as the fallback, with calibration sized to its drift |
 | RISC-V support in Linux's CXL subsystem | L4, S1 | Firmware planned alongside L1, not after it |
 | Coherence verified across a chip boundary, in the c930's L2 and the G100's | L1, L2 | Begin with GRX_GCPU.md's small, configurable coherent region, and grow it |
@@ -413,6 +507,9 @@ Each lands when its decision settles, in its own document's repository.
 6. **Which CXL-capable FPGA platform hosts rev 0?** B6 settles that there is
    one; the part, its CXL IP and whether that IP can act as a host rather than
    a device are P2's first question.
+7. **Does X1's budget hold on a second workload?** It is one 784-100-10 MLP.
+   That error compounds is a property of analog sums, not of this network, but
+   the numbers in §4.3 belong to it until something else is run.
 
 ---
 
@@ -451,3 +548,12 @@ And on 2026-09-22, when B4, B5 and B7 settled, the edits they had been holding:
 - [`ai_motherboard_design_capabilities.md`](ai_motherboard_design_capabilities.md):
   a note at the head of its thermal section that the platform is Pockels, not
   thermo-optic, with what that changes and where the laser goes.
+
+And later that day, when X2 had run:
+
+- This document: X2's predictions in §3.3, and B4's addendum — the activation
+  stage goes on the chiplet, on the traffic X2 measured.
+- [`pta_chiplet_link.py`](pta_chiplet_link.py) is new: the die-to-die term, and
+  F3's handoff from [`pta_program_plan.md`](pta_program_plan.md) §3.3.
+- X1's joint budget in §4.3, with the risk it exposed, and grx930's
+  `sim/pta_mnist.sh` gains the `joint` phase that produced it.
