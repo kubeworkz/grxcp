@@ -17,7 +17,9 @@ emulation and numerics. There is no photonic PDK, no MPW shuttle, no
 mixed-signal tape-out. That is not a reduced version of the photonic project;
 it is a different project with a different deliverable, and the difference has
 to be stated once, loudly, or every result downstream gets read as a claim
-about silicon photonics that it is not.
+about silicon photonics that it is not. *Still true of this document,
+2026-09-22:* the development board does build a photonic chiplet, but it is the
+GPU's, and [`board_program_plan.md`](board_program_plan.md) owns it.
 
 What an emulation-only program can honestly produce:
 
@@ -344,6 +346,11 @@ document nobody trusts.
 | 0x90–0xAC | `PTA_GAIN[j]` | RW | per-column gain, Q8.8 |
 | 0xB0–0xCC | `PTA_OFFS[j]` | RW | per-column offset, signed |
 | 0xD0 | `PTA_DRIFT_MAX` | RW | drift clamp, Q8.8 in weight LSB, defaulting to TFLT's 8,643 (§4.4); the first word past the block, shared with S_ACT's scalars at C4 |
+
+On the development board this block is not a c930 CSR at all: it is MMIO in the
+GPU's BAR, reached over CXL.io
+([`board_program_plan.md`](board_program_plan.md), B7). The block is the same;
+what changes is who decodes it.
 
 `PTA_CAL_CYC` and `PTA_WLOAD_CT` are not diagnostics. They exist so a reported
 GEMM time can be decomposed into compute, weight programming, and calibration.
@@ -792,7 +799,10 @@ scheduler costing measurably less wall-clock than the periodic one at equal
 accuracy. *Ablation:* the START-during-calibration regression from §3.2.
 
 **C4 — SoC, firmware, numbers.** CSR decode widening, firmware, the full-SoC
-test suite, and a Vivado run on the Arty A7-200T.
+test suite, and a Vivado run on the Arty A7-200T. *Board note, 2026-09-22:* on
+the development board the same register block is reached as MMIO behind the
+GPU's CXL.io ([`board_program_plan.md`](board_program_plan.md), B7 and X4).
+Whether the c930 keeps a tile of its own is that plan's §8, question 3.
 *Gate:* real utilization and timing, not estimates; the five existing full-SoC
 tests still pass; the §6.2 sweep produced at both ends, thermo-optic and
 Pockels-class, with EO-res measured on MB's tile rather than modelled.

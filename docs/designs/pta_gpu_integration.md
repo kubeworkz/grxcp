@@ -19,7 +19,10 @@ substitute for it. The dependency is one-directional and stays that way
 
 **Scope, same as the CPU path.** FPGA emulation and numerics only. No PDK, no
 photonic die. The tile is a deterministic digital model of an analog channel,
-and the results are architectural and numerical.
+and the results are architectural and numerical. *Still this document's scope,
+2026-09-22:* the development board does build a photonic chiplet beside the
+G100, and it belongs to [`board_program_plan.md`](board_program_plan.md), not
+here.
 
 ---
 
@@ -88,6 +91,16 @@ whole guardrail here, because the code is identical either way.
 ---
 
 ## 2. Where the engine goes: cluster scope, beside the DXA
+
+> **Superseded for the development board, 2026-09-22**
+> ([`board_program_plan.md`](board_program_plan.md), B4). There the PTA is a
+> chiplet behind a UCIe port, shared by every cluster, and its interface chip
+> holds the resident weights, the activation buffers, the accumulation and the
+> calibration. Two of the three facts below carry over: reuse lives at the tile
+> buffer, and DXA's K-major scatter is the weight-load path — now the copy
+> engine that feeds the port. The third, scope, is what changes: one engine per
+> device rather than one per cluster. For a tile on the die, what follows
+> stands.
 
 The photonic tile wants to sit where a B tile is already resident and already
 reused. In the G100 that is unambiguous: **LMEM, at cluster scope, next to
@@ -258,6 +271,11 @@ device, and phase C2's `Tw`-to-`Ts` ratio sweep may say that a general-purpose G
 is the wrong place for a photonic tile at all
 ([`pta_cpu_integration.md`](pta_cpu_integration.md) §5.5) — which would change
 what the GPU path should be, or whether it should exist.
+
+**Re-staged again, 2026-09-22:** on the development board, G2's cluster-scope
+tile becomes the chiplet attach of
+[`board_program_plan.md`](board_program_plan.md), B4, and that plan's L3 owns
+the port it hangs from.
 
 **Re-staged by the program plan (D4 of
 [`pta_program_plan.md`](pta_program_plan.md)).** Neither reason touches G1,

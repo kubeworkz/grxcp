@@ -8,8 +8,8 @@
 [`heterogeneous_devices.md`](heterogeneous_devices.md),
 [GRX_GCPU.md](../GRX_GCPU.md).
 
-**Status: PLAN, drafted 2026-09-21. B1 and B3 were settled that day and B2 and
-B6 on 2026-09-22, all as recommended; B4, B5 and B7 are open.**
+**Status: PLAN, drafted 2026-09-21. All seven decisions of §2 are settled, each
+as recommended: B1 and B3 that day, and B2, B4, B5, B6 and B7 on 2026-09-22.**
 
 The strategy document settles the product: a PCB development board carrying
 the GRX930 SoC (the c930 RV64 cores and their NPU), the GRX-G100 GPU, and a
@@ -46,8 +46,8 @@ already on record now collide with it.
 | Topic | Already on record | The board decision | Here |
 |---|---|---|---|
 | CPU–GPU coherence protocol | [GRX_GCPU.md](../GRX_GCPU.md) §2: TileLink, with CXL.cache "too heavyweight for on-package" | CXL | Reversed; B3, settled |
-| Where the GPU's PTA sits | [`pta_gpu_integration.md`](pta_gpu_integration.md) §2: inside the G100, one per cluster, beside the DXA | A separate chiplet | Re-architected; B4 |
-| Photonic platform | [`pta_cpu_integration.md`](pta_cpu_integration.md) §4.4: TFLT, a Pockels material | The strategy and motherboard documents assume heater-tuned silicon rings | Aligned to TFLT; B5 |
+| Where the GPU's PTA sits | [`pta_gpu_integration.md`](pta_gpu_integration.md) §2: inside the G100, one per cluster, beside the DXA | A separate chiplet | Re-architected; B4, settled |
+| Photonic platform | [`pta_cpu_integration.md`](pta_cpu_integration.md) §4.4: TFLT, a Pockels material | The strategy and motherboard documents assume heater-tuned silicon rings | Aligned to TFLT; B5, settled |
 | The CPU's silicon | grx930's `c930/doc/GRX930_manufacturing_plan.md`: SKY130, then TSMC N28, with the RTL frozen | UCIe and CXL need PHYs neither node offers readily | B6, settled |
 | Memory | The motherboard document: HBM | A development board | B2, settled |
 | Addresses in grxcp | [`heterogeneous_devices.md`](heterogeneous_devices.md) §4.1: every device has its own address space, and the spaces overlap | A CXL coherent region is one space | Extended; S2 |
@@ -73,9 +73,9 @@ on them; §6 lists the rest.
 ## 2. Decisions to settle first
 
 Each one blocks the tracks of §3 and needs no measurement to decide. B1 and B3
-come first; the rest follow from them. **B1 and B3 were settled on 2026-09-21,
-and B2 and B6 on 2026-09-22, all as recommended below.** §9 lists the edits
-that followed.
+come first; the rest follow from them. **All seven were settled as recommended
+below: B1 and B3 on 2026-09-21, and B2, B4, B5, B6 and B7 on 2026-09-22.** §9
+lists the edits that followed.
 
 **B1 — Where the packages end.** UCIe only joins dies that share a package, so
 "UCIe for the interconnect" is a statement about packaging. There are three
@@ -156,7 +156,10 @@ The GPU feeds the chiplet from device memory with a copy engine: the DXA's
 job, moved from cluster LMEM to the UCIe port. The link runs a UCIe streaming
 protocol in a FLIT format, keeping the die-to-die adapter's CRC and retry. Raw
 mode drops both, and nothing yet justifies that. X2 sizes the link.
-*Needed by:* L3, X2 and X4.
+*Needed by:* L3, X2 and X4. *Settled on 2026-09-22, as recommended:* the
+interface chip holds the converters, the resident weights, the activation
+buffers, the accumulation and the calibration engine. Whether the activation
+stage joins them is left until X2 has sized the link.
 
 **B5 — The photonic platform, and the laser.** The strategy and motherboard
 documents assume silicon photonics tuned by heaters: ring resonators held on
@@ -175,7 +178,9 @@ The board carries the laser module, its driver and temperature control, fiber
 management and an eye-safety interlock. The package's thermal study (P1)
 models what TFLT is sensitive to — bias drift, whose cost C1 measured, and the
 laser's wavelength — rather than heater locking, and still keeps the PIC out
-of the GPU's hot spots.
+of the GPU's hot spots. *Settled on 2026-09-22, as recommended:* TFLT, with
+TFLN as the fallback, and the laser off the package on polarization-maintaining
+fiber.
 
 *Laser power, for scale.* C1's sweep allows receiver noise of one 8-bit ADC
 LSB, and shot noise down to 3 photons per ADC LSB (§4.3). Take a receiver with
@@ -216,7 +221,8 @@ register write cannot.
 *Recommended:* the PTA's register block (the CPU document, §3.1) as MMIO behind
 the GPU's CXL.io function, so that the GPU's driver owns it. SMBus or I3C
 carries board management only — power, temperature and the laser — and the
-UCIe sideband carries the link's own management. *Needed by:* X4.
+UCIe sideband carries the link's own management. *Needed by:* X4. *Settled on
+2026-09-22, as recommended.*
 
 ---
 
@@ -340,7 +346,7 @@ joint budget is the next step.
 
 ## 5. Order
 
-1. Settle the rest of §2: B4, B5 and B7. B1, B2, B3 and B6 are settled.
+1. ~~Settle §2.~~ **Done:** B1 and B3 on 2026-09-21, the rest on 2026-09-22.
 2. On paper, now: P0, X1's joint budget, X2 and X4.
 3. C3 continues in the PTA program, as X3.
 4. P2, as soon as B6 names the FPGA platform.
@@ -363,13 +369,14 @@ Each lands when its decision settles, in its own document's repository.
   recommendation (B3). *Made; §9.*
 - [`pta_gpu_integration.md`](pta_gpu_integration.md): its scope line; §2's
   cluster-scope placement, superseded by the chiplet (B4); G2, re-scoped.
+  *Made; §9.*
 - [`pta_cpu_integration.md`](pta_cpu_integration.md): its scope line; C4's
-  target; the home of the §3.1 block (X4).
+  target; the home of the §3.1 block (X4). *Made; §9.*
 - [`pta_program_plan.md`](pta_program_plan.md): F3 pointed at X2; C4 and G2
-  re-scoped; a pointer to this plan.
+  re-scoped; a pointer to this plan. *Made; §9.*
 - [`ai_motherboard_design_capabilities.md`](ai_motherboard_design_capabilities.md):
   the thermal section's thermo-optic assumptions replaced with TFLT's, and the
-  laser placed (B5).
+  laser placed (B5). *Made; §9.*
 - [`heterogeneous_devices.md`](heterogeneous_devices.md) §4.1: the coherent
   shared pool (S2).
 - grx930's `c930/doc/GRX930_manufacturing_plan.md`, which that team owns: the
@@ -429,3 +436,18 @@ And on 2026-09-22, when B2 and B6 settled:
   platform hosts rev 0.
 - Nothing else changes yet. The board's node (B6) reaches grx930 as the
   requirement in §4.1, not as an edit to that team's manufacturing plan.
+
+And on 2026-09-22, when B4, B5 and B7 settled, the edits they had been holding:
+
+- [`pta_gpu_integration.md`](pta_gpu_integration.md): a note on its scope, and
+  one at the head of §2 — on the board the engine is a chiplet the whole GPU
+  shares, though that section's reuse and weight-load arguments carry over
+  unchanged. Its §7 staging note points G2 at the chiplet.
+- [`pta_cpu_integration.md`](pta_cpu_integration.md): a note on its scope
+  decision, one under the §3.1 register block on where that block lives on the
+  board, and one on C4.
+- [`pta_program_plan.md`](pta_program_plan.md): its status line points here, and
+  F3, C4 and G2 carry notes.
+- [`ai_motherboard_design_capabilities.md`](ai_motherboard_design_capabilities.md):
+  a note at the head of its thermal section that the platform is Pockels, not
+  thermo-optic, with what that changes and where the laser goes.

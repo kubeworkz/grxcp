@@ -357,6 +357,8 @@ Both of these challenges sit at the core of what makes our photonic accelerator 
 
 ## Thermal Co-Simulation for Photonics
 
+> **Our platform is Pockels, not thermo-optic, 2026-09-22** ([`board_program_plan.md`](board_program_plan.md), B5). The PTA chiplet is thin-film lithium tantalate: each weight is held by a DAC voltage rather than a heater, and there are no ring resonances to lock, so the heater-efficiency collapse below is not our failure mode. What is: bias drift, which on the D3 network costs under half a point in an hour at the fitted rate and is answered by recalibration, and the laser's wavelength stability. The laser — this section's hardest component to place — sits off the package, fed through polarization-maintaining fiber. The rest of this section's method, coupled electro-thermal-optical simulation and thermal-aware placement, still applies; what changes is which sensitivity it models.
+
 The fundamental problem is stark: your CPU and GPU dies are heaters. Your photonic tensor chiplet is a precision instrument that measures its own performance in fractions of a degree.
 
 ### The Heater Efficiency Collapse
