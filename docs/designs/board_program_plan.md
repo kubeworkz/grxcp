@@ -9,7 +9,8 @@
 [GRX_GCPU.md](../GRX_GCPU.md).
 
 **Status: PLAN, drafted 2026-09-21. All seven decisions of §2 are settled, each
-as recommended: B1 and B3 that day, and B2, B4, B5, B6 and B7 on 2026-09-22.**
+as recommended: B1 and B3 that day, and B2, B4, B5, B6 and B7 on 2026-09-22.
+X2 has made its predictions (§3.3).**
 
 The strategy document settles the product: a PCB development board carrying
 the GRX930 SoC (the c930 RV64 cores and their NPU), the GRX-G100 GPU, and a
@@ -159,7 +160,12 @@ mode drops both, and nothing yet justifies that. X2 sizes the link.
 *Needed by:* L3, X2 and X4. *Settled on 2026-09-22, as recommended:* the
 interface chip holds the converters, the resident weights, the activation
 buffers, the accumulation and the calibration engine. Whether the activation
-stage joins them is left until X2 has sized the link.
+stage joins them is left until X2 has sized the link. *Addendum, 2026-09-22,
+once X2 had:* it joins them. X2 puts the saving at 38% of the traffic that is
+not weights on the D3 network and 75% on a four-layer block, and that share
+grows with depth and with weight residency — which is where this design is
+going. The cost is chiplet area and a nonlinearity fixed in silicon, which
+S_ACT has designed once already.
 
 **B5 — The photonic platform, and the laser.** The strategy and motherboard
 documents assume silicon photonics tuned by heaters: ring resonators held on
@@ -272,10 +278,61 @@ tree. So L4 is planned alongside L1, not after it.
 | Step | What | Gate | Needs |
 |---|---|---|---|
 | X1 | EIC requirements. Version 0 is §4.3, from C1; the next is a joint budget, with every impairment on at once | Every number traced to grx930's design note §5 or to a new run | C1, done |
-| X2 | Link sizing: [`pta_feed_model.py`](pta_feed_model.py) with a die-to-die term — bandwidth, latency and the EIC's buffers. The PTA plan's F3 hands its requirements here | Predictions stated before any RTL, and every number traced, as F1's were | B4, F1 |
+| X2 | **Predicted, below.** Link sizing in [`pta_chiplet_link.py`](pta_chiplet_link.py), which adds the die-to-die term to F1's model and carries the PTA plan's F3 handoff | Predictions stated before any RTL, and every number traced, as F1's were | B4, F1 |
 | X3 | The calibration engine on the EIC: the PTA plan's C3, specified for the chiplet | C3's own gate, at TFLT's and TFLN's drift | C3 |
 | X4 | The register map over CXL.io: the CPU document's §3.1 block in the GPU's BAR, with §3.2's completion contract restated for a device behind a link | Review | B4, B7 |
 | X5 | The digital twin: `pta_tile_model.c` behind X4's map, so that drivers and grxcp can bring the PTA up before silicon | grxcp's backend gates pass against it, bitwise against the model | X4 |
+
+**X2, predicted.** [`pta_chiplet_link.py`](pta_chiplet_link.py) prices the
+link the way F1 priced the c930's feed, and carries F3's handoff in its first
+section: at the §6.2 shape the emulated tile moves 0.42 GB/s in and 0.05 GB/s
+out at EO-res, and less at every thermo-optic point, so the c930's tile would
+never trouble a link. The chiplet is a different size of object.
+
+A layer of 4096 by 4096 at batch 64, with B4's split, one UCIe-S module taken
+as 16 lanes at 32 GT/s and 0.9 of that surviving overhead — 57.6 GB/s a
+direction:
+
+| Tile | Shots a layer | At 1 GS/s, in | Out | Modules in |
+|---|---|---|---|---|
+| 64 × 8 | 2,097,152 | 8.1 GB/s | 0.50 GB/s | 1 |
+| 128 × 64 | 131,072 | 130 GB/s | 8.0 GB/s | 3 |
+| 256 × 64 | 65,536 | 260 GB/s | 16 GB/s | 5 |
+| 256 × 128 | 32,768 | 520 GB/s | 32 GB/s | 10 |
+
+Four things follow, and each is a number this plan can be held to.
+
+- **The link caps the tile, as B4 expected.** One module holds a 256 × 64 tile
+  to 0.22 G shots a second at batch 64, and a 64 × 8 tile to 7.1 G. Whatever
+  the optics can do, that is the rate.
+- **The batch is the lever on weights.** Inbound is `k·n/mb` bytes of weight a
+  shot beside the activations, so the same 256 × 64 tile needs 1,028 GB/s at
+  batch 16, 260 at 64 and 68 at 256. Weight residency across batches is the
+  other lever, and the one MB already studies on the c930.
+- **B4's split earns its area.** A thin interface chip, with neither activation
+  buffers nor accumulation, needs two to nine times the inbound and four to
+  eight times the outbound of the same geometries.
+- **What the chiplet must hold**, at 256 × 64: 16,384 DAC-held weights, 16.4 kB
+  of activation buffer for a K tile of a batch, and 16.4 kB of accumulators. A
+  module keeps 5.76 kB in flight across an assumed 100 ns round trip, and the
+  chiplet needs at least that again before the tile waits.
+
+**The activation stage, which B4 left open.** With the stage on the chiplet, an
+intermediate never crosses the link: the layer's outputs are already where the
+next layer's inputs are needed. Per inference of a batch of 64, on a 256 × 64
+tile:
+
+| Network | Stage on the GPU | Stage on the chiplet | Traffic that is not weights |
+|---|---|---|---|
+| D3, 784-100-10 | 232 kB | 200 kB | 84.7 kB → 52.7 kB, down 38% |
+| Four 4096-square layers | 72.4 MB | 68.4 MB | 5.24 MB → 1.31 MB, down 75% |
+
+At batch 64 the weights are most of the traffic either way, so the stage pays
+most when weights stay resident across batches and when the network is deep.
+The assumptions — one byte an operand or ADC code, four for an accumulated
+output, 0.9 link efficiency, a 100 ns round trip, and candidate geometries
+rather than a settled one (§8) — are listed in the script and marked where they
+are used.
 
 ### 3.4 Track S — grxcp
 
@@ -347,7 +404,7 @@ joint budget is the next step.
 ## 5. Order
 
 1. ~~Settle §2.~~ **Done:** B1 and B3 on 2026-09-21, the rest on 2026-09-22.
-2. On paper, now: P0, X1's joint budget, X2 and X4.
+2. On paper, now: P0, X1's joint budget, ~~X2~~ (**done**, §3.3) and X4.
 3. C3 continues in the PTA program, as X3.
 4. P2, as soon as B6 names the FPGA platform.
 5. L1–L4, in grx930's and grxgpu's silicon plans.
@@ -451,3 +508,10 @@ And on 2026-09-22, when B4, B5 and B7 settled, the edits they had been holding:
 - [`ai_motherboard_design_capabilities.md`](ai_motherboard_design_capabilities.md):
   a note at the head of its thermal section that the platform is Pockels, not
   thermo-optic, with what that changes and where the laser goes.
+
+And later that day, when X2 had run:
+
+- This document: X2's predictions in §3.3, and B4's addendum — the activation
+  stage goes on the chiplet, on the traffic X2 measured.
+- [`pta_chiplet_link.py`](pta_chiplet_link.py) is new: the die-to-die term, and
+  F3's handoff from [`pta_program_plan.md`](pta_program_plan.md) §3.3.
