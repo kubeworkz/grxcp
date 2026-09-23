@@ -282,7 +282,7 @@ tree. So L4 is planned alongside L1, not after it.
 |---|---|---|---|
 | X1 | **Budgeted, §4.3.** Version 0 came from C1, one impairment at a time; version 1 from `sim/pta_mnist.sh joint` in grx930, with every impairment on at once | Every number traced to grx930's design note §5 or to a new run | C1, done |
 | X2 | **Predicted, below.** Link sizing in [`pta_chiplet_link.py`](pta_chiplet_link.py), which adds the die-to-die term to F1's model and carries the PTA plan's F3 handoff | Predictions stated before any RTL, and every number traced, as F1's were | B4, F1 |
-| X3 | **Specified:** [`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) — two correction loops, the four schedulers with the chiplet's own shadow, and the margin its gate is held to. The engine itself is C3's, in grx930 | C3's own gate, at TFLT's and TFLN's drift | C3 |
+| X3 | **Specified and measured:** [`pta_chiplet_calibration.md`](pta_chiplet_calibration.md), with C3(a)'s recovery in its §8 — the trim returns a tile at chance to within 0.01 points of the no-drift case. The FSM and the schedulers are C3(b)'s, in grx930 | C3's own gate, at TFLT's and TFLN's drift | C3 |
 | X4 | **Drafted:** [`pta_chiplet_regmap.md`](pta_chiplet_regmap.md) — the §3.1 block at its own offsets in the GPU's BAR, with identity, interrupts and 64-bit counters added, and §3.2's contract restated for a device behind a link | Review | B4, B7 |
 | X5 | The digital twin: `pta_tile_model.c` behind X4's map, so that drivers and grxcp can bring the PTA up before silicon | grxcp's backend gates pass against it, bitwise against the model | X4 |
 
@@ -414,7 +414,7 @@ to this instead:
 |---|---|---|
 | Activation DAC | 5 bits | 6 bits |
 | ADC | 6 bits | 7 bits |
-| Weight resolution | 6 bits | 6 bits, where the networks are trained, on a DAC with enough bits below that LSB to trim a cell — 8 bits is the starting figure ([`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) §4) |
+| Weight resolution | 6 bits | 6 bits, where the networks are trained. The DAC wants two bits below the code for trimming — measured worth 0.16 points, not the precondition X3 first called it ([`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) §8) |
 | Receiver noise | 1 LSB of an 8-bit ADC, rms | 0.25 LSB |
 | Light at each detector | 3 photons per ADC LSB | 30 |
 | Weight programming error | 4 LSB of an 8-bit weight, rms | 1 LSB |
@@ -488,6 +488,7 @@ Each lands when its decision settles, in its own document's repository.
 | UCIe and PCIe 5.0-class PHY IP: which nodes, availability, license cost | B6, L1–L3 | Source it early, and prototype on FPGA hard IP first |
 | Advanced-packaging capacity and cost | B2, P3 | Settled for rev A by B2: organic substrates, GDDR6 and DDR5, with HBM left to the Phase 2 module |
 | Analog error compounds: v0's per-item allowances cost 12.8 points together, not the two they sum to | X1, the chiplet | v1's budget (§4.3), and every later specification stated jointly, never item by item |
+| Drift needs calibrating about every quarter hour at TFLT's fit to hold the gate's margin, not hourly as C1's sweep suggested | C3, the schedulers | C3(a) measured the hold curve ([`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) §8); the shadow scheduler has more idle windows to hide in than the c930 did (X2) |
 | TFLT dies not available in the volume or quality needed | B5, Track X | TFLN as the fallback, with calibration sized to its drift |
 | RISC-V support in Linux's CXL subsystem | L4, S1 | Firmware planned alongside L1, not after it |
 | Coherence verified across a chip boundary, in the c930's L2 and the G100's | L1, L2 | Begin with GRX_GCPU.md's small, configurable coherent region, and grow it |

@@ -129,7 +129,7 @@ it is marked *new*.
 | C1 | **Closed, below.** Error model, one impairment at a time; `PTA_DRIFT` defaults fitted to TFLT, with a TFLN setting as the stress case | CPU document §6, unchanged | C0, D1–D3 |
 | C2 tile | PTM-B in the interchanged core | Total cycles match §2.1 at every §6.2 point, affine in `PTA_TW` | C1 |
 | MB | Multi-bank tile with `Nt·Kt` resident banks, and a selectable loop order that restores `m`-outer | *New:* EO-res totals match §2.1 in both orders, with `Tw` set to the RTL's bank-select cycles, and C bit-identical between orders | C2 tile |
-| C3 | Calibration FSM and the three schedulers | CPU document §6, run with drift at TFLT's fitted rate and again at TFLN's | C1, D3 |
+| C3 | Calibration FSM and the three schedulers. C3(a), the correction in the C reference, is measured — the board plan's X3 — and C3(b) is the RTL | CPU document §6, run with drift at TFLT's fitted rate and again at TFLN's | C1, D3 |
 | C4 | CSR decode, firmware, full SoC, Vivado on the Arty A7-200T. On the board the same block is MMIO behind the GPU's CXL.io (board plan, B7) | CPU document §6, with EO-res measured rather than modelled | C2 tile, MB, C3, A-synth |
 
 **Step MB, in more detail.** At `Tw = 0` the §2.1 model gives EO-res 2,560
