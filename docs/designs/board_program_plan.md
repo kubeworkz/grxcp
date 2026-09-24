@@ -440,12 +440,13 @@ rather than a tax.
 
 - ~~C3, the calibration engine, continues, and becomes X3.~~ **Done**, both
   halves: C3(a) measured, C3(b) built (X3's §8).
-- C4 splits. **C4(a)'s register block is built**: the map X4 shares with the
-  chiplet is implemented on the c930 and checked over its bus, which makes X4 an
-  implemented map rather than a proposed one. Its firmware half is not: a RISC-V
-  program stalls before its first GEMM, and that is recorded in grx930 rather
-  than worked around. C4(b), the FPGA numbers, and C4(c), the §6.2 sweep, are
-  still ahead, and C4(c) waits on MB.
+- C4 splits. **C4(a) is done, both halves, 2026-09-24**: the map X4 shares with
+  the chiplet is an implemented one now, checked over AXI-Lite and by a RISC-V
+  program driving it through a crossbar, a D-cache and a DMA. Two of its findings
+  outlive it and belong to any board driver — a buffer the accelerator writes must
+  not be written by the CPU first, and the calibration's probe amplitude is a bit
+  position whose bounds no register reports (CPU document §3.3). C4(b), the FPGA
+  numbers, and C4(c), the §6.2 sweep, are still ahead, and C4(c) waits on MB.
 - C4's target moves: the CSR map goes to CXL.io behind the GPU (X4), not to the
   Arty A7 SoC's bus.
 - Step F3's requirements for the fabric go to X2.

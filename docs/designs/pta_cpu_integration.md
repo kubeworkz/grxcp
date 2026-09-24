@@ -441,6 +441,44 @@ calibration between GEMMs must not report BUSY, or the guard is never exercised,
 so the core's `o_busy` excludes it and only one that interrupted a GEMM keeps
 BUSY set.
 
+*Driven from firmware in C4(a), 2026-09-24.* `grx930/c930/sw/pta_test.c` reads
+`CAL_BUSY` set, `BUSY` clear and occupancy 1 after submitting a GEMM through the
+driver mid-calibration — the same three facts the bench checks, over MMIO, from a
+RISC-V program. One thing firmware cannot do the way a bus master can: write
+`CAL_NOW` and a START a few cycles apart. It takes a descriptor's worth of MMIO
+writes to reach the START, by which time an uninterrupted calibration may have
+finished, and the guard is then not what is being tested. So firmware waits for
+`CAL_BUSY` before submitting. A bench that races them is testing a narrower
+thing than it looks.
+
+### 3.3 What firmware driving this block has to know
+
+Two things cost C4(a) its firmware half, and neither is in the register table.
+
+**A line the CPU has written is outside the L2's directory.** `c930_l2.sv`
+records a sharer on a read fill, and a write is write-through with no allocate:
+the L2 invalidates the sharers it knows of and drops its own copy. The L1 keeps
+the written data. So after the CPU writes a line, the L2 no longer tracks it —
+and the NPU DMA's later write to that line invalidates nobody. The CPU reads its
+own stale value for as long as the line survives. A driver that clears C before
+a GEMM and reads C after it therefore reads its own zeros: an impaired GEMM
+looks right (C all zero) and an exact one looks wrong (C zero, not K), which is
+the worse way round. Firmware must not write a buffer the accelerator writes.
+The general fix is one of three — keep the writer as a sharer, invalidate the
+writer's own line, or make the L1 write no-allocate — and it belongs to the SoC,
+not to this block.
+
+**The probe amplitude is a bit position with no way to learn its bounds.**
+`PTA_CAL_CFG`'s amplitude is a shift, valid only in `[DIN_W - B_a, DIN_W - 2]`,
+and nothing in the map reports `DIN_W`. The same value is therefore right on one
+build and refused on another: 6 is right for the eight-bit bench tile and refused
+by the c930 SoC's sixteen-bit one, which ends the calibration in two cycles with
+`CAL_ERR` set and `CAL_CT` unmoved — a silent-looking failure that is in fact
+reported, if you read the right bit. Firmware can search for a value the tile
+accepts, and `pta_test.c` does, because the refusal is observable and `MODEL_RST`
+clears it. It should not have to.
+[`pta_chiplet_regmap.md`](pta_chiplet_regmap.md) §4 records it against the map.
+
 ---
 
 ## 4. The tile: two variants, and why both exist
@@ -874,20 +912,26 @@ engine's one loop is the cell trim.
 
 **C4 — SoC, firmware, numbers.** CSR decode widening, firmware, the full-SoC
 test suite, and a Vivado run on the Arty A7-200T.
-*C4(a), 2026-09-24: the decode and the register block are done; the firmware is
-not.* The
-block is at `0x100` for the reason §3 now gives, the two counters it reads had to
-be built, and `make pta_test PTM_C=1` is firmware driving the tile through MMIO —
-the decode, the counters against a GEMM's shape, the tile answering an
+*C4(a) done, 2026-09-24, both halves.* The block is at `0x100` for the reason §3
+now gives, the two counters it reads had to be built, and the same seven
+checks — the decode, the counters against a GEMM's shape, the tile answering an
 impairment, a calibration, a START during one, `MODEL_RST`, and the `MZM_NL`
-refusal — all of it over AXI-Lite in `tb_c930_npu.sv`, which `make npu` runs in
-both builds. What is *not* done is the same seven checks driven by a RISC-V
-program: `sw/pta_test.c` boots on the Verilator four-core SoC, writes and reads
-the block, and then stalls on a stack store in its own prologue with the NPU
-never started, where the existing `driver_prog.hex` runs to completion on that
-same harness. The symptom is recorded in grx930's Makefile and design note
-rather than worked around. The Vivado numbers are C4(b) and the §6.2 sweep is
-C4(c), which waits on MB as the gate below says. *Board note, 2026-09-22:* on
+refusal — are made twice: over AXI-Lite in `tb_c930_npu.sv` (`make npu`, both
+builds) and by a RISC-V program through the crossbar, the D-cache and the DMA on
+the Verilator four-core SoC (`make pta_fw PTM_C=1`, seven of seven in 39,591
+cycles).
+
+Getting the second one to run cost three fixes, and none of them was the
+register block. The CPU deadlocked: a multiply that finishes into a stalled
+pipeline loses its result and restarts, and a store in MEM stalls it for ever, so
+a `mulw` two instructions ahead of a `sw` hung the machine at a constant PC —
+`grx930/c930/doc/m_extension_result_hold.md`, with a nine-instruction reproducer.
+The test cleared C from the CPU and then read back its own zeros (§3.3). And the
+probe amplitude it copied from the bench was refused by this tile (§3.3 again).
+The first of those is a CPU fix that everything on this SoC needed; the other two
+are things a driver author has to know, which is why §3.3 exists. The Vivado
+numbers are C4(b) and the §6.2 sweep is C4(c), which waits on MB as the gate
+below says. *Board note, 2026-09-22:* on
 the development board the same register block is reached as MMIO behind the
 GPU's CXL.io ([`board_program_plan.md`](board_program_plan.md), B7 and X4).
 Whether the c930 keeps a tile of its own is that plan's §8, question 3.
