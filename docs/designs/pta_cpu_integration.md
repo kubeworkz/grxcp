@@ -311,6 +311,20 @@ So widening the CSR's internal decode from `[5:2]` to `[7:2]` — 64 words,
 `0x00`–`0xFC` — leaves `0x00`–`0x3C` bit-identical, puts PTA state at
 `0x40`–`0xCC`, and **requires no crossbar change at all**.
 
+*Corrected in C4(a), 2026-09-23: not at `0x40`.* The claim about the crossbar
+holds. The offset does not: `0x4000_0040`–`0x4000_007F` is **NPU1's CSR window**
+on this SoC, decoded in `c930_soc_top.sv` as `w_to_npu1` / `r_to_npu1`. A block
+at `0x40` would have been shadowed by the second NPU whenever `ENABLE_NPU1` was
+set, and by nothing at all when it was clear — which is the worse half, because
+it would have passed every test that had NPU1 off. The block is therefore at
+`0x100`, the decode widens to `[9:2]` (256 words, a kilobyte), and inside the
+block the layout is
+[`pta_chiplet_regmap.md`](pta_chiplet_regmap.md) §4's own, offset by `0x100`: one
+driver, the same offsets within the block, a different base per target. Moving
+NPU1 instead would have been the tidier map and the more expensive change — its
+base is in the driver header, three firmware generators and the dual-NPU tests'
+hand-encoded instruction words.
+
 One thing to fix while there. The c930 architecture document's memory map
 declares the NPU MMIO region as `0x4000_0000`–`0x4000_001F`, 32 bytes, with
 everything above reserved. That is already wrong in two directions: the
@@ -318,6 +332,10 @@ crossbar decodes 64 KB, and the same document's own performance-counter table
 lists offsets at `0x2C`, `0x30` and `0x34`. The map should be corrected to the
 implemented 64 bytes before it is extended to 256, or the extension inherits a
 document nobody trusts.
+
+*C4(a):* that document reads 64 bytes today, so the correction happened
+somewhere along the way; C4(a) extended it to the kilobyte the decode covers,
+added the PTA block's row, and said what the fall-through now aliases.
 
 ### 3.1 Proposed PTA register block
 
@@ -346,6 +364,26 @@ document nobody trusts.
 | 0x90–0xAC | `PTA_GAIN[j]` | RW | per-column gain, Q8.8 |
 | 0xB0–0xCC | `PTA_OFFS[j]` | RW | per-column offset, signed |
 | 0xD0 | `PTA_DRIFT_MAX` | RW | drift clamp, Q8.8 in weight LSB, defaulting to TFLT's 8,643 (§4.4); the first word past the block, shared with S_ACT's scalars at C4 |
+
+*Built in C4(a), 2026-09-23, with four differences the table did not have.*
+**Two counters did not exist.** `PTA_SHOT_CT` and `PTA_WLOAD_CT` are read from
+somewhere, and nothing in the core produced them, so C4(a) added both — shots
+counted from the strobe the tile sees, which puts a calibration's probe shots in
+the total, and programmings counted one per pass through `S_WLOAD`, which is the
+quantity `PTA_TW`'s slope multiplies. **`PTA_CTRL` bit 2, CAL_AUTO, reads zero
+and does nothing:** `CAL_SCHED` already says whether calibration is automatic,
+and two controls for one question is a way to make firmware wrong.
+**`PTA_STATUS` gains bit4 BUSY**, as the chiplet's map has it, so one read is a
+consistent snapshot, **and bit5 CAL_ERR**, because the c930 has no interrupt
+block for `PTA_IRQ_STATUS.ERR` to live in. And **`MODEL_RST` clears the
+correction stores with the model**, which is what the calibration document says
+it does, so the register file clears its own copies of `PTA_GAIN` and `PTA_OFFS`
+with them.
+
+One register has no home: the host trim write port C3(b) added for its parity
+gate. A (bank, row, column, value) write needs a pair of registers that no map
+has, and C4(a) did not invent them — the port is tied off at the top, and a
+driver that wants to restore a saved calibration is what would settle the shape.
 
 On the development board this block is not a c930 CSR at all: it is MMIO in the
 GPU's BAR, reached over CXL.io
@@ -402,6 +440,44 @@ tile and the queue strands. One thing the CPU document did not say: a
 calibration between GEMMs must not report BUSY, or the guard is never exercised,
 so the core's `o_busy` excludes it and only one that interrupted a GEMM keeps
 BUSY set.
+
+*Driven from firmware in C4(a), 2026-09-24.* `grx930/c930/sw/pta_test.c` reads
+`CAL_BUSY` set, `BUSY` clear and occupancy 1 after submitting a GEMM through the
+driver mid-calibration — the same three facts the bench checks, over MMIO, from a
+RISC-V program. One thing firmware cannot do the way a bus master can: write
+`CAL_NOW` and a START a few cycles apart. It takes a descriptor's worth of MMIO
+writes to reach the START, by which time an uninterrupted calibration may have
+finished, and the guard is then not what is being tested. So firmware waits for
+`CAL_BUSY` before submitting. A bench that races them is testing a narrower
+thing than it looks.
+
+### 3.3 What firmware driving this block has to know
+
+Two things cost C4(a) its firmware half, and neither is in the register table.
+
+**A line the CPU has written is outside the L2's directory.** `c930_l2.sv`
+records a sharer on a read fill, and a write is write-through with no allocate:
+the L2 invalidates the sharers it knows of and drops its own copy. The L1 keeps
+the written data. So after the CPU writes a line, the L2 no longer tracks it —
+and the NPU DMA's later write to that line invalidates nobody. The CPU reads its
+own stale value for as long as the line survives. A driver that clears C before
+a GEMM and reads C after it therefore reads its own zeros: an impaired GEMM
+looks right (C all zero) and an exact one looks wrong (C zero, not K), which is
+the worse way round. Firmware must not write a buffer the accelerator writes.
+The general fix is one of three — keep the writer as a sharer, invalidate the
+writer's own line, or make the L1 write no-allocate — and it belongs to the SoC,
+not to this block.
+
+**The probe amplitude is a bit position with no way to learn its bounds.**
+`PTA_CAL_CFG`'s amplitude is a shift, valid only in `[DIN_W - B_a, DIN_W - 2]`,
+and nothing in the map reports `DIN_W`. The same value is therefore right on one
+build and refused on another: 6 is right for the eight-bit bench tile and refused
+by the c930 SoC's sixteen-bit one, which ends the calibration in two cycles with
+`CAL_ERR` set and `CAL_CT` unmoved — a silent-looking failure that is in fact
+reported, if you read the right bit. Firmware can search for a value the tile
+accepts, and `pta_test.c` does, because the refusal is observable and `MODEL_RST`
+clears it. It should not have to.
+[`pta_chiplet_regmap.md`](pta_chiplet_regmap.md) §4 records it against the map.
 
 ---
 
@@ -835,7 +911,27 @@ gain or offset error for one to find, so the store is host-written and the
 engine's one loop is the cell trim.
 
 **C4 — SoC, firmware, numbers.** CSR decode widening, firmware, the full-SoC
-test suite, and a Vivado run on the Arty A7-200T. *Board note, 2026-09-22:* on
+test suite, and a Vivado run on the Arty A7-200T.
+*C4(a) done, 2026-09-24, both halves.* The block is at `0x100` for the reason §3
+now gives, the two counters it reads had to be built, and the same seven
+checks — the decode, the counters against a GEMM's shape, the tile answering an
+impairment, a calibration, a START during one, `MODEL_RST`, and the `MZM_NL`
+refusal — are made twice: over AXI-Lite in `tb_c930_npu.sv` (`make npu`, both
+builds) and by a RISC-V program through the crossbar, the D-cache and the DMA on
+the Verilator four-core SoC (`make pta_fw PTM_C=1`, seven of seven in 39,591
+cycles).
+
+Getting the second one to run cost three fixes, and none of them was the
+register block. The CPU deadlocked: a multiply that finishes into a stalled
+pipeline loses its result and restarts, and a store in MEM stalls it for ever, so
+a `mulw` two instructions ahead of a `sw` hung the machine at a constant PC —
+`grx930/c930/doc/m_extension_result_hold.md`, with a nine-instruction reproducer.
+The test cleared C from the CPU and then read back its own zeros (§3.3). And the
+probe amplitude it copied from the bench was refused by this tile (§3.3 again).
+The first of those is a CPU fix that everything on this SoC needed; the other two
+are things a driver author has to know, which is why §3.3 exists. The Vivado
+numbers are C4(b) and the §6.2 sweep is C4(c), which waits on MB as the gate
+below says. *Board note, 2026-09-22:* on
 the development board the same register block is reached as MMIO behind the
 GPU's CXL.io ([`board_program_plan.md`](board_program_plan.md), B7 and X4).
 Whether the c930 keeps a tile of its own is that plan's §8, question 3.
@@ -864,6 +960,59 @@ room to spare, on hardware already on the desk. Timing is the risk, not area —
 the shot path adds a multiply, a square-root approximation and two adds where
 the systolic PE had one registered product, and the array feed logic already
 carries comments about paths that had to be broken by registration.
+
+**Measured, C4(b), 2026-09-24.** Vivado 2026.1, `xc7a200tfbg484-1`, each module
+synthesized, placed and routed out of context against a 10 ns clock, the NPU at
+the shape `c930_soc_top` instantiates. grx930's `synth_xilinx/README.md` has the
+full table and how to reproduce it.
+
+*The baseline above is not this design.* One NPU alone routes to 56,600 LUTs,
+35,066 FFs, 226 DSPs and 3 BRAMs — more FFs and more DSPs than the whole SoC is
+credited with (27,097 and 148). Whatever those numbers came from, the headroom
+arithmetic built on them does not stand, and the device is 133,800 LUTs by
+Vivado's count, not 134,600.
+
+*Three rows of the table, measured:*
+
+| Row | estimated | measured |
+|---|---|---|
+| Calibration FSM + pattern ROM + LMS update | ~2,000 LUT, 2 DSP, 1 BRAM | **3,785 LUT, 15 DSP, 0 BRAM** |
+| Widened CSR decode + PTA registers | ~800 LUT | **1,111 LUT** for the *whole* CSR, PTA part included |
+| (S_ACT, priced in grx930's act note) | ~2,000 LUT, 5 DSP, 1 BRAM | **1,701 LUT, 13 DSP, 4 BRAM** |
+
+The engine is 1.9× its LUT estimate and 7.5× its DSP estimate, and its pattern
+ROM became logic rather than the BRAM the row expected. The CSR is the one block
+inside its estimate *and* inside 100 MHz. The DSP estimates are the consistent
+miss: counting multiplies in the arithmetic is not counting DSP48E1s, because a
+wide product or a wide variable shift takes more than one.
+
+*The tile's own row is still owed.* `c930_ptm_c` reached Technology Mapping and
+was still there an hour later with four Vivado helper processes of a gigabyte
+each, and the whole NPU with PTM-C peaked at 6.5 GB against a 5.9 GB VM without
+finishing synthesis. Neither is a statement about the design — they want a
+bigger machine or `-jobs 1` — but until one of them runs, the largest rows of
+this table (quantizers, noise, drift, broadside MVM) are unmeasured.
+
+*Timing is the risk, and this named the wrong one.* The shot path is not what
+limits anything measured so far:
+
+| | Fmax at a 10 ns target |
+|---|---|
+| `c930_npu_top`, systolic array — the **digital baseline** | 58.0 MHz |
+| `c930_npu_act` as written | 41.2 MHz |
+| `c930_npu_act`, stage 6 shortened | 51.2 MHz |
+| `c930_pta_cal` | 76.2 MHz |
+| `c930_npu_csr` | meets 100 MHz |
+
+The array build's limit is the FP16 accumulator chain *between* PEs — logic that
+predates the PTA and that the -100T run found at the same place. So 100 MHz was
+out of reach before any photonic logic existed, and the honest form of C4(b)'s
+gate is a named cut, which grx930's act note now carries: stage 6 did three
+variable shifts and a clamp against bounds it recomputed every cycle, all in one
+cycle, and the counter's accumulate hung off the end of it. Lifting what the
+configuration fixes out of that cone cost no latency and no accuracy and bought
+41.2 → 51.2 MHz with 12% fewer LUTs; the rest needs `ACT_P` to grow, and the
+split is named against the measured path.
 
 One cost the table leaves out: the baseline is the SoC as synthesized, with
 `MAX_M` 8 and `MAX_K` 16, and the §6.2 shape needs `MAX_M` 64 and `MAX_K` 256.

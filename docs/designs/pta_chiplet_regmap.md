@@ -24,7 +24,11 @@ the device cannot honour.
 - Registers are 32 bits, naturally aligned, little-endian. Reserved bits read
   zero and are written zero.
 - **Offsets 0x040–0x0D0 are the CPU document's block, unchanged**, so one driver
-  can address a c930 tile and a chiplet with the same offsets. What the c930
+  can address a c930 tile and a chiplet with the same offsets. *C4(a) built the
+  c930's half of that:* its window is `0x4000_0100`, and the block inside it is
+  laid out exactly as this one, so the offsets below are the same on both and only
+  the base differs. Not `0x4000_0040`, which is the second NPU's — see that
+  document's §3. What the c930
   uses 0x000–0x03C for, the chiplet uses for identity and interrupts; 0x0D4–0x0DC
   are the calibration engine's own configuration, which C3(b) found neither map
   had (§4); 0x0E0 up carries the upper halves of the counters and, at 0x0F0, the
@@ -120,7 +124,7 @@ hold — and the engine cannot be written without all three. The CPU document's
 
 | Offset | Name | Access | Description |
 |---|---|---|---|
-| 0x0D4 | `PTA_CAL_CFG` | RW | [3:0] probe amplitude, `1 <<` this, bounded by `DIN_W - B_a` and `DIN_W - 2`; [7:4] repeats a pass, `1 <<` this; [9:8] auto-ranging passes; [10] the bank to calibrate |
+| 0x0D4 | `PTA_CAL_CFG` | RW | [3:0] probe amplitude, `1 <<` this, bounded by `DIN_W - B_a` and `DIN_W - 2` (see the note below: nothing here reports `DIN_W`); [7:4] repeats a pass, `1 <<` this; [9:8] auto-ranging passes; [10] the bank to calibrate |
 | 0x0D8 | `PTA_TRIM` | RW | [3:0] the weight DAC's step below the weight code, `1 <<` this in Q.8 weight LSB; [31:16] its clamp, Q.8 weight LSB |
 | 0x0DC | `PTA_CAL_SEED` | RW | the calibration's noise seed. Calibration *j* draws from `PTA_CAL_SEED ^ (j · 0x9E3779B1)`, `j` being `PTA_CAL_CT` before it runs, so no two draw the same noise and any of them can be reproduced from one word |
 | 0x0F0 | `PTA_ERR_FOUND` | R | the error the last calibration **found**, Q.8 weight LSB: the widest correction its first pass had to make, before any of it was applied. This, not `PTA_ERR_MAX`, is what the drift-predictive scheduler extrapolates — see [`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) §5 |
@@ -128,6 +132,22 @@ hold — and the engine cannot be written without all three. The CPU document's
 Every field is a power of two or a log2 of one, which is not tidiness: it is what
 lets the estimator divide with a shift and the DAC round with a mask, so the tile
 carries no divider (grx930's design note §4).
+
+**`PTA_CAL_CFG`'s amplitude is bounded by something this map does not report.**
+*C4(a), 2026-09-24.* The bound `[DIN_W - B_a, DIN_W - 2]` is on the datapath's
+operand width, and no register here carries it — `PTA_BITS` gives the quantiser's
+bit counts, not the width they quantise into. So the same value is right on one
+build and refused on another: 6 is right for grx930's eight-bit bench tile and
+refused by its sixteen-bit SoC tile, which ends the calibration in two cycles
+with `CAL_ERR` set and `CAL_CT` unmoved. Firmware can find a value the tile
+accepts — the refusal is observable and `MODEL_RST` clears it, and grx930's
+`sw/pta_test.c` does exactly that — but a driver searching for a number the
+hardware already knows is a gap in this table, not a technique. Two ways to
+close it: a read-only field for the datapath width, next to whatever else a
+capability word should carry, or specify the amplitude *relative* to the width
+(`DIN_W - 2 - n`) and let the tile do the arithmetic. The second costs no
+register and cannot be read wrong; the first is more use to a driver that wants
+to size anything else. Either is better than the search.
 
 ---
 
