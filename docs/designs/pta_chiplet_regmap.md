@@ -25,8 +25,10 @@ the device cannot honour.
   zero and are written zero.
 - **Offsets 0x040–0x0D0 are the CPU document's block, unchanged**, so one driver
   can address a c930 tile and a chiplet with the same offsets. What the c930
-  uses 0x000–0x03C for, the chiplet uses for identity and interrupts, and
-  0x0E0 up for the upper halves of its counters.
+  uses 0x000–0x03C for, the chiplet uses for identity and interrupts; 0x0D4–0x0DC
+  are the calibration engine's own configuration, which C3(b) found neither map
+  had (§4); 0x0E0 up carries the upper halves of the counters and, at 0x0F0, the
+  error a calibration found.
 
 ---
 
@@ -63,7 +65,7 @@ long enough that polling it across a link wastes the link.
 
 ---
 
-## 4. The block itself, 0x040–0x0D0
+## 4. The block itself, 0x040–0x0F0
 
 Unchanged from the CPU document's §3.1, and restated here only so that this
 document is a map rather than a diff: `PTA_CTRL`, `PTA_STATUS`, `PTA_IMPAIR`,
@@ -106,6 +108,26 @@ shot a nanosecond, which is inside X2's candidate range. The low half keeps its
 **`PTA_TW` and `PTA_TS` are the emulation's.** They set the modelled settle and
 shot latency on the twin. What they mean on silicon — a read-back of what the
 hardware does, or nothing at all — is open (§7).
+
+**Three words the engine needs, which C3(b) found missing.** Building the
+calibration engine in grx930 (`c930/rtl/pta/c930_pta_cal.sv`) turned up
+configuration this map had nowhere to put: the probe's own parameters. `PTA_CTRL`
+selects a scheduler and `PTA_CAL_PER`/`PTA_CAL_THR` tune two of them, but nothing
+said how hard to drive the probe, how many times, or what the weight DAC can
+hold — and the engine cannot be written without all three. The CPU document's
+§3.1 needs the same words; where they land in its decode is C4's question, since
+`0x0D4` upward is spoken for there by S_ACT's scalars.
+
+| Offset | Name | Access | Description |
+|---|---|---|---|
+| 0x0D4 | `PTA_CAL_CFG` | RW | [3:0] probe amplitude, `1 <<` this, bounded by `DIN_W - B_a` and `DIN_W - 2`; [7:4] repeats a pass, `1 <<` this; [9:8] auto-ranging passes; [10] the bank to calibrate |
+| 0x0D8 | `PTA_TRIM` | RW | [3:0] the weight DAC's step below the weight code, `1 <<` this in Q.8 weight LSB; [31:16] its clamp, Q.8 weight LSB |
+| 0x0DC | `PTA_CAL_SEED` | RW | the calibration's noise seed. Calibration *j* draws from `PTA_CAL_SEED ^ (j · 0x9E3779B1)`, `j` being `PTA_CAL_CT` before it runs, so no two draw the same noise and any of them can be reproduced from one word |
+| 0x0F0 | `PTA_ERR_FOUND` | R | the error the last calibration **found**, Q.8 weight LSB: the widest correction its first pass had to make, before any of it was applied. This, not `PTA_ERR_MAX`, is what the drift-predictive scheduler extrapolates — see [`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) §5 |
+
+Every field is a power of two or a log2 of one, which is not tidiness: it is what
+lets the estimator divide with a shift and the DAC round with a mask, so the tile
+carries no divider (grx930's design note §4).
 
 ---
 

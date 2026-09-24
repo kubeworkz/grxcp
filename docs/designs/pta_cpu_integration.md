@@ -392,6 +392,17 @@ Getting this wrong reintroduces exactly the queue-drain class of bug the CSR
 header documents, so it wants its own regression: START during an in-progress
 calibration, three times back to back, occupancy checked at each step.
 
+*Built in C3(b), 2026-09-23*, as written above and with that regression:
+`grx930/c930/tb/tb_npu_cal_queue.sv`, `make cal_queue`. Three STARTs during a
+calibration queue at occupancy 1, 2 and 3, nothing dispatches into the tile, and
+`occupancy == 0 && busy == 0` never reads "finished" with work outstanding.
+`CAL_GUARD_ABLATE` drops calibration from the dispatch condition and the bench
+fails exactly as described — the first START dispatches into the calibrating
+tile and the queue strands. One thing the CPU document did not say: a
+calibration between GEMMs must not report BUSY, or the guard is never exercised,
+so the core's `o_busy` excludes it and only one that interrupted a GEMM keeps
+BUSY set.
+
 ---
 
 ## 4. The tile: two variants, and why both exist
@@ -614,11 +625,27 @@ the §2 interchange those stalls get *longer* per weight tile, because a tile no
 feeds `M` rows. A calibration that fits inside the PF2 prefetch window is free
 in wall-clock terms.
 
-Three schedulers, selected by `PTA_CTRL[6:4]`, so they can be compared rather
+Four schedulers, selected by `PTA_CTRL[6:4]`, so they can be compared rather
 than argued about: off, periodic, drift-predictive (extrapolate from the last
 two calibration residuals and fire when predicted error crosses
 `PTA_CAL_THR`), and shadow (fire only inside a DMA stall, with the predictive
 threshold as a backstop). `PTA_CAL_CYC` measures what each actually costs.
+
+*Built in C3(b), 2026-09-23.* `grx930/c930/rtl/pta/c930_pta_cal.sv`, with the
+stall the core can see for itself: a row the DMA has not landed yet, which is
+`S_AROW`. **One sentence above is wrong and building it is what showed that.**
+"Extrapolate from the last two calibration residuals" cannot work: a residual is
+what a calibration *leaves*, and one that worked leaves almost nothing, so the
+rate it implies is almost zero and the scheduler stops scheduling. The engine
+extrapolates what a calibration *found* instead — the widest correction its first
+pass had to make, before any of it was applied, published as `PTA_ERR_FOUND` —
+and `PTA_ERR_MAX` keeps its meaning as what is left. Two more things the
+implementation had to settle: the rule is compared as two products, `E·r ≥
+thr·L`, so there is no divider on the tile; and `PTA_CAL_PER` becomes a floor on
+the interval for the two predicting modes, because a short interval reads as a
+steep rate and the extrapolation runs away without one.
+[`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) §5 has the reasoning
+and §8 the measurement.
 
 This is the clearest publishable contribution in the CPU path: *calibration
 scheduling for analog accelerators, measured against a real memory system
@@ -792,11 +819,20 @@ bank-select cycles, and C is bit-identical between orders; with the DMA
 counted, they match the feed model's predictions for both orders.
 
 **C3 — calibration.** Per-column affine correction, calibration FSM,
-three schedulers, and the `cal_busy` dispatch guard.
+four schedulers, and the `cal_busy` dispatch guard.
 *Gate:* with drift enabled at a stated rate, accuracy recovers to within a
 stated margin of the no-drift case, and `PTA_CAL_CYC` shows the shadow
 scheduler costing measurably less wall-clock than the periodic one at equal
 accuracy. *Ablation:* the START-during-calibration regression from §3.2.
+*Met, 2026-09-23.* C3(a) measured the correction on the D3 network — a tile at
+chance after 46 hours of TFLN drift comes back to within 0.01 points of the
+no-drift case, against the 0.2 the gate allows — and C3(b) built the RTL: the
+two correction paths in PTM-C, the engine and its four schedulers in
+`c930/rtl/pta/c930_pta_cal.sv`, and the guard. Gates P7 to P9 of grx930's design
+note §5, and [`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) §8 has
+the numbers. The affine has no estimator: the error model has no per-column
+gain or offset error for one to find, so the store is host-written and the
+engine's one loop is the cell trim.
 
 **C4 — SoC, firmware, numbers.** CSR decode widening, firmware, the full-SoC
 test suite, and a Vivado run on the Arty A7-200T. *Board note, 2026-09-22:* on
