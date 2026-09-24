@@ -311,6 +311,20 @@ So widening the CSR's internal decode from `[5:2]` to `[7:2]` — 64 words,
 `0x00`–`0xFC` — leaves `0x00`–`0x3C` bit-identical, puts PTA state at
 `0x40`–`0xCC`, and **requires no crossbar change at all**.
 
+*Corrected in C4(a), 2026-09-23: not at `0x40`.* The claim about the crossbar
+holds. The offset does not: `0x4000_0040`–`0x4000_007F` is **NPU1's CSR window**
+on this SoC, decoded in `c930_soc_top.sv` as `w_to_npu1` / `r_to_npu1`. A block
+at `0x40` would have been shadowed by the second NPU whenever `ENABLE_NPU1` was
+set, and by nothing at all when it was clear — which is the worse half, because
+it would have passed every test that had NPU1 off. The block is therefore at
+`0x100`, the decode widens to `[9:2]` (256 words, a kilobyte), and inside the
+block the layout is
+[`pta_chiplet_regmap.md`](pta_chiplet_regmap.md) §4's own, offset by `0x100`: one
+driver, the same offsets within the block, a different base per target. Moving
+NPU1 instead would have been the tidier map and the more expensive change — its
+base is in the driver header, three firmware generators and the dual-NPU tests'
+hand-encoded instruction words.
+
 One thing to fix while there. The c930 architecture document's memory map
 declares the NPU MMIO region as `0x4000_0000`–`0x4000_001F`, 32 bytes, with
 everything above reserved. That is already wrong in two directions: the
@@ -318,6 +332,10 @@ crossbar decodes 64 KB, and the same document's own performance-counter table
 lists offsets at `0x2C`, `0x30` and `0x34`. The map should be corrected to the
 implemented 64 bytes before it is extended to 256, or the extension inherits a
 document nobody trusts.
+
+*C4(a):* that document reads 64 bytes today, so the correction happened
+somewhere along the way; C4(a) extended it to the kilobyte the decode covers,
+added the PTA block's row, and said what the fall-through now aliases.
 
 ### 3.1 Proposed PTA register block
 
@@ -346,6 +364,26 @@ document nobody trusts.
 | 0x90–0xAC | `PTA_GAIN[j]` | RW | per-column gain, Q8.8 |
 | 0xB0–0xCC | `PTA_OFFS[j]` | RW | per-column offset, signed |
 | 0xD0 | `PTA_DRIFT_MAX` | RW | drift clamp, Q8.8 in weight LSB, defaulting to TFLT's 8,643 (§4.4); the first word past the block, shared with S_ACT's scalars at C4 |
+
+*Built in C4(a), 2026-09-23, with four differences the table did not have.*
+**Two counters did not exist.** `PTA_SHOT_CT` and `PTA_WLOAD_CT` are read from
+somewhere, and nothing in the core produced them, so C4(a) added both — shots
+counted from the strobe the tile sees, which puts a calibration's probe shots in
+the total, and programmings counted one per pass through `S_WLOAD`, which is the
+quantity `PTA_TW`'s slope multiplies. **`PTA_CTRL` bit 2, CAL_AUTO, reads zero
+and does nothing:** `CAL_SCHED` already says whether calibration is automatic,
+and two controls for one question is a way to make firmware wrong.
+**`PTA_STATUS` gains bit4 BUSY**, as the chiplet's map has it, so one read is a
+consistent snapshot, **and bit5 CAL_ERR**, because the c930 has no interrupt
+block for `PTA_IRQ_STATUS.ERR` to live in. And **`MODEL_RST` clears the
+correction stores with the model**, which is what the calibration document says
+it does, so the register file clears its own copies of `PTA_GAIN` and `PTA_OFFS`
+with them.
+
+One register has no home: the host trim write port C3(b) added for its parity
+gate. A (bank, row, column, value) write needs a pair of registers that no map
+has, and C4(a) did not invent them — the port is tied off at the top, and a
+driver that wants to restore a saved calibration is what would settle the shape.
 
 On the development board this block is not a c930 CSR at all: it is MMIO in the
 GPU's BAR, reached over CXL.io
@@ -835,7 +873,21 @@ gain or offset error for one to find, so the store is host-written and the
 engine's one loop is the cell trim.
 
 **C4 — SoC, firmware, numbers.** CSR decode widening, firmware, the full-SoC
-test suite, and a Vivado run on the Arty A7-200T. *Board note, 2026-09-22:* on
+test suite, and a Vivado run on the Arty A7-200T.
+*C4(a), 2026-09-24: the decode and the register block are done; the firmware is
+not.* The
+block is at `0x100` for the reason §3 now gives, the two counters it reads had to
+be built, and `make pta_test PTM_C=1` is firmware driving the tile through MMIO —
+the decode, the counters against a GEMM's shape, the tile answering an
+impairment, a calibration, a START during one, `MODEL_RST`, and the `MZM_NL`
+refusal — all of it over AXI-Lite in `tb_c930_npu.sv`, which `make npu` runs in
+both builds. What is *not* done is the same seven checks driven by a RISC-V
+program: `sw/pta_test.c` boots on the Verilator four-core SoC, writes and reads
+the block, and then stalls on a stack store in its own prologue with the NPU
+never started, where the existing `driver_prog.hex` runs to completion on that
+same harness. The symptom is recorded in grx930's Makefile and design note
+rather than worked around. The Vivado numbers are C4(b) and the §6.2 sweep is
+C4(c), which waits on MB as the gate below says. *Board note, 2026-09-22:* on
 the development board the same register block is reached as MMIO behind the
 GPU's CXL.io ([`board_program_plan.md`](board_program_plan.md), B7 and X4).
 Whether the c930 keeps a tile of its own is that plan's §8, question 3.

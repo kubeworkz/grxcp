@@ -24,7 +24,11 @@ the device cannot honour.
 - Registers are 32 bits, naturally aligned, little-endian. Reserved bits read
   zero and are written zero.
 - **Offsets 0x040–0x0D0 are the CPU document's block, unchanged**, so one driver
-  can address a c930 tile and a chiplet with the same offsets. What the c930
+  can address a c930 tile and a chiplet with the same offsets. *C4(a) built the
+  c930's half of that:* its window is `0x4000_0100`, and the block inside it is
+  laid out exactly as this one, so the offsets below are the same on both and only
+  the base differs. Not `0x4000_0040`, which is the second NPU's — see that
+  document's §3. What the c930
   uses 0x000–0x03C for, the chiplet uses for identity and interrupts; 0x0D4–0x0DC
   are the calibration engine's own configuration, which C3(b) found neither map
   had (§4); 0x0E0 up carries the upper halves of the counters and, at 0x0F0, the
