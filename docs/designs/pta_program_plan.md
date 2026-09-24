@@ -131,7 +131,7 @@ it is marked *new*.
 | MB | Multi-bank tile with `Nt·Kt` resident banks, and a selectable loop order that restores `m`-outer | *New:* EO-res totals match §2.1 in both orders, with `Tw` set to the RTL's bank-select cycles, and C bit-identical between orders | C2 tile |
 | C3 | **Done, 2026-09-23.** C3(a) measured the correction in the C reference — the board plan's X3 — and C3(b) built the RTL: the trim and the affine in PTM-C, the calibration engine and its four schedulers, and the `cal_busy` dispatch guard. Gates P7 to P9 | CPU document §6, run with drift at TFLT's fitted rate and again at TFLN's | C1, D3 |
 | C4(a) | **Done, 2026-09-24, both halves.** The widened CSR decode, the PTA register block at `0x100` (not `0x40`: that is NPU1's window), and the two counters it reads and nothing produced. It cost three fixes outside the block: the CPU's M unit deadlocked against a store in MEM, C cannot be cleared from the CPU (the L2 stops tracking a line the CPU writes), and the probe amplitude is a bit position with no way to learn its bounds — CPU document §3.3 | `make npu` in both builds and `make pta_fw PTM_C=1`: the same seven checks over AXI-Lite and from a RISC-V program, plus `make mul_store` for the CPU fix | C3 |
-| C4(b) | Vivado on the Arty A7-200T: real utilization and timing, not estimates | CPU document §6.1's table against what the tools say, and 100 MHz or a named pipeline cut | C4(a), A-synth |
+| C4(b) | **Part done, 2026-09-24.** Vivado 2026.1 out of context on `xc7a200tfbg484-1`: the NPU baseline, the calibration engine, the CSR and S_ACT measured and placed against §6.1; §6.1's stated baseline shown to be no run's; A-synth's cut named and half taken. **Owed:** the tile's own row — `c930_ptm_c` and the PTM-C NPU both exceed this VM's memory | §6.1's table against what the tools say, and 100 MHz or a named pipeline cut | C4(a), A-synth |
 | C4(c) | The §6.2 sweep at both ends, thermo-optic and Pockels-class | CPU document §6, with EO-res measured rather than modelled | C2 tile, MB, C4(a) |
 
 **Step MB, in more detail.** At `Tw = 0` the §2.1 model gives EO-res 2,560
@@ -209,7 +209,7 @@ design note, §5, has the tables, the ablation and the reported sweeps.
 | Step | What | Gate | Needs |
 |---|---|---|---|
 | A3 | Chain mode: reset interval × photons × detuning × curve shape | Reported, not gated: the reset-interval-versus-photons curve the review's kill criterion is evaluated on | A2 (done); D3 for its second stage |
-| A-synth | Synthesize `c930_npu_act.sv` on its own | *New:* 100 MHz on the 200T, or a named pipeline cut with `ACT_P` updated to match | — |
+| A-synth | **Measured, 2026-09-24: 41.2 MHz, not 100.** Routed out of context on the 200T. The limiting cone is stage 6 — three variable shifts, a clamp against bounds recomputed per element, and the saturation counter hanging off the end — not stage 1's wide multiply. Lifting the configuration-fixed parts out cost no latency and gave 51.2 MHz with 12% fewer LUTs; the cut for the rest is named against the measured path and takes `ACT_P` to 8 | 100 MHz on the 200T, or a named pipeline cut with `ACT_P` updated to match | — |
 | A-CSR | CSR mapping, snapshot bit, firmware | The S_ACT design note's order: only after A3 reports | A3 |
 
 A-synth runs now because stage 1 multiplies the 48-bit accumulator by a

@@ -961,6 +961,59 @@ the shot path adds a multiply, a square-root approximation and two adds where
 the systolic PE had one registered product, and the array feed logic already
 carries comments about paths that had to be broken by registration.
 
+**Measured, C4(b), 2026-09-24.** Vivado 2026.1, `xc7a200tfbg484-1`, each module
+synthesized, placed and routed out of context against a 10 ns clock, the NPU at
+the shape `c930_soc_top` instantiates. grx930's `synth_xilinx/README.md` has the
+full table and how to reproduce it.
+
+*The baseline above is not this design.* One NPU alone routes to 56,600 LUTs,
+35,066 FFs, 226 DSPs and 3 BRAMs — more FFs and more DSPs than the whole SoC is
+credited with (27,097 and 148). Whatever those numbers came from, the headroom
+arithmetic built on them does not stand, and the device is 133,800 LUTs by
+Vivado's count, not 134,600.
+
+*Three rows of the table, measured:*
+
+| Row | estimated | measured |
+|---|---|---|
+| Calibration FSM + pattern ROM + LMS update | ~2,000 LUT, 2 DSP, 1 BRAM | **3,785 LUT, 15 DSP, 0 BRAM** |
+| Widened CSR decode + PTA registers | ~800 LUT | **1,111 LUT** for the *whole* CSR, PTA part included |
+| (S_ACT, priced in grx930's act note) | ~2,000 LUT, 5 DSP, 1 BRAM | **1,701 LUT, 13 DSP, 4 BRAM** |
+
+The engine is 1.9× its LUT estimate and 7.5× its DSP estimate, and its pattern
+ROM became logic rather than the BRAM the row expected. The CSR is the one block
+inside its estimate *and* inside 100 MHz. The DSP estimates are the consistent
+miss: counting multiplies in the arithmetic is not counting DSP48E1s, because a
+wide product or a wide variable shift takes more than one.
+
+*The tile's own row is still owed.* `c930_ptm_c` reached Technology Mapping and
+was still there an hour later with four Vivado helper processes of a gigabyte
+each, and the whole NPU with PTM-C peaked at 6.5 GB against a 5.9 GB VM without
+finishing synthesis. Neither is a statement about the design — they want a
+bigger machine or `-jobs 1` — but until one of them runs, the largest rows of
+this table (quantizers, noise, drift, broadside MVM) are unmeasured.
+
+*Timing is the risk, and this named the wrong one.* The shot path is not what
+limits anything measured so far:
+
+| | Fmax at a 10 ns target |
+|---|---|
+| `c930_npu_top`, systolic array — the **digital baseline** | 58.0 MHz |
+| `c930_npu_act` as written | 41.2 MHz |
+| `c930_npu_act`, stage 6 shortened | 51.2 MHz |
+| `c930_pta_cal` | 76.2 MHz |
+| `c930_npu_csr` | meets 100 MHz |
+
+The array build's limit is the FP16 accumulator chain *between* PEs — logic that
+predates the PTA and that the -100T run found at the same place. So 100 MHz was
+out of reach before any photonic logic existed, and the honest form of C4(b)'s
+gate is a named cut, which grx930's act note now carries: stage 6 did three
+variable shifts and a clamp against bounds it recomputed every cycle, all in one
+cycle, and the counter's accumulate hung off the end of it. Lifting what the
+configuration fixes out of that cone cost no latency and no accuracy and bought
+41.2 → 51.2 MHz with 12% fewer LUTs; the rest needs `ACT_P` to grow, and the
+split is named against the measured path.
+
 One cost the table leaves out: the baseline is the SoC as synthesized, with
 `MAX_M` 8 and `MAX_K` 16, and the §6.2 shape needs `MAX_M` 64 and `MAX_K` 256.
 A's storage grows 128-fold, `MAX_M · MAX_K` elements in each bank and again in
