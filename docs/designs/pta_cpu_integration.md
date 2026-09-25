@@ -1001,6 +1001,7 @@ limits anything measured so far:
 | `c930_npu_top`, systolic array — the **digital baseline** | 58.0 MHz |
 | `c930_npu_act` as written | 41.2 MHz |
 | `c930_npu_act`, stage 6 shortened | 51.2 MHz |
+| `c930_npu_act`, stage 6 split (`ACT_P` 8) | 55.5 MHz |
 | `c930_pta_cal` | 76.2 MHz |
 | `c930_npu_csr` | meets 100 MHz |
 
@@ -1013,10 +1014,15 @@ cycle, and the counter's accumulate hung off the end of it. Lifting what the
 configuration fixes out of that cone cost no latency and no accuracy and bought
 41.2 → 51.2 MHz with 12% fewer LUTs, and the rest needed `ACT_P` to grow, which
 it now has: stage 6 splits after the multiply, `ACT_P` 7 → 8, gate A2 bitwise
-unchanged with the saturation counts exact. The routed Fmax of the split stage
-is not measured yet — Vivado here takes WSL's network down for a run — so the
-cut is taken on the strength of the path it was named from, and the number that
-would confirm it is owed.
+unchanged with the saturation counts exact. Measured: **55.5 MHz**, and the
+critical path leaves stage 6 for stage 1's 48 × 32 product — which is where this
+plan's own risk row said it would be. The plan was right and stage 6 was simply
+ahead of it in the queue, named by no estimate at all. §6.1's shot path has
+still not bitten. The split cost 59 flip-flops and nothing else.
+
+There is a floor to chasing this: the digital NPU routes at 58.0 MHz, so at
+55.5 MHz S_ACT is within 2.5 MHz of the array's own limit and further work on it
+buys little until the FP16 accumulator chain is addressed.
 
 Taking it also settled a gate. A1 — the cycle-count check — failed identically
 on the modified and unmodified stage, which looked like a mis-specified bench.
