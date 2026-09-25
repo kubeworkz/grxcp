@@ -1011,8 +1011,19 @@ gate is a named cut, which grx930's act note now carries: stage 6 did three
 variable shifts and a clamp against bounds it recomputed every cycle, all in one
 cycle, and the counter's accumulate hung off the end of it. Lifting what the
 configuration fixes out of that cone cost no latency and no accuracy and bought
-41.2 → 51.2 MHz with 12% fewer LUTs; the rest needs `ACT_P` to grow, and the
-split is named against the measured path.
+41.2 → 51.2 MHz with 12% fewer LUTs, and the rest needed `ACT_P` to grow, which
+it now has: stage 6 splits after the multiply, `ACT_P` 7 → 8, gate A2 bitwise
+unchanged with the saturation counts exact. The routed Fmax of the split stage
+is not measured yet — Vivado here takes WSL's network down for a run — so the
+cut is taken on the strength of the path it was named from, and the number that
+would confirm it is owed.
+
+Taking it also settled a gate. A1 — the cycle-count check — failed identically
+on the modified and unmodified stage, which looked like a mis-specified bench.
+At `ACT_P = 8` three of its six shapes pay exactly `M · Nt · ACT_P` where at 7
+they paid 98 of 112, and the failures drop from 13 to 5, all of them one cycle
+either way on a ragged last tile. The gate was right; the residue is a real
+off-by-one.
 
 One cost the table leaves out: the baseline is the SoC as synthesized, with
 `MAX_M` 8 and `MAX_K` 16, and the §6.2 shape needs `MAX_M` 64 and `MAX_K` 256.
