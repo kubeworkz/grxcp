@@ -40,7 +40,8 @@ either names its document or is this one's.
 | Feed, measured and modelled (F0, F1) | Done: `make npu_feed` and the SoC's F0 mode in grx930, and [`pta_feed_model.py`](pta_feed_model.py) (§3.3) |
 | PTM-C, the compatibility shim (C0) | Done: bit-identical to the systolic array on grx930's NPU benches under `PTM_C=1` (§3.1) |
 | Error model (C1) | Closed: all six impairments built in grx930 and bitwise against the C reference; the accuracy sweep ran, missed its allowance at 3 bits, and the miss is recorded (§3.1) |
-| Tile: PTM-B, calibration (C2 tile, C3) | Not started |
+| Tile: PTM-B (C2 tile) | Landed and gated: `make core_c2`. §2.1's form holds; two of its constants and F1's predictions did not |
+| Calibration (C3) | Landed and gated; the broadside probe is owed (C2 tile's row) |
 | SoC integration, firmware, Vivado (C4) | Not started |
 | G100 tile (G0–G3) | Not started; staged behind C2 |
 | grxcp NPU backend | Host side built and gated against register models and the vendored grx930 DPI shim; no PTA surface |
@@ -127,12 +128,48 @@ it is marked *new*.
 |---|---|---|---|
 | C0 | **Done, below.** PTM-C swapped in for the systolic array, impairments off | CPU document §6, unchanged | — |
 | C1 | **Closed, below.** Error model, one impairment at a time; `PTA_DRIFT` defaults fitted to TFLT, with a TFLN setting as the stress case | CPU document §6, unchanged | C0, D1–D3 |
-| C2 tile | PTM-B in the interchanged core | Total cycles match §2.1 at every §6.2 point, affine in `PTA_TW` | C1 |
+| C2 tile | **Done, 2026-09-29.** PTM-B in the interchanged core: the broadside tile is `c930_ptm_c`'s arithmetic under `BROADSIDE = 1` with a shot-and-wait schedule around it, so the two variants agree by construction rather than by comparison. The gate measures each §2.1 term against the counter that makes it up — `o_stall_count`, `o_op_count / 64`, the write residual — and holds the scan, the restore and the write to equality at six shapes × 25 `(PTA_TW, PTA_TS)` points. It corrected §2.1 twice and re-derived F1 (below). **Owed:** the broadside calibration probe — `c930_pta_cal.sv` walks a skewed readout, so the bench SKIPs the `a` calibration under `PTM_B` with its reason | `make core_c2`: total cycles match §2.1 at every runnable §6.2 point, affine in `PTA_TW` | C1 |
 | MB | Multi-bank tile with `Nt·Kt` resident banks, and a selectable loop order that restores `m`-outer | *New:* EO-res totals match §2.1 in both orders, with `Tw` set to the RTL's bank-select cycles, and C bit-identical between orders | C2 tile |
 | C3 | **Done, 2026-09-23.** C3(a) measured the correction in the C reference — the board plan's X3 — and C3(b) built the RTL: the trim and the affine in PTM-C, the calibration engine and its four schedulers, and the `cal_busy` dispatch guard. Gates P7 to P9 | CPU document §6, run with drift at TFLT's fitted rate and again at TFLN's | C1, D3 |
 | C4(a) | **Done, 2026-09-24, both halves.** The widened CSR decode, the PTA register block at `0x100` (not `0x40`: that is NPU1's window), and the two counters it reads and nothing produced. It cost three fixes outside the block: the CPU's M unit deadlocked against a store in MEM, C cannot be cleared from the CPU (the L2 stops tracking a line the CPU writes), and the probe amplitude is a bit position with no way to learn its bounds — CPU document §3.3 | `make npu` in both builds and `make pta_fw PTM_C=1`: the same seven checks over AXI-Lite and from a RISC-V program, plus `make mul_store` for the CPU fix | C3 |
 | C4(b) | **Part done, 2026-09-24.** Vivado 2026.1 out of context on `xc7a200tfbg484-1`: the NPU baseline, the calibration engine, the CSR and S_ACT measured and placed against §6.1; §6.1's stated baseline shown to be no run's; A-synth's cut named, taken (`ACT_P` 7 → 8) and measured at 55.5 MHz. **Owed:** the tile's own row — `c930_ptm_c` and the PTM-C NPU both exceed this VM's memory | §6.1's table against what the tools say, and 100 MHz or a named pipeline cut | C4(a), A-synth |
 | C4(c) | The §6.2 sweep at both ends, thermo-optic and Pockels-class | CPU document §6, with EO-res measured rather than modelled | C2 tile, MB, C4(a) |
+
+**What C2 tile found, beyond its own gate.** All three are the model's, not the
+core's, and all three are recorded in the CPU document:
+
+1. **§2.1's `Tw` = 64 and `Td` = 8 are the full-tile values.** `S_WLOAD` walks
+   only the `nc` columns and `kr` rows the tile uses and `S_WRITE` only the `nc`
+   columns, so `Tw = nc·kr + PTA_TW` and `Td = nc`. Summed over tiles they reduce
+   to `N·K` and `M·Kt·N`, which is why the form survives; a ragged `N` tile is
+   *cheaper* than the table. CPU document §2.1.
+2. **A shot costs `PTA_TS + 6` cycles**, from the hop-gated feed, the hop-aligned
+   capture and the registered valid. §6.2's `Ts` = 1 and `Ts` = 5 are both
+   unreachable. The floor is paid `M·Nt·Kt` times in both loop orders, so §2.1's
+   resident row falls from **7.2× to 2.2×** — the verdict survives, the margin
+   does not. How much of the six is irreducible is open, and MB is where it would
+   pay for itself. CPU document §2.1 and §6.2.
+3. **F1's predictions were re-derived.** They took the core term as
+   `interchanged(Tw, PTA_TS, Td)`, so its TO-10µs whole GEMM, 78,796 cycles, came
+   out *below* the 86,784 the core alone now measures.
+   [`pta_feed_model.py`](pta_feed_model.py) carries the floor and cross-checks its
+   core term against C2's measurement, so the two models cannot drift again. The
+   A-row wait falls as the total rises — a slower core gives PF1 more time — so
+   both columns moved:
+
+| Point, loop order | A-row wait, was → now | Whole GEMM, was → now |
+|---|---|---|
+| TO-10µs, interchanged | 385 / 574 → 7 / 196 | 78,796 / 79,118 → 90,706 / 91,028 |
+| EO-scan, interchanged | 1,637 / 1,826 → 1,259 / 1,448 | 39,856 / 40,178 → 51,766 / 52,088 |
+| EO-res, interchanged | 1,701 / 1,890 → 1,323 / 1,512 | 37,872 / 38,194 → 49,782 / 50,104 |
+| EO-res, shipped | 0 / 0 | 4,427 / 4,560 → 16,715 / 16,848 |
+
+   (NPU bench / SoC. The core term is the band's upper end; the hop's entry parity
+   can take up to one cycle a shot off it.) F1's *structure* held — §3.3's race
+   model still reproduces all four F0 measurements with no fitted constant, and
+   that section is untouched — it was fed a wrong constant. What it says about F2
+   is unchanged in direction and weaker in degree: writeback and PF2 still lead,
+   but the feed's share at EO-res shipped is 11%, not 42%.
 
 **Step MB, in more detail.** At `Tw = 0` the §2.1 model gives EO-res 2,560
 cycles in the `m`-outer order and 18.4 k interchanged. The `m`-outer FSM does
@@ -275,20 +312,22 @@ version did not: taking PF1's period as its busy cycles alone, and fitting a
 row offset to the pre-hop wait, it predicted 27 cycles of wait on the hop core,
 where the RTL measured none. The two idle cycles a row were what the fit had
 hidden. Its predictions, for C2 tile and MB to check, with the restore
-unfolded as built (NPU bench / SoC):
+unfolded as built (NPU bench / SoC) — **re-derived after C2 tile measured the
+shot's six-cycle floor, which these numbers did not have; see §3.1**:
 
 | Point, loop order | A-row wait | Whole GEMM | Feed share |
 |---|---|---|---|
-| TO-10µs, interchanged | 385 / 574 | 78,796 / 79,118 | 2.9% / 3.3% |
-| EO-scan, interchanged | 1,637 / 1,826 | 39,856 / 40,178 | 8.8% / 9.5% |
-| EO-res, interchanged | 1,701 / 1,890 | 37,872 / 38,194 | 9.4% / 10.2% |
-| EO-res, shipped | 0 / 0 | 4,427 / 4,560 | 42% / 44% |
+| TO-10µs, interchanged | 7 / 196 | 90,706 / 91,028 | 2.1% / 2.4% |
+| EO-scan, interchanged | 1,259 / 1,448 | 51,766 / 52,088 | 6.0% / 6.6% |
+| EO-res, interchanged | 1,323 / 1,512 | 49,782 / 50,104 | 6.4% / 7.0% |
+| EO-res, shipped | 0 / 0 | 16,715 / 16,848 | 11.2% / 11.9% |
 
-The shipped order still wins at EO-res once the feed counts, but by less: 5.0×
-with the restore folded (4.9× on the SoC), against 7.2× for the core alone,
-because 1,900 to 2,000 fixed feed cycles now sit beside a 2,560-cycle core.
-That puts writeback and PF2 first among F2's candidates, ahead of anything in
-the core.
+The shipped order still wins at EO-res once the feed counts, but by less: 2.0×
+with the restore folded (2.0× on the SoC), against 2.1× for the core alone,
+because 1,900 to 2,000 fixed feed cycles now sit beside a 14,848-cycle core.
+That still puts writeback and PF2 first among F2's candidates, ahead of anything
+in the core, but the shot's floor is now the larger term and MB is where it is
+attacked.
 
 ### 3.4 Track G — the G100 (grxgpu, by proposal)
 
@@ -318,7 +357,7 @@ grxgpu's RTL owners, under the boundary rule of `AGENTS.md` §2.
 |---|---|---|
 | Now | Immediately, in parallel | S0; A3; A-synth; G1 (D1–D4 settled; F0 and C0 done) |
 | Next | C0 green, as it now is | C1; G0 and C3 once C1 is green (F1 done) |
-| Then | C1 green | C2 tile, then MB; F2 once both are in; G2 once MB and G1 have reported |
+| Then | C1 green, C2 tile now green | MB next; F2 once it is in; G2 once MB and G1 have reported |
 | Last | C2 tile, MB, C3 and A-synth green | C4; then S1 and S2 on its CSR map, F3 on its numbers, and G3 |
 
 The critical path is C0 → C1 → C2 tile → MB → C4. Everything else runs beside

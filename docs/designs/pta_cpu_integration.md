@@ -143,6 +143,24 @@ interchanged once the unfolded restore's `M · Nt · (Kt − 1) · Td` is added 
 ([`pta_tw_sweep.py`](pta_tw_sweep.py) asserts it, and computes every derived
 figure in this section and §6.2).
 
+**`Tw` = 64 and `Td` = 8 are the full-tile values.** C2's gate measures each term
+against the counter that makes it up — `o_stall_count` is `S_WLOAD` plus
+`S_ACCLD`, `o_op_count / 64` is `S_RUN`, and the write is the residual — and the
+scan walks only the `nc` columns and `kr` rows the tile actually uses
+(`c930_npu_core.sv` `S_WLOAD`), the write only the `nc` columns (`S_WRITE`):
+
+```
+  Tw = nc · kr + PTA_TW        Td = nc
+```
+
+So a GEMM with a ragged `N` tile is *cheaper* than the table predicts — at
+`M = 3, N = 12, K = 24` the three terms come to 468 cycles where the flat
+constants say 624, out of a 612-cycle GEMM. Summed over tiles they reduce to
+`N · K` weight cells and `M · Kt · N` element writes, which is why the form
+survives and only the per-tile constants move; at a full tile they are 64 and 8
+and the table is exact. `make core_c2` holds all three to equality at six shapes
+and 25 `(PTA_TW, PTA_TS)` points each.
+
 For a plausible thermo-optic mesh — `Tw` = 10 µs, `Ts` = 50 ns — and
 `M = 64, N = 8, K = 256`, taking `Td` = 0:
 
@@ -197,11 +215,36 @@ The c930's own row write costs the thermal tile some of its 49× and none of the
 argument. A scanned Pockels tile still wants the interchange, by an amount the
 host sets — 64 cycles of scan against 8 of row write, whatever the modulator
 does. A resident one wants the shipped order back: there is no weight cost left
-to amortize, only row writes to multiply. Its 25.6 µs is 20.5 µs of one-cycle
-shots and 5.1 µs of row writes, so it is bound by the host — its feed and its
+to amortize, only row writes to multiply. Its 128 µs is 123 µs of shots and
+5.1 µs of row writes, so it is bound by the host — its feed and its
 writes — not by the tile: the review's operand-supply finding
 ([`pta_tpaqcn_review.md`](pta_tpaqcn_review.md) §7) arriving from the tile
-side.
+side, and arriving harder than this document first had it.
+
+**`Ts` is six cycles on this host, not one, and the resident row moves most.**
+The reasoning above is right — the host presents one operand vector per cycle —
+but it undercounts what presenting one costs: the feed is hop-gated going in, the
+capture lands on a hop, and `o_valid` is registered. C2's gate measures a shot at
+`PTA_TS + 6` cycles, and the floor is paid `M · Nt · Kt` times in *both* orders.
+At `PTA_TS` = 1 the measurement lands at six cycles a shot, 60 ns:
+
+| Tile | As shipped | Interchanged | Faster order |
+|---|---|---|---|
+| Pockels, resident | 128 µs (was 25.6) | 287 µs (was 184) | **as shipped, 2.2×** (was 7.2×) |
+
+(Folded, as the table above is. Unfolded, as the core is built: 128 µs against
+445 µs, 3.5×.) The verdict survives, the margin does not: the resident tile still
+wants the shipped order, by 2.2× rather than 7.2×, because a fixed per-shot cost
+is a larger share of the smaller total. The scanned and thermo-optic rows barely
+move — their `Tw` dominates — so this changes nothing about the interchange
+argument and everything about how much headroom the resident point has.
+
+**How much of the six is irreducible is open.** It is this handshake's cost, not
+photonics': one hop gate serves the de-skew the broadside tile does not need, and
+the registered valid could be forwarded. Retiring any of it is RTL work with its
+own gate, and until someone does it the six is what the model uses. Step MB is
+where it would pay for itself, since that is where `Tw` goes to zero and the shot
+is all that is left.
 
 What a Pockels tile pays instead of settle is bias drift, and it is where the
 two materials part. Lithium niobate modulators drift under a held DC bias: side
@@ -1073,6 +1116,31 @@ folded; at 10 ns a cycle, TO-10µs, EO-scan and EO-res are §2.1's table.
 Sweeping `PTA_TW` between the points is what checks C2's affine claim, but no
 value of it crosses the §2.1 break-even: that sits at 8 cycles, and a two-bank
 tile's `Tw` never drops below the scan's 64.
+
+**What the core spends is higher, and C2's gate says by exactly what.** The table
+above is the folded model. The core unfolds the restore, and its shot has a fixed
+cost the model gives it none of. Measured on the broadside tile at this shape
+(grx930 `make core_c2`):
+
+| Point | This table | Measured | Delta | = restore §2.1 unfolds | + shot above `Ts` |
+|---|---|---|---|---|---|
+| TO-1ms | 3.23 M | 3,254,785 | +26,113 | 15,872 | 10,241 |
+| TO-10µs | 60.7 k | 86,784 | +26,112 | 15,872 | 10,240 |
+| EO-scan | 20.5 k | 46,592 | +26,112 | 15,872 | 10,240 |
+
+Both differences are the model's, not the core's, and together they account for
+the whole gap. The restore is the `M · Nt · (Kt − 1) · Td` §2.1 already says to
+add back and §2.3 measures at 15,872 cycles. The shot costs `PTA_TS + 6` — the
+feed is hop-gated going in, the capture lands on a hop, and `o_valid` is
+registered — so **`PTA_TS` = 1 and `PTA_TS` = 5 are both unreachable; the nearest
+shots this core can take are 6 and 10 cycles.** Like the scan's 64, that is the
+host's cost rather than an artifact to design out, and it is reported.
+
+The ratio the sweep exists to measure is unharmed: `PTA_TW`'s slope is still
+`Nt · Kt` cycles per unit and a shot's is still `Nt · Kt · M`. What the hop costs
+instead is precision — its free-running phase shifts a state by a cycle depending
+on what ran before it, up to one cycle a shot — which is why the gate holds the
+scan, the restore and the write to equality and the shot to that band.
 
 Three rules hold at the Pockels-class end:
 
