@@ -239,6 +239,10 @@ is a larger share of the smaller total. The scanned and thermo-optic rows barely
 move — their `Tw` dominates — so this changes nothing about the interchange
 argument and everything about how much headroom the resident point has.
 
+Step MB has since built the resident tile and measured both orders at this
+point: 16,896 cycles m-outer against 44,608 interchanged, **2.6×** to the shipped
+order, which is inside the model's band (§6.2). The reprice above stands.
+
 **How much of the six is irreducible is open.** It is this handshake's cost, not
 photonics': one hop gate serves the de-skew the broadside tile does not need, and
 the registered valid could be forwarded. Retiring any of it is RTL work with its
@@ -1144,9 +1148,40 @@ scan, the restore and the write to equality and the shot to that band.
 
 Three rules hold at the Pockels-class end:
 
-- **EO-res is a model evaluation until a multi-bank tile exists.** It needs
-  `Nt · Kt` resident banks and the tile has two (§8 item 3). Report it as the
-  §2.1 formula with the scan removed, labelled as such.
+- **EO-res is measured now, in both loop orders.** It needed `Nt · Kt` resident
+  banks, which step MB built: the tile takes a `NUM_BANKS` parameter, the core can
+  address a bank per (N tile, K tile), and `make core_mb` runs it with 32 of them
+  at this shape. A weight program becomes the bank select's own cycle, which is
+  what the plan says to count as `Tw`; the §2.1 break-even sits at 8 cycles, so one
+  cycle leaves the point in the resident regime. Measured against the same banks:
+
+  | Order | Model band | Measured |
+  |---|---|---|
+  | interchanged | 44,576–46,624 | **44,608** |
+  | m-outer | 14,848–16,896 | **16,896** |
+
+  **The shipped order wins by 2.6×**, and the band on that ratio is 2.6× to 3.1×
+  because each order's shots land where the hop's entry parity puts them and the
+  two orders do not land together — m-outer's at seven cycles, the interchanged
+  order's at six. The table above says 7.2×, which assumed `Ts` = 1; at the shot's
+  measured floor §2.1 gives 2.8× unfolded, and the core measures 2.6×. So the
+  verdict §2.1 reached for a resident tile survives being built, and the margin is
+  a third of what the table claimed.
+
+  What resident buys each order differs, and the difference is the whole argument.
+  The interchanged order trades a 2,048-cycle scan for a 32-cycle select and keeps
+  1,984 cycles of 46,592 — four per cent — because it had already loaded each tile
+  exactly once. `m`-outer, which otherwise reloads per output row, is spared `M`
+  times that scan. The scan is not free in either case: a GEMM that fills the banks
+  pays it, exactly as it always cost, and what the resident point claims is that
+  the fill amortises across the GEMMs reusing it — inference with fixed weights.
+  `make core_mb` prints the fill's cost beside the measured GEMM rather than
+  hiding it.
+
+  Both orders return the same C from the same banks, with the error model off.
+  With it on they are **not** expected to agree bitwise: E1 ties each draw to the
+  core's loop order (§4.3), so changing the order changes the draw sequence by
+  construction. The orders agree about arithmetic, not about noise.
 - **`DMA_CT` is part of the result.** A GEMM of a few thousand cycles is no
   longer long beside the DMA fetch of its 18,432 operands, so the fetch cannot
   be subtracted as overhead at this end.
@@ -1223,13 +1258,17 @@ Recorded so the next reader knows what was considered and deliberately deferred.
    end — where the TFLT target sits (§4.4) — the host's feed is the binding
    cost (§2.1), so this item reopens as soon as those points are reported, with
    their `DMA_CT` as the evidence. It belongs to the GRXIConnect work, not here.
-3. **Multiple weight banks beyond two.** §5.5's hypothesis may make weight-set
-   capacity the interesting axis, in which case `N` banks and a bank-allocation
-   policy is the follow-on. Not before the `Tw`-to-`Ts` ratio sweep says so.
-   The exception is §6.2's EO-res point, which cannot be measured at all
-   without `Nt · Kt` banks. With TFLT the target (§4.4), the Pockels-class end
-   is the one that matters, so that part is not deferred: measuring the
-   target's resident point waits on the multi-bank tile, step MB of §6.
+3. **Multiple weight banks beyond two — the exception is built.** §5.5's
+   hypothesis may make weight-set capacity the interesting axis, in which case a
+   bank-*allocation policy* is the follow-on. That part is still deferred: not
+   before the `Tw`-to-`Ts` ratio sweep says so. What is built is the capacity
+   itself, because §6.2's EO-res point could not be measured at all without
+   `Nt · Kt` banks and TFLT is the target (§4.4). Step MB parameterised the tile's
+   banks, gave the core a resident mode and a selectable loop order, and measured
+   the point in both (§6.2). A GEMM asking for more tiles than the tile has banks
+   is refused rather than aliased. What no one has yet is a policy for choosing
+   which weight set occupies which bank when the sets outnumber them — which is
+   the original item, and is what §5.5 would make urgent.
 4. **A second tile.** The grx930 team's notes observe 41.5% LUT headroom is
    "enough for a second NPU tile." Two tiles with independent weight sets is
    how a real machine hides `Tw` completely, and it is the obvious C5. It is

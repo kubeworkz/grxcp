@@ -41,6 +41,7 @@ either names its document or is this one's.
 | PTM-C, the compatibility shim (C0) | Done: bit-identical to the systolic array on grx930's NPU benches under `PTM_C=1` (§3.1) |
 | Error model (C1) | Closed: all six impairments built in grx930 and bitwise against the C reference; the accuracy sweep ran, missed its allowance at 3 bits, and the miss is recorded (§3.1) |
 | Tile: PTM-B (C2 tile) | Landed and gated: `make core_c2`. §2.1's form holds; two of its constants and F1's predictions did not |
+| Multi-bank tile, both loop orders (MB) | Landed and gated: `make core_mb`. §6.2's EO-res point is measured in both orders — the shipped one wins by 2.6×, not 7.2× |
 | Calibration (C3) | Landed and gated; the broadside probe is owed (C2 tile's row) |
 | SoC integration, firmware, Vivado (C4) | Not started |
 | G100 tile (G0–G3) | Not started; staged behind C2 |
@@ -129,7 +130,7 @@ it is marked *new*.
 | C0 | **Done, below.** PTM-C swapped in for the systolic array, impairments off | CPU document §6, unchanged | — |
 | C1 | **Closed, below.** Error model, one impairment at a time; `PTA_DRIFT` defaults fitted to TFLT, with a TFLN setting as the stress case | CPU document §6, unchanged | C0, D1–D3 |
 | C2 tile | **Done, 2026-09-29.** PTM-B in the interchanged core: the broadside tile is `c930_ptm_c`'s arithmetic under `BROADSIDE = 1` with a shot-and-wait schedule around it, so the two variants agree by construction rather than by comparison. The gate measures each §2.1 term against the counter that makes it up — `o_stall_count`, `o_op_count / 64`, the write residual — and holds the scan, the restore and the write to equality at six shapes × 25 `(PTA_TW, PTA_TS)` points. It corrected §2.1 twice and re-derived F1 (below). **Owed:** the broadside calibration probe — `c930_pta_cal.sv` walks a skewed readout, so the bench SKIPs the `a` calibration under `PTM_B` with its reason | `make core_c2`: total cycles match §2.1 at every runnable §6.2 point, affine in `PTA_TW` | C1 |
-| MB | Multi-bank tile with `Nt·Kt` resident banks, and a selectable loop order that restores `m`-outer | *New:* EO-res totals match §2.1 in both orders, with `Tw` set to the RTL's bank-select cycles, and C bit-identical between orders | C2 tile |
+| MB | **Done, 2026-09-29.** The tile takes a `NUM_BANKS` parameter (two, the DMA's double buffer, is the default and changes nothing); the core can address a bank per (N tile, K tile) and skip the scan when they are already loaded; and the loop order is selectable, `m`-outer restored without the `S_PRELOAD` double-buffering it originally needed. A shape with more tiles than banks is refused, not aliased | `make core_mb`: EO-res totals match §2.1 in both orders with `Tw` at the RTL's bank-select cycle, and both orders return the same C from the same banks | C2 tile |
 | C3 | **Done, 2026-09-23.** C3(a) measured the correction in the C reference — the board plan's X3 — and C3(b) built the RTL: the trim and the affine in PTM-C, the calibration engine and its four schedulers, and the `cal_busy` dispatch guard. Gates P7 to P9 | CPU document §6, run with drift at TFLT's fitted rate and again at TFLN's | C1, D3 |
 | C4(a) | **Done, 2026-09-24, both halves.** The widened CSR decode, the PTA register block at `0x100` (not `0x40`: that is NPU1's window), and the two counters it reads and nothing produced. It cost three fixes outside the block: the CPU's M unit deadlocked against a store in MEM, C cannot be cleared from the CPU (the L2 stops tracking a line the CPU writes), and the probe amplitude is a bit position with no way to learn its bounds — CPU document §3.3 | `make npu` in both builds and `make pta_fw PTM_C=1`: the same seven checks over AXI-Lite and from a RISC-V program, plus `make mul_store` for the CPU fix | C3 |
 | C4(b) | **Part done, 2026-09-24.** Vivado 2026.1 out of context on `xc7a200tfbg484-1`: the NPU baseline, the calibration engine, the CSR and S_ACT measured and placed against §6.1; §6.1's stated baseline shown to be no run's; A-synth's cut named, taken (`ACT_P` 7 → 8) and measured at 55.5 MHz. **Owed:** the tile's own row — `c930_ptm_c` and the PTM-C NPU both exceed this VM's memory | §6.1's table against what the tools say, and 100 MHz or a named pipeline cut | C4(a), A-synth |
@@ -171,15 +172,49 @@ core's, and all three are recorded in the CPU document:
    is unchanged in direction and weaker in degree: writeback and PF2 still lead,
    but the feed's share at EO-res shipped is 11%, not 42%.
 
-**Step MB, in more detail.** At `Tw = 0` the §2.1 model gives EO-res 2,560
-cycles in the `m`-outer order and 18.4 k interchanged. The `m`-outer FSM does
-not need re-deriving: it is the core as it stood before grx930 commit 0c5df42,
-which replaced it. Restoring it as a mode rather than a revert keeps the
-interchange's C2 gate green while giving EO-res the order the model says it
-wants. Storage is small — 2,048 weights — and the cost is the select path. If a
-bank select takes a cycle in RTL, the gate counts that cycle as `Tw`; the §2.1
-break-even sits at 8 cycles, so one cycle still leaves EO-res in the resident
-regime.
+**Step MB, as built.** The select costs one cycle, which the gate counts as
+`Tw`; the §2.1 break-even sits at 8, so EO-res stays in the resident regime.
+Storage was small as expected — 2,048 weights at 32 banks. Measured at
+`M = 64, N = 8, K = 256`:
+
+| Order | Model band | Measured |
+|---|---|---|
+| interchanged, resident | 44,576–46,624 | **44,608** |
+| `m`-outer, resident | 14,848–16,896 | **16,896** |
+
+**The shipped order wins by 2.6×**, inside the model's 2.6×–3.1× band. That band
+is wide because each order's shots land where the hop's entry parity puts them and
+the two do not land together: `m`-outer's at seven cycles, the interchanged
+order's at six. §6.2's EO-res row claimed 7.2×, which assumed `Ts` = 1 — at the
+floor C2 measured, §2.1 gives 2.8× unfolded and the core gives 2.6×. The verdict
+survives being built; the margin is a third of the claim.
+
+Three things this step found that the paragraph above did not expect:
+
+1. **`S_PRELOAD` did not come back.** The plan said the `m`-outer FSM "does not
+   need re-deriving: it is the core as it stood before grx930 commit 0c5df42".
+   Most of it did not need restoring at all. That FSM used a bank swap and a
+   preload state to hide the weight load behind the previous tile's run, and with
+   resident banks there is nothing to hide — so `m`-outer came back as three
+   changes to the shipped FSM (where `S_WLOAD` hands off, where the K loop
+   advances, and where a write's end goes) and no new state.
+2. **`m`-outer works without resident banks too**, which is §2.1's "as shipped"
+   column as written: the weights are reloaded per (row, N tile, K tile), `M`
+   times the traffic. Measured at `M = 4, N = 8, K = 32`: 1,152 cycles and 1,024
+   cycles of weight movement, against the interchanged order's 576 and 352. So the
+   mode is not tied to MB and C4(c) can sweep either order at any point.
+3. **The orders agree about arithmetic, not about noise.** Both return the same C
+   from the same banks with the error model off. With it on they are not expected
+   to match bitwise, and this is by construction rather than by accident: E1 ties
+   every draw to the core's loop order, so changing the order changes the draw
+   sequence. Worth stating because "C bit-identical between orders" was this step's
+   gate, and it holds in the sense that matters and cannot hold in the other.
+
+One limitation is recorded rather than fixed: the calibration hook on a row
+advance (§5.1's memory shadow, `cal_take_row`) stays on the interchanged order.
+Its resume state is derived from that order's advance, and MB's gate needs no
+calibration mid-GEMM, so it is gated off under `m`-outer rather than left to fire
+into the wrong state.
 
 **C0, met.** PTM-C needs no start strobe: the systolic array is a fixed
 transform of its input streams, so the shim keeps each input's history on hop
@@ -357,7 +392,7 @@ grxgpu's RTL owners, under the boundary rule of `AGENTS.md` §2.
 |---|---|---|
 | Now | Immediately, in parallel | S0; A3; A-synth; G1 (D1–D4 settled; F0 and C0 done) |
 | Next | C0 green, as it now is | C1; G0 and C3 once C1 is green (F1 done) |
-| Then | C1 green, C2 tile now green | MB next; F2 once it is in; G2 once MB and G1 have reported |
+| Then | C1, C2 tile and MB now green | F2 next, on MB's numbers; G2 once G1 has reported |
 | Last | C2 tile, MB, C3 and A-synth green | C4; then S1 and S2 on its CSR map, F3 on its numbers, and G3 |
 
 The critical path is C0 → C1 → C2 tile → MB → C4. Everything else runs beside

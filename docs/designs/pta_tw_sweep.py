@@ -56,6 +56,18 @@ MEASURED_C2 = {
     "EO-scan": 46_592,
 }
 
+# ---- measured, MB's gate (grx930 `make core_mb`, BANKS=32) -----------------
+# 6.2's EO-res point, measured instead of modelled: the tile holds a bank per
+# (N tile, K tile), so a weight program is the select.  MB_TW is that select's own
+# cycle -- step MB's "if a bank select takes a cycle in RTL, the gate counts that
+# cycle as Tw", and the 2.1 break-even sits at 8, so one cycle leaves EO-res in
+# the resident regime.
+MB_TW = 1
+MEASURED_MB = {
+    "interchanged": 44_608,
+    "m-outer": 16_896,
+}
+
 # ---- published ------------------------------------------------------------
 TFLN_BW_HZ = 45e9
 
@@ -103,6 +115,37 @@ def core_cycles(pta_tw, pta_ts, m=M, n=N, k=K,
     write = m * kt * n
     shot = m * nt * kt * (pta_ts + SHOT_FLOOR)
     return scan + restore + write + shot
+
+
+def core_resident(pta_ts, m=M, n=N, k=K, rows=NUM_ROWS, cols=NUM_COLS):
+    """EO-res in the interchanged order, as the core runs it (MB).
+
+    `core_cycles` with the scan replaced by the select: the weights are already at
+    the tile, so S_WLOAD spends its bookkeeping cycle and leaves.  Everything else
+    is unchanged, which is the point -- resident buys this order only the scan,
+    because it already loaded each tile once.
+    """
+    nt = -(-n // cols)
+    kt = -(-k // rows)
+    select = nt * kt * MB_TW
+    restore = m * (kt - 1) * n
+    write = m * kt * n
+    shot = m * nt * kt * (pta_ts + SHOT_FLOOR)
+    return select + restore + write + shot
+
+
+def core_shipped_resident(pta_ts, m=M, n=N, k=K, rows=NUM_ROWS, cols=NUM_COLS):
+    """EO-res in the m-outer order, as the core runs it (MB).
+
+    A select and a shot per (output row, N tile, K tile), and one row write per
+    (output row, N tile) -- nc columns each, so N a row.  No restore: m-outer holds
+    the running sum in acc[] across the K loop, which is the whole reason it writes
+    once a row, and the reason 2.1 says a resident tile wants this order back.
+    """
+    nt = -(-n // cols)
+    kt = -(-k // rows)
+    shots = m * nt * kt
+    return shots * MB_TW + shots * (pta_ts + SHOT_FLOOR) + m * n
 
 
 def core_band(m=M, n=N, k=K, rows=NUM_ROWS, cols=NUM_COLS):
@@ -253,6 +296,30 @@ def main():
           f" are both unreachable; the nearest are {SHOT_FLOOR} and {4 + SHOT_FLOOR}")
     print(f"  Tw = nc*kr + PTA_TW and Td = nc; at this shape the tile is full, so"
           f" they are 6.2's {SCAN} and {TD}")
+
+    # 4c. EO-res in both orders, resident (MB's gate, measured).
+    section("4c. EO-res with Nt*Kt resident banks, both orders (MB, measured)")
+    band = core_band()
+    hi_i = core_resident(1)
+    hi_o = core_shipped_resident(1)
+    got_i = MEASURED_MB["interchanged"]
+    got_o = MEASURED_MB["m-outer"]
+    assert hi_i - band <= got_i <= hi_i, (got_i, hi_i, band)
+    assert hi_o - band <= got_o <= hi_o, (got_o, hi_o, band)
+    print(f"  {'order':<14}{'model band':>20}{'measured':>11}  Tw = the select")
+    print(f"  {'interchanged':<14}{hi_i - band:>9,}..{hi_i:<9,}{got_i:>11,}")
+    print(f"  {'m-outer':<14}{hi_o - band:>9,}..{hi_o:<9,}{got_o:>11,}")
+    # The verdict, and the band on it: each order's shots land where the hop's
+    # entry parity puts them, and the two orders do not land together.
+    print(f"  the shipped order wins by {got_i / got_o:.2f}x"
+          f"  (the model's band on the ratio: {(hi_i - band) / hi_o:.2f}x"
+          f" .. {hi_i / (hi_o - band):.2f}x)")
+    print(f"  2.1 at Tw = {MB_TW}, Ts = {1 + SHOT_FLOOR}:"
+          f" {interchanged(MB_TW, 1 + SHOT_FLOOR, TD) / shipped(MB_TW, 1 + SHOT_FLOOR, TD):.2f}x"
+          f" folded, {interchanged(MB_TW, 1 + SHOT_FLOOR, TD, restore=True) / shipped(MB_TW, 1 + SHOT_FLOOR, TD):.2f}x"
+          f" unfolded as the core is built")
+    print(f"  6.2's EO-res row said 7.2x, which assumed Ts = 1; C2 measured the"
+          f" shot's floor and MB measured the orders")
 
     # 5. Sweeping PTA_TW between them.
     section("5. PTA_TW swept at PTA_TS = 1: interchange gain (shipped / interchanged)")
