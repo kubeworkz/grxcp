@@ -153,35 +153,59 @@ def main():
         who = "C2 tile" if order == "interchanged" else "MB"
         section(f"2{'a' if order == 'interchanged' else 'b'}. Predicted, {order} order"
                 f" (checked by {who}); restore unfolded, GEMM not queued")
+        print(f"  a shot costs PTA_TS + {sweep.SHOT_FLOOR} cycles (C2, measured);"
+              f" the core term is the band's upper end, within one cycle a shot")
         print(f"  {'point':<24}{'level':<11}{'core':>13}{'S_AROW':>8}{'GEMM':>13}"
               f"{'DMA_LAST':>13}{'feed':>7}")
         for name, pta_tw, pta_ts, scanned in points:
             if order == "interchanged" and not scanned and pta_tw:
                 continue
             tw = (SCAN if scanned else 0) + pta_tw
+            # What a shot costs the core, which C2 measured: the register plus the
+            # hop-gated feed, the hop-aligned capture and the registered valid.
+            ts = pta_ts + sweep.SHOT_FLOOR
             for level in LEVELS:
                 per = period(level)
                 if order == "interchanged":
-                    core = sweep.interchanged(tw, pta_ts, TD, restore=True)
-                    arow = arow_interchanged(tw, pta_ts, TD, per)
+                    core = sweep.interchanged(tw, ts, TD, restore=True)
+                    arow = arow_interchanged(tw, ts, TD, per)
                 else:
-                    core = sweep.shipped(tw, pta_ts, TD)
-                    arow = arow_shipped(tw, pta_ts, TD, per)
+                    core = sweep.shipped(tw, ts, TD)
+                    arow = arow_shipped(tw, ts, TD, per)
                 total = gemm(level, core, arow)
                 feed = total - core
                 print(f"  {name:<24}{level:<11}{core:>13,}{arow:>8,}{total:>13,}"
                       f"{total - 1:>13,}{feed / total:>7.1%}")
 
+    # 2c. The core term against C2's own gate, so the two models cannot drift.
+    section("2c. The interchanged core term against C2's measurement")
+    for name, pta_tw, pta_ts, scanned in points:
+        if not scanned and pta_tw:
+            continue
+        tw = (SCAN if scanned else 0) + pta_tw
+        here = sweep.interchanged(tw, pta_ts + sweep.SHOT_FLOOR, TD, restore=True)
+        there = sweep.core_cycles(pta_tw, pta_ts, scanned=scanned)
+        assert here == there, (name, here, there)
+        got = sweep.MEASURED_C2.get(name)
+        band = sweep.core_band()
+        flag = "-"
+        if got is not None:
+            assert here - band <= got <= here, (name, here, got)
+            flag = f"{got:,}"
+        print(f"  {name:<24}model {here:>10,}  measured {flag:>10}"
+              f"  (band {band:,})")
+
     # 3. What the feed does to the loop-order verdict at the resident point.
     section("3. EO-res, whole GEMM: shipped against interchanged")
     for level in LEVELS:
         per = period(level)
-        s_core = sweep.shipped(0, 1, TD)
-        i_core = sweep.interchanged(0, 1, TD, restore=True)
-        i_fold = sweep.interchanged(0, 1, TD)
-        s = gemm(level, s_core, arow_shipped(0, 1, TD, per))
-        i = gemm(level, i_core, arow_interchanged(0, 1, TD, per))
-        i_f = gemm(level, i_fold, arow_interchanged(0, 1, TD, per))
+        ts = 1 + sweep.SHOT_FLOOR
+        s_core = sweep.shipped(0, ts, TD)
+        i_core = sweep.interchanged(0, ts, TD, restore=True)
+        i_fold = sweep.interchanged(0, ts, TD)
+        s = gemm(level, s_core, arow_shipped(0, ts, TD, per))
+        i = gemm(level, i_core, arow_interchanged(0, ts, TD, per))
+        i_f = gemm(level, i_fold, arow_interchanged(0, ts, TD, per))
         print(f"  {level:<10} shipped {s:,} vs interchanged {i:,} ({i / s:.1f}x;"
               f" {i_f:,} and {i_f / s:.1f}x with the restore folded).  Core alone:"
               f" {i_core / s_core:.1f}x, {i_fold / s_core:.1f}x folded")

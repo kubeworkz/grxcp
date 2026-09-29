@@ -43,6 +43,19 @@ MEASURED_SHIPPED = 168_448
 MEASURED_INTERCHANGED = 71_168
 MEASURED_FOLD_SAVES = 15_872
 
+# ---- measured, C2's gate (grx930 `make core_c2`) ---------------------------
+# A shot's fixed cost on the c930: the hop-gated feed in, the hop-aligned
+# capture, the registered valid.  PTA_TS buys dilation on top of it.
+SHOT_FLOOR = 6
+# The core's totals at 6.2's shape, from tb_core_verilator --c2.  The hop's entry
+# parity leaves a residue of up to one cycle a shot, so these sit at or just
+# inside the low end of the model's band.
+MEASURED_C2 = {
+    "TO-1ms": 3_254_785,
+    "TO-10us": 86_784,
+    "EO-scan": 46_592,
+}
+
 # ---- published ------------------------------------------------------------
 TFLN_BW_HZ = 45e9
 
@@ -62,6 +75,39 @@ def interchanged(tw, ts, td, m=M, nt=NT, kt=KT, restore=False):
     if restore:
         t += m * nt * (kt - 1) * td
     return t
+
+
+def core_cycles(pta_tw, pta_ts, m=M, n=N, k=K,
+                rows=NUM_ROWS, cols=NUM_COLS, scanned=True):
+    """What the c930 core spends, term by term, as C2's gate measures it.
+
+    Each term is one of the core's states, and each is `interchanged()`'s
+    corresponding term with 2.1's full-tile constant replaced by what the RTL
+    walks:
+
+      scan     S_WLOAD, N*K cells -- every weight element programmed once, which
+               is Nt*Kt*(nc*kr) summed over tiles, not Nt*Kt*64
+      settle   S_WLOAD held, Nt*Kt*PTA_TW, rounded up to the hop
+      restore  S_ACCLD, M*(Kt-1)*N -- 2.1's unfolded M*Nt*(Kt-1)*Td with Td = nc
+      write    S_WRITE, M*Kt*N     -- 2.1's M*Nt*Kt*Td, likewise
+      shot     S_RUN, M*Nt*Kt*(PTA_TS + SHOT_FLOOR)
+
+    Returns the upper end of the model's band; the hop's entry parity can take
+    up to one cycle a shot off it, which is `band` below.
+    """
+    nt = -(-n // cols)
+    kt = -(-k // rows)
+    tw_eff = pta_tw + (pta_tw & 1)
+    scan = (n * k if scanned else 0) + nt * kt * tw_eff
+    restore = m * (kt - 1) * n
+    write = m * kt * n
+    shot = m * nt * kt * (pta_ts + SHOT_FLOOR)
+    return scan + restore + write + shot
+
+
+def core_band(m=M, n=N, k=K, rows=NUM_ROWS, cols=NUM_COLS):
+    """One cycle a shot: the hop's entry parity, the same residue A1 needed."""
+    return m * (-(-n // cols)) * (-(-k // rows))
 
 
 def break_even(td, m=M, kt=KT, restore=False):
@@ -174,6 +220,39 @@ def main():
               f"   [{a:,} / {b:,}]")
     print(f"  operands the DMA fetches for this GEMM: A {M}x{K} + B {K}x{N}"
           f" = {M * K + K * N:,}")
+
+    # 4b. What the core actually spends at those points, and why it differs.
+    section("4b. The same points as the core spends them (C2's gate, measured)")
+    band = core_band()
+    print(f"  {'point':<9}{'model band':>20}{'measured':>11}"
+          f"{'6.2 table':>11}{'delta':>10}  = restore + shot")
+    for name, pta_tw, pta_ts, scanned in points:
+        hi = core_cycles(pta_tw, pta_ts, scanned=scanned)
+        tw = (SCAN if scanned else 0) + pta_tw
+        folded = interchanged(tw, pta_ts, TD)
+        if name not in MEASURED_C2:
+            print(f"  {name:<9}{hi - band:>9,}..{hi:<9,}{'-':>11}"
+                  f"{fmt_cycles(folded):>11}{'-':>10}  needs Nt*Kt banks (6.2)")
+            continue
+        got = MEASURED_C2[name]
+        assert hi - band <= got <= hi, (name, hi - band, got, hi)
+        restore = M * (KT - 1) * N
+        # The shot's excess over 6.2's Ts, taken from the measurement rather than
+        # from the band's upper end, so the itemisation below is exact.
+        scan = (N * K if scanned else 0) + NT * KT * (pta_tw + (pta_tw & 1))
+        shot_over = (got - scan - restore - M * KT * N) - M * NT * KT * pta_ts
+        # The two structural differences account for the whole gap, exactly.
+        assert got - folded == restore + shot_over, (name, got - folded,
+                                                     restore, shot_over)
+        print(f"  {name:<9}{hi - band:>9,}..{hi:<9,}{got:>11,}"
+              f"{fmt_cycles(folded):>11}{got - folded:>+10,}"
+              f"  = {restore:,} + {shot_over:,}")
+    print(f"  the restore is 2.1's unfolded M*Nt*(Kt-1)*Td, which 2.3 measures at"
+          f" {MEASURED_FOLD_SAVES:,} and 6.2's table folds away")
+    print(f"  the shot's floor is {SHOT_FLOOR} cycles, so 6.2's Ts = 1 and Ts = 5"
+          f" are both unreachable; the nearest are {SHOT_FLOOR} and {4 + SHOT_FLOOR}")
+    print(f"  Tw = nc*kr + PTA_TW and Td = nc; at this shape the tile is full, so"
+          f" they are 6.2's {SCAN} and {TD}")
 
     # 5. Sweeping PTA_TW between them.
     section("5. PTA_TW swept at PTA_TS = 1: interchange gain (shipped / interchanged)")
