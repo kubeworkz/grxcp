@@ -576,6 +576,36 @@ PTM-B is where the speedup lives and PTM-C is where the trust lives. Build
 both; keep both; run the numerics on whichever is convenient, since with
 identical error parameters they must agree.
 
+**The calibration engine needs a probe per tile, and now has one.** Its probe was
+PTM-C's: `C_SHOT` walked `t` to `2R+2C−1`, pulsed the shot for column `n` at
+`t = 2R+2n` and captured it at the next `t`, emulating the staggered readout itself.
+A broadside tile answers every column on one hop edge, so the walk read nothing and
+the residual came back zero — which is why the benches SKIPped the calibration under
+`PTM_B`, and why C3's whole apparatus had never run on the tile the Pockels-class
+numbers come from. The broadside probe is four `t` steps instead of `2R+2C`:
+
+| `t` | |
+|---|---|
+| 0 | the row is presented at the probe amplitude, and the shot is marked |
+| 1 | the core's hop-gated activation register takes it |
+| 2 | the shot: the tile latches every column on this hop edge |
+| 3 | all of them are read off `o_ps_out` and summed |
+
+The row is *held* rather than pulsed at one `t`, because `BROADSIDE` reads `i_act`
+directly instead of from the de-skew history and the register would otherwise have
+taken a zero back before the shot. At eight repeats on the SoC, `PTA_CAL_CYC` falls
+from **14,980 cycles to 3,780** — the probe phase itself is eight times shorter and
+the zeroing and the estimator do not shrink — and both tiles report the same
+residual, `ERR_FOUND` 2,688 and `ERR_MAX` 5,056.
+
+That agreement is worth reading carefully. A broadside shot draws once per column
+where the skewed one drew once per shot, so the noise *realisations* differ by
+construction (§4.3's E1 ties every draw to the loop order). What makes the residuals
+match is that at eight repeats the noise averages out and what is left is drift and
+programming error — per-cell state the probe does not perturb. So this is the two
+tiles agreeing about the device, not about the dither, which is the sense in which
+§4.2 says they must agree.
+
 ### 4.3 The error model
 
 The model in the source analysis — `sum += ($signed(lfsr[3:0]) - 8)`, a
