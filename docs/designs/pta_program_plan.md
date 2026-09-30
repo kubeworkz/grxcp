@@ -41,7 +41,8 @@ either names its document or is this one's.
 | PTM-C, the compatibility shim (C0) | Done: bit-identical to the systolic array on grx930's NPU benches under `PTM_C=1` (§3.1) |
 | Error model (C1) | Closed: all six impairments built in grx930 and bitwise against the C reference; the accuracy sweep ran, missed its allowance at 3 bits, and the miss is recorded (§3.1) |
 | Tile: PTM-B (C2 tile) | Landed and gated: `make core_c2`. §2.1's form holds; two of its constants and F1's predictions did not |
-| Multi-bank tile, both loop orders (MB) | Landed and gated: `make core_mb`. §6.2's EO-res point is measured in both orders — the shipped one wins by 2.6×, not 7.2× |
+| Multi-bank tile, both loop orders (MB) | Landed and gated: `make core_mb`. §6.2's EO-res point is measured in both orders — the shipped one wins by 4.42×, against the 7.2× the table claimed |
+| The shot's floor (2026-09-30) | Two cycles, not six: the hop came out of the broadside path. Every §2.1 term is an equality now, and EO-res got a third of its margin back |
 | §6.2's sweep on the SoC (C4(c)) | Landed and gated: `make pta_sweep`. All four points measured through MMIO. §2.1's terms account for every total exactly; PTM-C's drain is 81–88% of the GEMM at the Pockels-class end |
 | PTM-B SoC build (SoC-B) | Landed and gated: `make pta_sweep PTM_B=1`. §6.2's `Ts` axis is reachable — the shot moves with `PTA_TS` at §2.1's slope, and the Pockels-class end gets 3.8–4.8× faster |
 | Calibration (C3) | Landed and gated, on both tiles: the engine has a probe per tile since 2026-09-30, so C3's apparatus runs where the Pockels-class numbers come from |
@@ -138,6 +139,39 @@ it is marked *new*.
 | C4(b) | **Part done, 2026-09-24.** Vivado 2026.1 out of context on `xc7a200tfbg484-1`: the NPU baseline, the calibration engine, the CSR and S_ACT measured and placed against §6.1; §6.1's stated baseline shown to be no run's; A-synth's cut named, taken (`ACT_P` 7 → 8) and measured at 55.5 MHz. **Owed:** the tile's own row — `c930_ptm_c` and the PTM-C NPU both exceed this VM's memory | §6.1's table against what the tools say, and 100 MHz or a named pipeline cut | C4(a), A-synth |
 | C4(c) | **Done, 2026-09-29, for the `Tw` axis.** MB's three modes reach the tile from `PTA_CTRL` bits 9:7, `arow_stall_cnt` reads back at `NPU_REG_AROW_CT`, and `sw/pta_sweep.c` drives all four §6.2 points from a RISC-V program through MMIO. EO-res is measured, not modelled, and §2.1's terms account for every total exactly. It cost two fixes in C4(a)'s own code: the DMA's core watchdog was sized from the shape alone and aborted TO-1ms as a hung core, and `PTA_WLOAD_CT` counted a level rather than an event so it read 3,004 programmings where the shape makes four. **Owed:** the `Ts` axis — the SoC builds PTM-C, whose drain is fixed, so `PTA_TS` is inert on it (below) | `make pta_sweep`: every point runs, C exact at each, EO-res among them | C2 tile, MB, C4(a) |
 | SoC-B | **Done, 2026-09-30.** The SoC's Verilator flags defined `PTM_C` and not `PTM_B`, so the file list carried `c930_ptm_b.sv` while the core still elaborated PTM-C. One define. `make pta_sweep PTM_B=1` now sweeps §6.2 on a broadside SoC and the drain becomes a shot: EO-scan 2,528 → 672 cycles, EO-res 2,337 → 487, and the range widens from 159× to 596×. The gate is the slope — the total moves by `M·Nt·Kt` = 32 cycles a unit of `PTA_TS`, 449 against the model's 448 from `PTA_TS` 2 to 16 | `make pta_sweep PTM_B=1`: the shot moves with `PTA_TS` at §2.1's slope, and the same run on `PTM_C=1` reports the register inert rather than passing quietly | C4(c) |
+
+**The shot's floor, 2026-09-30.** §2.1 recorded the shot's six cycles as open
+and named two suspects: a hop gate serving a de-skew the broadside tile does not
+need, and a registered valid. Both were right, and the hop was the bigger of them.
+
+Traced at `PTA_TS` = 1 the six were one cycle for the start strobe's register, three
+for two hop edges — one waiting for the core's hop-gated feed to land, one aligning
+the capture — one for an `S_DONE` state that did nothing but raise `o_valid`, and
+one for that register. The three hop cycles and `S_DONE` were all there because PTM-C
+emulates a half-rate systolic array and PTM-B was borrowing the machinery. A broadside
+tile is not emulating one, so the hop came out of that path and four of the six went
+with it. What remains is two: the register at the tile's input and the register at
+its output, which do not go without making the tile combinational — and C4(b) settled
+that direction, since the activation stage's Fmax is what the board plan's 100 MHz
+rests on.
+
+PTM-C is untouched, which is the whole safety argument: its nine error-model modes
+still pass and its SoC sweep is byte-identical. What moved:
+
+| | before | after |
+|---|---|---|
+| EO-scan, core bench | 46,592 | 40,448 |
+| EO-res, interchanged | 44,608 | 38,432 |
+| EO-res, `m`-outer | 16,896 | 8,704 |
+| the two orders | 2.64× | **4.42×** |
+| EO-res on the SoC | 487 | 388 |
+
+Two things beyond the cycles. The shot is **deterministic** now — the hop's entry
+parity used to move it a cycle either way, which is why C2 gated it as a bound and MB
+gated its totals as bands; every term of §2.1 is an equality on this tile, held that
+way on purpose because an equality is what would catch a hop dependence coming back.
+And one of §6.2's two named `Ts` values is reachable for the first time: `Ts` = 5
+is `PTA_TS` = 3. `Ts` = 1 still is not, the minimum being three.
 
 **The L2 directory hole, 2026-09-30.** C4(a)'s second finding is closed. The L2
 recorded a sharer on a read fill and, on a write-through with no allocate, dropped
@@ -277,15 +311,20 @@ core's, and all three are recorded in the CPU document:
    columns, so `Tw = nc·kr + PTA_TW` and `Td = nc`. Summed over tiles they reduce
    to `N·K` and `M·Kt·N`, which is why the form survives; a ragged `N` tile is
    *cheaper* than the table. CPU document §2.1.
-2. **A shot costs `PTA_TS + 6` cycles**, from the hop-gated feed, the hop-aligned
-   capture and the registered valid. §6.2's `Ts` = 1 and `Ts` = 5 are both
-   unreachable. The floor is paid `M·Nt·Kt` times in both loop orders, so §2.1's
-   resident row falls from **7.2× to 2.2×** — the verdict survives, the margin
-   does not. How much of the six is irreducible is open, and MB is where it would
-   pay for itself. CPU document §2.1 and §6.2.
+2. **A shot costs `PTA_TS + 2` cycles**, the register at the tile's input and the
+   register at its output. The floor is paid `M·Nt·Kt` times in both loop orders,
+   so §2.1's resident row falls from **7.2× to 3.4×** — the verdict survives and
+   most of the margin does. CPU document §2.1 and §6.2.
+
+   C2 first measured this at **six**, and recorded the six as open: this handshake's
+   cost rather than photonics'. Four of them were the array's— the core fed the tile
+   on half-rate hop edges and the capture waited for one, which is what PTM-C needs
+   to emulate a systolic array and PTM-B was borrowing. Retiring that on 2026-09-30
+   also made the shot deterministic, so §2.1's terms are equalities rather than a
+   band (below).
 3. **F1's predictions were re-derived.** They took the core term as
    `interchanged(Tw, PTA_TS, Td)`, so its TO-10µs whole GEMM, 78,796 cycles, came
-   out *below* the 86,784 the core alone now measures.
+   out *below* what the core alone measures.
    [`pta_feed_model.py`](pta_feed_model.py) carries the floor and cross-checks its
    core term against C2's measurement, so the two models cannot drift again. The
    A-row wait falls as the total rises — a slower core gives PF1 more time — so
@@ -293,34 +332,40 @@ core's, and all three are recorded in the CPU document:
 
 | Point, loop order | A-row wait, was → now | Whole GEMM, was → now |
 |---|---|---|
-| TO-10µs, interchanged | 385 / 574 → 7 / 196 | 78,796 / 79,118 → 90,706 / 91,028 |
-| EO-scan, interchanged | 1,637 / 1,826 → 1,259 / 1,448 | 39,856 / 40,178 → 51,766 / 52,088 |
-| EO-res, interchanged | 1,701 / 1,890 → 1,323 / 1,512 | 37,872 / 38,194 → 49,782 / 50,104 |
-| EO-res, shipped | 0 / 0 | 4,427 / 4,560 → 16,715 / 16,848 |
+| TO-10µs, interchanged | 385 / 574 → 259 / 448 | 78,796 / 79,118 → 82,766 / 83,088 |
+| EO-scan, interchanged | 1,637 / 1,826 → 1,511 / 1,700 | 39,856 / 40,178 → 43,826 / 44,148 |
+| EO-res, interchanged | 1,701 / 1,890 → 1,575 / 1,764 | 37,872 / 38,194 → 41,842 / 42,164 |
+| EO-res, shipped | 0 / 0 | 4,427 / 4,560 → 8,523 / 8,656 |
 
    (NPU bench / SoC. The core term is the band's upper end; the hop's entry parity
    can take up to one cycle a shot off it.) F1's *structure* held — §3.3's race
    model still reproduces all four F0 measurements with no fitted constant, and
    that section is untouched — it was fed a wrong constant. What it says about F2
-   is unchanged in direction and weaker in degree: writeback and PF2 still lead,
-   but the feed's share at EO-res shipped is 11%, not 42%.
+   is unchanged in direction: writeback and PF2 still lead, and by more than the
+   first version had it — the feed's share at EO-res shipped is 22%, against 42% in
+   that version and 11% at the shot's six-cycle floor. The shot is no longer the
+   larger term; that floor came down on 2026-09-30 (below).
 
 **Step MB, as built.** The select costs one cycle, which the gate counts as
 `Tw`; the §2.1 break-even sits at 8, so EO-res stays in the resident regime.
 Storage was small as expected — 2,048 weights at 32 banks. Measured at
 `M = 64, N = 8, K = 256`:
 
-| Order | Model band | Measured |
+| Order | Model | Measured |
 |---|---|---|
-| interchanged, resident | 44,576–46,624 | **44,608** |
-| `m`-outer, resident | 14,848–16,896 | **16,896** |
+| interchanged, resident | 38,432 | **38,432** |
+| `m`-outer, resident | 8,704 | **8,704** |
 
-**The shipped order wins by 2.6×**, inside the model's 2.6×–3.1× band. That band
-is wide because each order's shots land where the hop's entry parity puts them and
-the two do not land together: `m`-outer's at seven cycles, the interchanged
-order's at six. §6.2's EO-res row claimed 7.2×, which assumed `Ts` = 1 — at the
-floor C2 measured, §2.1 gives 2.8× unfolded and the core gives 2.6×. The verdict
-survives being built; the margin is a third of the claim.
+**The shipped order wins by 4.42×**, and the model predicts both totals
+exactly rather than bounding them — the shot has no hop left in it, so nothing
+jitters. §6.2's EO-res row claimed 7.2×, which assumed `Ts` = 1; at the
+floor of two, §2.1 gives 4.42× unfolded and that is what the core gives.
+The verdict survives being built and most of its margin survives with it.
+
+It read 44,608 against 16,896 and 2.6× until the shot's floor came down
+on 2026-09-30. A fixed per-shot cost is a larger share of `m`-outer's smaller
+total, so the floor had been masking this point's advantage rather than
+reducing it evenly — which is the argument for having gone after it.
 
 Three things this step found that the paragraph above did not expect:
 
@@ -485,17 +530,19 @@ shot's six-cycle floor, which these numbers did not have; see §3.1**:
 
 | Point, loop order | A-row wait | Whole GEMM | Feed share |
 |---|---|---|---|
-| TO-10µs, interchanged | 7 / 196 | 90,706 / 91,028 | 2.1% / 2.4% |
-| EO-scan, interchanged | 1,259 / 1,448 | 51,766 / 52,088 | 6.0% / 6.6% |
-| EO-res, interchanged | 1,323 / 1,512 | 49,782 / 50,104 | 6.4% / 7.0% |
-| EO-res, shipped | 0 / 0 | 16,715 / 16,848 | 11.2% / 11.9% |
+| TO-10µs, interchanged | 259 / 448 | 82,766 / 83,088 | 2.6% / 2.9% |
+| EO-scan, interchanged | 1,511 / 1,700 | 43,826 / 44,148 | 7.7% / 8.4% |
+| EO-res, interchanged | 1,575 / 1,764 | 41,842 / 42,164 | 8.2% / 8.9% |
+| EO-res, shipped | 0 / 0 | 8,523 / 8,656 | 21.9% / 23.1% |
 
-The shipped order still wins at EO-res once the feed counts, but by less: 2.0×
-with the restore folded (2.0× on the SoC), against 2.1× for the core alone,
-because 1,900 to 2,000 fixed feed cycles now sit beside a 14,848-cycle core.
-That still puts writeback and PF2 first among F2's candidates, ahead of anything
-in the core, but the shot's floor is now the larger term and MB is where it is
-attacked.
+The shipped order still wins at EO-res once the feed counts: 4.9× unfolded
+and 3.0× with the restore folded, against 5.8× and 3.4× for the core alone.
+The feed's share is what has grown — 22% of a shipped-order EO-res GEMM,
+against 11% when the shot's floor was six — because the same 1,900 fixed
+feed cycles now sit beside a 6,656-cycle core rather than a 14,848-cycle one.
+So writeback and PF2 lead F2's candidates by more than they did, and the shot
+is no longer the larger term: it was cut from six cycles to two on 2026-09-30
+(§3.1).
 
 ### 3.4 Track G — the G100 (grxgpu, by proposal)
 

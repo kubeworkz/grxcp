@@ -221,34 +221,48 @@ writes — not by the tile: the review's operand-supply finding
 ([`pta_tpaqcn_review.md`](pta_tpaqcn_review.md) §7) arriving from the tile
 side, and arriving harder than this document first had it.
 
-**`Ts` is six cycles on this host, not one, and the resident row moves most.**
-The reasoning above is right — the host presents one operand vector per cycle —
-but it undercounts what presenting one costs: the feed is hop-gated going in, the
-capture lands on a hop, and `o_valid` is registered. C2's gate measures a shot at
-`PTA_TS + 6` cycles, and the floor is paid `M · Nt · Kt` times in *both* orders.
-At `PTA_TS` = 1 the measurement lands at six cycles a shot, 60 ns:
+**`Ts` is three cycles on this host, not one, and the resident row moves most.**
+The reasoning above is right — the host presents one operand vector per cycle — but
+it undercounts what presenting one costs: a register at the tile's input, a register
+at its output, and a register on the start strobe. C2's gate measures a shot at
+exactly `PTA_TS + 2`, and that floor is paid `M · Nt · Kt` times in *both* orders. At
+`PTA_TS` = 1 the measurement is three cycles a shot, 30 ns:
 
 | Tile | As shipped | Interchanged | Faster order |
 |---|---|---|---|
-| Pockels, resident | 128 µs (was 25.6) | 287 µs (was 184) | **as shipped, 2.2×** (was 7.2×) |
+| Pockels, resident | 66.6 µs (was 25.6) | 225 µs (was 184) | **as shipped, 3.4×** (was 7.2×) |
 
-(Folded, as the table above is. Unfolded, as the core is built: 128 µs against
-445 µs, 3.5×.) The verdict survives, the margin does not: the resident tile still
-wants the shipped order, by 2.2× rather than 7.2×, because a fixed per-shot cost
-is a larger share of the smaller total. The scanned and thermo-optic rows barely
-move — their `Tw` dominates — so this changes nothing about the interchange
-argument and everything about how much headroom the resident point has.
+(Folded, as the table above is. Unfolded, as the core is built: 66.6 µs against
+384 µs, 5.8×.) The verdict survives and the margin is most of the way back: the
+resident tile still wants the shipped order, by 3.4× rather than 7.2×, because a
+fixed per-shot cost is a larger share of the smaller total. The scanned and
+thermo-optic rows barely move — their `Tw` dominates — so this changes nothing about
+the interchange argument and everything about how much headroom the resident point
+has.
 
-Step MB has since built the resident tile and measured both orders at this
-point: 16,896 cycles m-outer against 44,608 interchanged, **2.6×** to the shipped
-order, which is inside the model's band (§6.2). The reprice above stands.
+**It read 2.2× until 2026-09-30, when four of the six cycles were retired.** The
+floor was six: the same three registers plus three cycles of hop, because the core
+fed the tile on half-rate hop edges and the capture waited for one — which is what
+PTM-C needs to emulate a systolic array, and what PTM-B had been borrowing. A
+broadside tile is not emulating one, so the hop came out of that path (§4.2). Two
+things followed. The resident point got a third of its claimed margin back, and the
+shot became *deterministic*: the hop's entry parity used to move it a cycle either
+way, and with nothing left to move it every term of the model above is an equality
+rather than a band — six shapes by 25 `(PTA_TW, PTA_TS)` points, held exactly.
 
-**How much of the six is irreducible is open.** It is this handshake's cost, not
-photonics': one hop gate serves the de-skew the broadside tile does not need, and
-the registered valid could be forwarded. Retiring any of it is RTL work with its
-own gate, and until someone does it the six is what the model uses. Step MB is
-where it would pay for itself, since that is where `Tw` goes to zero and the shot
-is all that is left.
+Step MB built the resident tile and measured both orders at this point:
+**8,704** cycles m-outer against **38,432** interchanged, **4.42×** to the shipped
+order, which the model now predicts exactly rather than bounding (§6.2). It read
+16,896 against 44,608 and 2.64× at the six-cycle floor. The reprice above stands.
+
+**How much of the two is irreducible is no longer an open question in the same
+way.** The six were this handshake's cost rather than photonics', and the part that
+was really the array's — the hop — is gone. What is left is a register at the tile's
+input and one at its output, and those do not go without making the tile
+combinational. C4(b) settled that direction: the activation stage's Fmax is what the
+board plan's 100 MHz rests on, and the one pipeline cut it took there bought 4 MHz.
+So two is the floor unless someone is willing to spend timing on it, and the model
+uses two.
 
 What a Pockels tile pays instead of settle is bias drift, and it is where the
 two materials part. Lithium niobate modulators drift under a held DC bias: side
@@ -610,6 +624,23 @@ loop interchange is written against.
 PTM-B is where the speedup lives and PTM-C is where the trust lives. Build
 both; keep both; run the numerics on whichever is convenient, since with
 identical error parameters they must agree.
+
+**Nothing in this tile waits for a hop.** It did until 2026-09-30, and that was
+the whole of the shot's six-cycle floor beyond its three registers: the core fed
+the tile on half-rate hop edges and the capture waited for one, because that is what
+PTM-C needs to emulate a systolic array and this tile was borrowing the machinery. A
+broadside tile is not emulating an array — it reads `i_act` and `i_ps_in` directly,
+with no de-skew history — so the hop was never doing anything for it. The core
+registers the broadside feed every cycle, the tile's capture and its noise draws
+key off the shot itself, and `S_SHOT` is one cycle that raises `o_valid` as it leaves.
+
+The shot is therefore **exactly `PTA_TS + 2`**, two being the register in and the
+register out, and *deterministic*: the hop's entry parity used to move it a cycle
+either way, which is why C2 first had to gate it as a bound. There is nothing left
+to move it, so §2.1's whole cost model is an equality on this tile. One
+consequence worth knowing: a shot strobe has to be exactly one cycle now, because
+the tile's streams step on it rather than on a hop — the calibration engine's
+strobes are gated to one cycle for that reason.
 
 **The calibration engine needs a probe per tile, and now has one.** Its probe was
 PTM-C's: `C_SHOT` walked `t` to `2R+2C−1`, pulsed the shot for column `n` at
@@ -1193,23 +1224,28 @@ cost the model gives it none of. Measured on the broadside tile at this shape
 
 | Point | This table | Measured | Delta | = restore §2.1 unfolds | + shot above `Ts` |
 |---|---|---|---|---|---|
-| TO-1ms | 3.23 M | 3,254,785 | +26,113 | 15,872 | 10,241 |
-| TO-10µs | 60.7 k | 86,784 | +26,112 | 15,872 | 10,240 |
-| EO-scan | 20.5 k | 46,592 | +26,112 | 15,872 | 10,240 |
+| TO-1ms | 3.23 M | 3,248,640 | +19,968 | 15,872 | 4,096 |
+| TO-10µs | 60.7 k | 80,640 | +19,968 | 15,872 | 4,096 |
+| EO-scan | 20.5 k | 40,448 | +19,968 | 15,872 | 4,096 |
 
 Both differences are the model's, not the core's, and together they account for
 the whole gap. The restore is the `M · Nt · (Kt − 1) · Td` §2.1 already says to
-add back and §2.3 measures at 15,872 cycles. The shot costs `PTA_TS + 6` — the
-feed is hop-gated going in, the capture lands on a hop, and `o_valid` is
-registered — so **`PTA_TS` = 1 and `PTA_TS` = 5 are both unreachable; the nearest
-shots this core can take are 6 and 10 cycles.** Like the scan's 64, that is the
-host's cost rather than an artifact to design out, and it is reported.
+add back and §2.3 measures at 15,872 cycles. The shot costs exactly `PTA_TS + 2` —
+the register at the tile's input and the register at its output — so **`PTA_TS` = 1
+is unreachable, its minimum giving three; `PTA_TS` = 5 is reachable, at
+`PTA_TS` = 3.** Like the scan's 64, that is the host's cost rather than an
+artifact to design out, and it is reported.
+
+These read 3,254,785 / 86,784 / 46,592 against a floor of six until 2026-09-30,
+when the hop came out of the broadside shot (§4.2). The floor's other four cycles
+were the array's, not this tile's.
 
 The ratio the sweep exists to measure is unharmed: `PTA_TW`'s slope is still
-`Nt · Kt` cycles per unit and a shot's is still `Nt · Kt · M`. What the hop costs
-instead is precision — its free-running phase shifts a state by a cycle depending
-on what ran before it, up to one cycle a shot — which is why the gate holds the
-scan, the restore and the write to equality and the shot to that band.
+`Nt · Kt` cycles per unit and a shot's is still `Nt · Kt · M`, and the gate now
+holds **every** term to equality rather than the shot to a band. The hop used to
+cost precision as well as cycles — its free-running phase shifted a state by a
+cycle depending on what ran before it, up to one a shot — and taking it out of
+the broadside path removed that too.
 
 **Measured on the SoC (C4(c)).** `make pta_sweep` runs the four points from a
 RISC-V program through MMIO: firmware sets `PTA_TW`, `PTA_TS` and MB's `PTA_CTRL`
@@ -1263,28 +1299,30 @@ Two consequences, and they are the useful part of this step:
 
   | Point | PTM-C | PTM-B | |
   |---|---|---|---|
-  | TO-1ms | 402,527 | 400,801 | 1.00× |
-  | TO-10µs | 6,528 | 4,800 | 1.36× |
-  | EO-scan | 2,528 | 672 | **3.76×** |
-  | EO-res | 2,337 | 487 | **4.80×** |
+  | TO-1ms | 402,527 | 400,704 | 1.00× |
+  | TO-10µs | 6,528 | 4,704 | 1.39× |
+  | EO-scan | 2,528 | 576 | **4.39×** |
+  | EO-res | 2,337 | 388 | **6.02×** |
 
-  The whole range, TO-1ms to EO-scan, widens from 159× to **596×** — the drain was
+  The whole range, TO-1ms to EO-scan, widens from 159× to **696×** — the drain was
   flooring the cheap end, which is what made the thermal range look narrower than
   it is. And the shot per run, derived from each total by removing §2.1's other
-  terms, is 64 flat on PTM-C and `PTA_TS + 6` on PTM-B, which is C2's floor
+  terms, is 64 flat on PTM-C and `PTA_TS + 2` on PTM-B, which is C2's floor
   measured a second way and through MMIO this time.
 
   **SoC-B's gate is the slope.** With `PTA_TS` swept at EO-scan's other settings,
   the total moves by `M · Nt · Kt` = 32 cycles a unit — §2.1's shot term, measured
-  on the SoC: from `PTA_TS` 2 to 16 the total rises 449 cycles against the 448 the
-  model asks for. `PTA_TS` = 1 sits below the shot's six-cycle floor, so the step
-  out of it is not on the line and the gate does not treat it as though it were.
+  on the SoC — and it moves by exactly that at every step, the span from
+  `PTA_TS` 1 to 16 being 480 cycles against the model's 480. The line is straight
+  from `PTA_TS` = 1: it used to bend at the first step, because 1 sat below the
+  six-cycle floor, and with the floor at two there is nothing below it.
 - **§2.1's sentence about the feed becomes testable on PTM-B, and is not yet
   settled.** §2.1 says a resident tile "is bound by the host — its feed and its
   writes — not by the tile". On the PTM-C SoC it was plainly the tile: the drain was
-  81–88% of the GEMM. On the PTM-B SoC at EO-res the core spends **487** cycles —
-  192 of shot, 192 of write, 96 of restore — while the DMA is busy **820**. So the
-  fetch now outlasts the arithmetic by two thirds.
+  81–88% of the GEMM. On the PTM-B SoC at EO-res the core spends **388** cycles —
+  96 of shot, 192 of write, 96 of restore — while the DMA is busy **721**, a
+  ratio of 1.86. So the fetch now outlasts the arithmetic by nearly two to one,
+  and the write alone is half of what the core spends.
 
   That is not the same as saying the feed binds it, and `S_AROW` says why: it is
   **zero**, so within a GEMM the core never waits for an operand. The DMA's extra
@@ -1322,22 +1360,26 @@ Three rules hold at the Pockels-class end:
   what the plan says to count as `Tw`; the §2.1 break-even sits at 8 cycles, so one
   cycle leaves the point in the resident regime. Measured against the same banks:
 
-  | Order | Model band | Measured |
+  | Order | Model | Measured |
   |---|---|---|
-  | interchanged | 44,576–46,624 | **44,608** |
-  | m-outer | 14,848–16,896 | **16,896** |
+  | interchanged | 38,432 | **38,432** |
+  | m-outer | 8,704 | **8,704** |
 
-  **The shipped order wins by 2.6×**, and the band on that ratio is 2.6× to 3.1×
-  because each order's shots land where the hop's entry parity puts them and the
-  two orders do not land together — m-outer's at seven cycles, the interchanged
-  order's at six. The table above says 7.2×, which assumed `Ts` = 1; at the shot's
-  measured floor §2.1 gives 2.8× unfolded, and the core measures 2.6×. So the
-  verdict §2.1 reached for a resident tile survives being built, and the margin is
-  a third of what the table claimed.
+  **The shipped order wins by 4.42×**, and the model predicts both totals exactly
+  rather than bounding them: the shot has no hop left in it, so nothing jitters.
+  The table above says 7.2×, which assumed `Ts` = 1; at the shot's measured
+  floor of two §2.1 gives 4.42× unfolded, which is what the core measures. So
+  the verdict §2.1 reached for a resident tile survives being built and most of
+  its margin survives with it.
+
+  It read 44,608 against 16,896 and 2.6× until 2026-09-30, when the hop
+  came out of the broadside shot (§4.2). A fixed per-shot cost is a larger
+  share of `m`-outer's smaller total, so the floor had been masking this point's
+  advantage rather than reducing it evenly.
 
   What resident buys each order differs, and the difference is the whole argument.
   The interchanged order trades a 2,048-cycle scan for a 32-cycle select and keeps
-  1,984 cycles of 46,592 — four per cent — because it had already loaded each tile
+  2,016 cycles of 40,448 — five per cent — because it had already loaded each tile
   exactly once. `m`-outer, which otherwise reloads per output row, is spared `M`
   times that scan. The scan is not free in either case: a GEMM that fills the banks
   pays it, exactly as it always cost, and what the resident point claims is that
