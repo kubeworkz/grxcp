@@ -42,7 +42,7 @@ either names its document or is this one's.
 | Error model (C1) | Closed: all six impairments built in grx930 and bitwise against the C reference; the accuracy sweep ran, missed its allowance at 3 bits, and the miss is recorded (§3.1) |
 | Tile: PTM-B (C2 tile) | Landed and gated: `make core_c2`. §2.1's form holds; two of its constants and F1's predictions did not |
 | Multi-bank tile, both loop orders (MB) | Landed and gated: `make core_mb`. §6.2's EO-res point is measured in both orders — the shipped one wins by 2.6×, not 7.2× |
-| §6.2's sweep on the SoC (C4(c)) | Landed and gated: `make pta_sweep`. All four points measured through MMIO; the feed is 72–78% of the GEMM at the Pockels-class end |
+| §6.2's sweep on the SoC (C4(c)) | Landed and gated: `make pta_sweep`. All four points measured through MMIO. §2.1's terms account for every total exactly; PTM-C's drain is 81–88% of the GEMM at the Pockels-class end, and `PTA_TS` is inert until the SoC builds PTM-B |
 | Calibration (C3) | Landed and gated; the broadside probe is owed (C2 tile's row) |
 | SoC integration, firmware, Vivado (C4) | Not started |
 | G100 tile (G0–G3) | Not started; staged behind C2 |
@@ -135,29 +135,48 @@ it is marked *new*.
 | C3 | **Done, 2026-09-23.** C3(a) measured the correction in the C reference — the board plan's X3 — and C3(b) built the RTL: the trim and the affine in PTM-C, the calibration engine and its four schedulers, and the `cal_busy` dispatch guard. Gates P7 to P9 | CPU document §6, run with drift at TFLT's fitted rate and again at TFLN's | C1, D3 |
 | C4(a) | **Done, 2026-09-24, both halves.** The widened CSR decode, the PTA register block at `0x100` (not `0x40`: that is NPU1's window), and the two counters it reads and nothing produced. It cost three fixes outside the block: the CPU's M unit deadlocked against a store in MEM, C cannot be cleared from the CPU (the L2 stops tracking a line the CPU writes), and the probe amplitude is a bit position with no way to learn its bounds — CPU document §3.3 | `make npu` in both builds and `make pta_fw PTM_C=1`: the same seven checks over AXI-Lite and from a RISC-V program, plus `make mul_store` for the CPU fix | C3 |
 | C4(b) | **Part done, 2026-09-24.** Vivado 2026.1 out of context on `xc7a200tfbg484-1`: the NPU baseline, the calibration engine, the CSR and S_ACT measured and placed against §6.1; §6.1's stated baseline shown to be no run's; A-synth's cut named, taken (`ACT_P` 7 → 8) and measured at 55.5 MHz. **Owed:** the tile's own row — `c930_ptm_c` and the PTM-C NPU both exceed this VM's memory | §6.1's table against what the tools say, and 100 MHz or a named pipeline cut | C4(a), A-synth |
-| C4(c) | **Done, 2026-09-29.** MB's three modes reach the tile from `PTA_CTRL` bits 9:7, and `sw/pta_sweep.c` drives all four §6.2 points from a RISC-V program through MMIO. EO-res is measured, not modelled. It cost two fixes in C4(a)'s own code: the DMA's core watchdog was sized from the shape alone and aborted TO-1ms as a hung core, and `PTA_WLOAD_CT` counted a level rather than an event so it read 3,004 programmings where the shape makes four | `make pta_sweep`: every point runs, C exact at each, EO-res among them | C2 tile, MB, C4(a) |
+| C4(c) | **Done, 2026-09-29, for the `Tw` axis.** MB's three modes reach the tile from `PTA_CTRL` bits 9:7, `arow_stall_cnt` reads back at `NPU_REG_AROW_CT`, and `sw/pta_sweep.c` drives all four §6.2 points from a RISC-V program through MMIO. EO-res is measured, not modelled, and §2.1's terms account for every total exactly. It cost two fixes in C4(a)'s own code: the DMA's core watchdog was sized from the shape alone and aborted TO-1ms as a hung core, and `PTA_WLOAD_CT` counted a level rather than an event so it read 3,004 programmings where the shape makes four. **Owed:** the `Ts` axis — the SoC builds PTM-C, whose drain is fixed, so `PTA_TS` is inert on it (below) | `make pta_sweep`: every point runs, C exact at each, EO-res among them | C2 tile, MB, C4(a) |
+| SoC-B | *New:* a PTM-B SoC build, so §6.2's `Ts` axis can be swept where §6.1's numbers and the DMA live. The core already selects its tile on `PTM_B`; what this needs is the SoC's build path and a shape whose `Nt·Kt` banks fit | `make pta_sweep` on a PTM-B SoC: the shot moves with `PTA_TS`, and the drain's 81% of the GEMM goes with it | C4(c) |
 
 **What C4(c) found.** The sweep's own numbers are in the CPU document §6.2. Two
 of its results belong here because they change what other steps should expect.
 
-**The feed, not the tile, is what the Pockels-class end is waiting for — measured
-rather than argued.** Subtracting §2.1's terms from each measured total leaves the
-cycles the core spends outside them, and the operands are the same size at every
-point, so the term is nearly constant and its share is what moves:
+**What binds the Pockels-class end is the tile's own drain, and the SoC cannot
+show otherwise until it builds PTM-B.** `arow_stall_cnt` now reads back on a CSR
+(`NPU_REG_AROW_CT`), and the A-row wait is **zero at every point** — the DMA keeps
+this core fed at this shape, which is what F0 already measured on the hop core. With
+that settled, §2.1's terms account for the totals exactly:
 
-| Point | Total | §2.1's terms | Outside them | Share |
-|---|---|---|---|---|
-| TO-1ms | 402,528 | 400,832 | 1,696 | 0.4% |
-| TO-10µs | 6,528 | 4,832 | 1,696 | 26% |
-| EO-scan | 2,528 | 704 | 1,824 | 72% |
-| EO-res | 2,336 | 516 | 1,820 | 78% |
+| Point | Total | Settle | Scan | Restore | Write | Drain | A-row | Model − measured |
+|---|---|---|---|---|---|---|---|---|
+| TO-1ms | 402,528 | 400,000 | 192 | 96 | 192 | 2,048 | 0 | 0 |
+| TO-10µs | 6,528 | 4,000 | 192 | 96 | 192 | 2,048 | 0 | 0 |
+| EO-scan | 2,528 | 0 | 192 | 96 | 192 | 2,048 | 0 | 0 |
+| EO-res | 2,337 | 0 | ~0 | 96 | 192 | 2,048 | 0 | −3 |
 
-That is F2's whole question arriving with evidence, and it sharpens F2's brief: the
-candidate worth measuring first is whatever cuts a fixed ~1,700-cycle feed, not
-anything in the loop nest. **It also names F2's first blocker:** the attribution is a
-subtraction, because `arow_stall_cnt` still has no CSR — the F0 row already says so
-— and until it has one the A-row wait cannot be read back to confirm it is most of
-what sits outside the model. Exposing it is the cheapest thing F2 can start with.
+The drain is 64 cycles a run because the SoC builds PTM-C, whose readout is the
+array's skewed one. So it is **81% of the GEMM at EO-scan and 88% at EO-res** — and
+it is exactly what PTM-B replaces with a shot.
+
+**This corrects an earlier reading of the same measurement.** The first pass priced
+the shot as PTM-B's `PTA_TS + 6`, found ~1,800 cycles left over, and attributed them
+to the feed without the counter that would have checked it. The counter says zero.
+The residual was the drain the model had mispriced.
+
+Two consequences:
+
+1. **`PTA_TS` is inert on the SoC.** The `Tw` axis is real — the thermo-optic points
+   move with the register, 159× across the range — but the `Ts` axis needs PTM-B,
+   which the SoC does not build. So C4(c) has swept half of §6.2 on the SoC and the
+   other half is waiting on a **PTM-B SoC build**, which is not a large change: the
+   core already selects its tile on `PTM_B`. That is the step to add.
+2. **F2's brief is *not* what the first pass said.** There is no ~1,700-cycle feed to
+   cut: the feed is zero here and the writes are 192 cycles of 2,337. F2's question —
+   whether the host's feed binds the Pockels-class end — only becomes testable once
+   PTM-B cuts the drain to a shot, because until then the fetch finishes in the
+   drain's shadow. F2 therefore follows the PTM-B SoC build rather than leading it.
+
+**What C2 tile found, beyond its own gate.**
 
 **The shape is the SoC's, not §6.2's**, and that is not fixable at C4: this NPU is
 `MAX_M = 8, MAX_K = 16, MAX_N = 12` and cannot be asked for `M = 64, N = 8,

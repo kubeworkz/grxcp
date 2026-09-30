@@ -76,12 +76,17 @@ MEASURED_MB = {
 # model, which holds at both.
 SOC_M, SOC_N, SOC_K = 8, 12, 16
 MEASURED_C4C = {
-    # name:      (PTA_TW, PTA_TS, resident, cycles, weight movement)
-    "TO-1ms":    (100_000, 5, False, 402_528, 400_288),
-    "TO-10us":   (  1_000, 5, False,   6_528,   4_288),
-    "EO-scan":   (      0, 1, False,   2_528,     288),
-    "EO-res":    (      0, 1, True,    2_336,     100),
+    # name:      (PTA_TW, PTA_TS, resident, cycles, weight movement, S_AROW)
+    "TO-1ms":    (100_000, 5, False, 402_528, 400_288, 0),
+    "TO-10us":   (  1_000, 5, False,   6_528,   4_288, 0),
+    "EO-scan":   (      0, 1, False,   2_528,     288, 0),
+    "EO-res":    (      0, 1, True,    2_337,     100, 0),
 }
+# The SoC builds PTM-C, whose drain is the array's skewed readout: t walks
+# 0 .. 2R+2C-1 and advances only on hop edges, so a run costs this many cycles and
+# PTA_TS does not enter it at all.  The Ts axis of 6.2's sweep needs PTM-B, which
+# the SoC does not build -- plan step SoC-B.
+PTM_C_DRAIN = 2 * 2 * (NUM_ROWS + NUM_COLS)
 
 # ---- published ------------------------------------------------------------
 TFLN_BW_HZ = 45e9
@@ -342,31 +347,37 @@ def main():
     skt = -(-SOC_K // NUM_ROWS)
     print(f"  shape M={SOC_M} N={SOC_N} K={SOC_K} (Nt={snt} Kt={skt}) -- this SoC's"
           f" NPU, not 6.2's; the two are not comparable")
-    print(f"  {'point':<9}{'measured':>10}{'model':>9}{'outside':>9}{'share':>7}"
+    print(f"  {'point':<9}{'measured':>10}{'model':>9}{'outside':>9}{'drain':>7}"
           f"   {'wmove':>10}{'want':>10}")
-    for name, (tw, ts, resident, got, wmove) in MEASURED_C4C.items():
+    for name, (tw, ts, resident, got, wmove, arow) in MEASURED_C4C.items():
+        shots = SOC_M * snt * skt
         if resident:
-            want_c = core_resident(ts, m=SOC_M, n=SOC_N, k=SOC_K)
             # The select's cycle a program, plus the restore.
             want_w = snt * skt * MB_TW + SOC_M * (skt - 1) * SOC_N
+            scan = snt * skt * MB_TW
         else:
-            want_c = core_cycles(tw, ts, m=SOC_M, n=SOC_N, k=SOC_K)
             want_w = SOC_N * SOC_K + snt * skt * (tw + (tw & 1)) \
                      + SOC_M * (skt - 1) * SOC_N
-        # The model owns the weight movement exactly: S_WLOAD and S_ACCLD have no
+            scan = SOC_N * SOC_K + snt * skt * (tw + (tw & 1))
+        # 2.1's terms with PTM-C's drain in place of PTM-B's shot.
+        want_c = scan + SOC_M * (skt - 1) * SOC_N + SOC_M * skt * SOC_N \
+                 + shots * PTM_C_DRAIN
+        # The weight movement is the model's exactly: S_WLOAD and S_ACCLD have no
         # feed dependence, so this is an equality and not a bound.
         assert wmove == want_w, (name, wmove, want_w)
-        # What it does not own: the A-row wait, above all.  Reported, not fitted.
+        # And so is the total, within the hop's alignment: the A-row wait is zero,
+        # so there is nothing else in the core's busy window to account for.
         outside = got - want_c
-        assert outside > 0, (name, got, want_c)
+        assert abs(outside) <= snt * skt, (name, got, want_c, outside)
+        assert arow == 0, (name, arow)
         print(f"  {name:<9}{got:>10,}{want_c:>9,}{outside:>9,}"
-              f"{100.0 * outside / got:>6.0f}%   {wmove:>10,}{want_w:>10,}")
-    print("  the weight movement is the model's to the cycle at every point;"
-          " the rest is the feed")
-    print("  the operands are the same size at every point, so what moves is the"
-          " SHARE, not the term")
-    print("  arow_stall_cnt has no CSR, so the attribution is a subtraction and"
-          " not a measurement (track F, F0)")
+              f"{100.0 * shots * PTM_C_DRAIN / got:>6.0f}%   {wmove:>10,}{want_w:>10,}")
+    print(f"  the share column is PTM-C's drain, {shots * PTM_C_DRAIN:,} cycles:"
+          f" {PTM_C_DRAIN} a run, which is what PTM-B replaces with a shot")
+    print("  S_AROW is zero at every point (NPU_REG_AROW_CT), so the feed does not"
+          " bind this end -- the tile's own drain does")
+    print("  PTA_TS is inert here: the drain is fixed, so 6.2's Ts axis waits on a"
+          " PTM-B SoC build (plan step SoC-B)")
 
     # 5. Sweeping PTA_TW between them.
     section("5. PTA_TW swept at PTA_TS = 1: interchange gain (shipped / interchanged)")
