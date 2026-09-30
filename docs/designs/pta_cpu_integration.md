@@ -1146,6 +1146,64 @@ instead is precision — its free-running phase shifts a state by a cycle depend
 on what ran before it, up to one cycle a shot — which is why the gate holds the
 scan, the restore and the write to equality and the shot to that band.
 
+**Measured on the SoC (C4(c)).** `make pta_sweep` runs the four points from a
+RISC-V program through MMIO: firmware sets `PTA_TW`, `PTA_TS` and MB's `PTA_CTRL`
+modes, and reads the counters back the same way. The shape is the SoC's NPU,
+`M = 8, N = 12, K = 16` — that build is `MAX_M = 8, MAX_K = 16, MAX_N = 12` and
+cannot be asked for this section's `M = 64, N = 8, K = 256` at all, the same gap
+§6.1 records about its baseline. What carries over is the points, which are ratios;
+the shape they were tabulated at does not.
+
+| Point | Cycles | DMA busy | Weight movement | Programs | DMA/core |
+|---|---|---|---|---|---|
+| TO-1ms | 402,528 | 402,861 | 400,288 | 4 | 1.00 |
+| TO-10µs | 6,528 | 6,861 | 4,288 | 4 | 1.05 |
+| EO-scan | 2,528 | 2,861 | 288 | 4 | 1.13 |
+| EO-res | 2,336 | 2,669 | 100 | 4 | 1.14 |
+
+C is exact at every point, and the weight-movement column lands on §2.1's
+`nc`-exact terms to the cycle: EO-scan's 288 is `N·K + M·(Kt−1)·N` = 192 + 96, and
+EO-res's 100 is four bank selects plus the same 96. Resident saves exactly the
+scan — 2,528 − 2,336 = 192 = `N·K` — which is 8% of this GEMM. The whole range,
+TO-1ms to EO-scan, is 159× at this shape.
+
+**The feed is the binding cost here, and this is the first place that is measured
+rather than argued.** Subtracting §2.1's terms from each total leaves the cycles the
+core spends outside them:
+
+| Point | Total | §2.1's terms | Outside them | Share |
+|---|---|---|---|---|
+| TO-1ms | 402,528 | 400,832 | 1,696 | 0.4% |
+| TO-10µs | 6,528 | 4,832 | 1,696 | 26% |
+| EO-scan | 2,528 | 704 | 1,824 | 72% |
+| EO-res | 2,336 | 516 | 1,820 | 78% |
+
+The operands are the same size at every point, so that term is nearly constant and
+its *share* is what moves: under half a per cent at the thermal end, 78% at the
+resident one. §2.1 says a resident tile "is bound by the host — its feed and its
+writes — not by the tile"; this is that sentence with numbers under it, and it is
+also why `DMA/core` is above one at every point. The DMA is busy longer than the
+core computes, so the two counters overlap and their quotient is not a share of
+anything — it is the fetch outlasting the arithmetic.
+
+The attribution is a subtraction, not a measurement. `arow_stall_cnt` still has no
+CSR, so the A-row wait cannot be read back to confirm that it is most of what sits
+outside the model. Exposing it is what F2 will want first.
+
+**Two things C4(c) found, both in code C4(a) wrote:**
+
+- **The DMA's core watchdog made the thermal end unreachable.** It is sized from
+  the shape alone — `M·N·K·8 + M·N·64 + 512`, 18,944 cycles here — and knew nothing
+  about `PTA_TW`, so TO-1ms's 400,000 cycles of settle read as a hung core and the
+  GEMM was aborted before this step could measure it. The bound now adds the settle
+  and the shot dilation the registers ask for.
+- **`PTA_WLOAD_CT` counted a level, not an event.** `w_n` and `w_r` hold at the
+  scan's last cell for the whole settle, so the register read 3,004 programmings at
+  TO-10µs where the shape makes four. §2.1 uses it as the quantity `PTA_TW`'s slope
+  multiplies, so it now counts the state's exits. That also makes it right under
+  MB's resident mode, where the scan is skipped and the select is the programming:
+  it read zero before and reads four now.
+
 Three rules hold at the Pockels-class end:
 
 - **EO-res is measured now, in both loop orders.** It needed `Nt · Kt` resident
@@ -1183,8 +1241,10 @@ Three rules hold at the Pockels-class end:
   core's loop order (§4.3), so changing the order changes the draw sequence by
   construction. The orders agree about arithmetic, not about noise.
 - **`DMA_CT` is part of the result.** A GEMM of a few thousand cycles is no
-  longer long beside the DMA fetch of its 18,432 operands, so the fetch cannot
-  be subtracted as overhead at this end.
+  longer long beside the DMA fetch of its operands, so the fetch cannot be
+  subtracted as overhead at this end. C4(c) measured it: `DMA_CT` exceeds the
+  core's own cycle count at every point of the sweep, and the cycles outside
+  §2.1's terms are 72% of the GEMM at EO-scan and 78% at EO-res.
 - **Dilation is a claim about the host.** Raising `PTA_TS` above its floor to
   stretch a sub-cycle shot is the same as assuming a host that many times
   faster than the FPGA, because the scan, the row write and the fetch keep

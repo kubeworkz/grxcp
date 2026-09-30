@@ -68,6 +68,21 @@ MEASURED_MB = {
     "m-outer": 16_896,
 }
 
+# ---- measured, C4(c) (grx930 `make pta_sweep`) -----------------------------
+# The same four points on the SoC, driven by firmware through MMIO.  The shape is
+# the SoC's NPU -- MAX_M=8, MAX_K=16, MAX_N=12 -- which cannot be asked for this
+# file's M=64 N=8 K=256 at all, the gap 6.1 records about its baseline.  So these
+# are NOT comparable with the figures above; what the two shapes share is the
+# model, which holds at both.
+SOC_M, SOC_N, SOC_K = 8, 12, 16
+MEASURED_C4C = {
+    # name:      (PTA_TW, PTA_TS, resident, cycles, weight movement)
+    "TO-1ms":    (100_000, 5, False, 402_528, 400_288),
+    "TO-10us":   (  1_000, 5, False,   6_528,   4_288),
+    "EO-scan":   (      0, 1, False,   2_528,     288),
+    "EO-res":    (      0, 1, True,    2_336,     100),
+}
+
 # ---- published ------------------------------------------------------------
 TFLN_BW_HZ = 45e9
 
@@ -320,6 +335,38 @@ def main():
           f" unfolded as the core is built")
     print(f"  6.2's EO-res row said 7.2x, which assumed Ts = 1; C2 measured the"
           f" shot's floor and MB measured the orders")
+
+    # 4d. The same points on the SoC (C4(c), measured).
+    section("4d. Section 6.2's points on the SoC, at the SoC's own shape (C4(c))")
+    snt = -(-SOC_N // NUM_COLS)
+    skt = -(-SOC_K // NUM_ROWS)
+    print(f"  shape M={SOC_M} N={SOC_N} K={SOC_K} (Nt={snt} Kt={skt}) -- this SoC's"
+          f" NPU, not 6.2's; the two are not comparable")
+    print(f"  {'point':<9}{'measured':>10}{'model':>9}{'outside':>9}{'share':>7}"
+          f"   {'wmove':>10}{'want':>10}")
+    for name, (tw, ts, resident, got, wmove) in MEASURED_C4C.items():
+        if resident:
+            want_c = core_resident(ts, m=SOC_M, n=SOC_N, k=SOC_K)
+            # The select's cycle a program, plus the restore.
+            want_w = snt * skt * MB_TW + SOC_M * (skt - 1) * SOC_N
+        else:
+            want_c = core_cycles(tw, ts, m=SOC_M, n=SOC_N, k=SOC_K)
+            want_w = SOC_N * SOC_K + snt * skt * (tw + (tw & 1)) \
+                     + SOC_M * (skt - 1) * SOC_N
+        # The model owns the weight movement exactly: S_WLOAD and S_ACCLD have no
+        # feed dependence, so this is an equality and not a bound.
+        assert wmove == want_w, (name, wmove, want_w)
+        # What it does not own: the A-row wait, above all.  Reported, not fitted.
+        outside = got - want_c
+        assert outside > 0, (name, got, want_c)
+        print(f"  {name:<9}{got:>10,}{want_c:>9,}{outside:>9,}"
+              f"{100.0 * outside / got:>6.0f}%   {wmove:>10,}{want_w:>10,}")
+    print("  the weight movement is the model's to the cycle at every point;"
+          " the rest is the feed")
+    print("  the operands are the same size at every point, so what moves is the"
+          " SHARE, not the term")
+    print("  arow_stall_cnt has no CSR, so the attribution is a subtraction and"
+          " not a measurement (track F, F0)")
 
     # 5. Sweeping PTA_TW between them.
     section("5. PTA_TW swept at PTA_TS = 1: interchange gain (shipped / interchanged)")
