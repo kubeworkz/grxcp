@@ -44,7 +44,7 @@ either names its document or is this one's.
 | Multi-bank tile, both loop orders (MB) | Landed and gated: `make core_mb`. §6.2's EO-res point is measured in both orders — the shipped one wins by 2.6×, not 7.2× |
 | §6.2's sweep on the SoC (C4(c)) | Landed and gated: `make pta_sweep`. All four points measured through MMIO. §2.1's terms account for every total exactly; PTM-C's drain is 81–88% of the GEMM at the Pockels-class end |
 | PTM-B SoC build (SoC-B) | Landed and gated: `make pta_sweep PTM_B=1`. §6.2's `Ts` axis is reachable — the shot moves with `PTA_TS` at §2.1's slope, and the Pockels-class end gets 3.8–4.8× faster |
-| Calibration (C3) | Landed and gated; the broadside probe is owed (C2 tile's row) |
+| Calibration (C3) | Landed and gated, on both tiles: the engine has a probe per tile since 2026-09-30, so C3's apparatus runs where the Pockels-class numbers come from |
 | SoC integration, firmware, Vivado (C4) | Not started |
 | G100 tile (G0–G3) | Not started; staged behind C2 |
 | grxcp NPU backend | Host side built and gated against register models and the vendored grx930 DPI shim; no PTA surface |
@@ -131,13 +131,47 @@ it is marked *new*.
 |---|---|---|---|
 | C0 | **Done, below.** PTM-C swapped in for the systolic array, impairments off | CPU document §6, unchanged | — |
 | C1 | **Closed, below.** Error model, one impairment at a time; `PTA_DRIFT` defaults fitted to TFLT, with a TFLN setting as the stress case | CPU document §6, unchanged | C0, D1–D3 |
-| C2 tile | **Done, 2026-09-29.** PTM-B in the interchanged core: the broadside tile is `c930_ptm_c`'s arithmetic under `BROADSIDE = 1` with a shot-and-wait schedule around it, so the two variants agree by construction rather than by comparison. The gate measures each §2.1 term against the counter that makes it up — `o_stall_count`, `o_op_count / 64`, the write residual — and holds the scan, the restore and the write to equality at six shapes × 25 `(PTA_TW, PTA_TS)` points. It corrected §2.1 twice and re-derived F1 (below). **Owed:** the broadside calibration probe — `c930_pta_cal.sv` walks a skewed readout, so the bench SKIPs the `a` calibration under `PTM_B` with its reason | `make core_c2`: total cycles match §2.1 at every runnable §6.2 point, affine in `PTA_TW` | C1 |
+| C2 tile | **Done, 2026-09-29.** PTM-B in the interchanged core: the broadside tile is `c930_ptm_c`'s arithmetic under `BROADSIDE = 1` with a shot-and-wait schedule around it, so the two variants agree by construction rather than by comparison. The gate measures each §2.1 term against the counter that makes it up — `o_stall_count`, `o_op_count / 64`, the write residual — and holds the scan, the restore and the write to equality at six shapes × 25 `(PTA_TW, PTA_TS)` points. It corrected §2.1 twice and re-derived F1 (below). The broadside calibration probe this row used to owe was built on 2026-09-30 (below) | `make core_c2`: total cycles match §2.1 at every runnable §6.2 point, affine in `PTA_TW` | C1 |
 | MB | **Done, 2026-09-29.** The tile takes a `NUM_BANKS` parameter (two, the DMA's double buffer, is the default and changes nothing); the core can address a bank per (N tile, K tile) and skip the scan when they are already loaded; and the loop order is selectable, `m`-outer restored without the `S_PRELOAD` double-buffering it originally needed. A shape with more tiles than banks is refused, not aliased | `make core_mb`: EO-res totals match §2.1 in both orders with `Tw` at the RTL's bank-select cycle, and both orders return the same C from the same banks | C2 tile |
 | C3 | **Done, 2026-09-23.** C3(a) measured the correction in the C reference — the board plan's X3 — and C3(b) built the RTL: the trim and the affine in PTM-C, the calibration engine and its four schedulers, and the `cal_busy` dispatch guard. Gates P7 to P9 | CPU document §6, run with drift at TFLT's fitted rate and again at TFLN's | C1, D3 |
 | C4(a) | **Done, 2026-09-24, both halves.** The widened CSR decode, the PTA register block at `0x100` (not `0x40`: that is NPU1's window), and the two counters it reads and nothing produced. It cost three fixes outside the block: the CPU's M unit deadlocked against a store in MEM, C cannot be cleared from the CPU (the L2 stops tracking a line the CPU writes), and the probe amplitude is a bit position with no way to learn its bounds — CPU document §3.3 | `make npu` in both builds and `make pta_fw PTM_C=1`: the same seven checks over AXI-Lite and from a RISC-V program, plus `make mul_store` for the CPU fix | C3 |
 | C4(b) | **Part done, 2026-09-24.** Vivado 2026.1 out of context on `xc7a200tfbg484-1`: the NPU baseline, the calibration engine, the CSR and S_ACT measured and placed against §6.1; §6.1's stated baseline shown to be no run's; A-synth's cut named, taken (`ACT_P` 7 → 8) and measured at 55.5 MHz. **Owed:** the tile's own row — `c930_ptm_c` and the PTM-C NPU both exceed this VM's memory | §6.1's table against what the tools say, and 100 MHz or a named pipeline cut | C4(a), A-synth |
 | C4(c) | **Done, 2026-09-29, for the `Tw` axis.** MB's three modes reach the tile from `PTA_CTRL` bits 9:7, `arow_stall_cnt` reads back at `NPU_REG_AROW_CT`, and `sw/pta_sweep.c` drives all four §6.2 points from a RISC-V program through MMIO. EO-res is measured, not modelled, and §2.1's terms account for every total exactly. It cost two fixes in C4(a)'s own code: the DMA's core watchdog was sized from the shape alone and aborted TO-1ms as a hung core, and `PTA_WLOAD_CT` counted a level rather than an event so it read 3,004 programmings where the shape makes four. **Owed:** the `Ts` axis — the SoC builds PTM-C, whose drain is fixed, so `PTA_TS` is inert on it (below) | `make pta_sweep`: every point runs, C exact at each, EO-res among them | C2 tile, MB, C4(a) |
 | SoC-B | **Done, 2026-09-30.** The SoC's Verilator flags defined `PTM_C` and not `PTM_B`, so the file list carried `c930_ptm_b.sv` while the core still elaborated PTM-C. One define. `make pta_sweep PTM_B=1` now sweeps §6.2 on a broadside SoC and the drain becomes a shot: EO-scan 2,528 → 672 cycles, EO-res 2,337 → 487, and the range widens from 159× to 596×. The gate is the slope — the total moves by `M·Nt·Kt` = 32 cycles a unit of `PTA_TS`, 449 against the model's 448 from `PTA_TS` 2 to 16 | `make pta_sweep PTM_B=1`: the shot moves with `PTA_TS` at §2.1's slope, and the same run on `PTM_C=1` reports the register inert rather than passing quietly | C4(c) |
+
+**The broadside calibration probe, 2026-09-30.** The engine's probe was PTM-C's —
+`C_SHOT` walked `t` to `2R+2C−1` and captured one column per two steps, emulating the
+staggered readout itself. A broadside tile answers every column on one hop edge, so
+the walk read nothing, the residual came back zero, and both benches SKIPped the
+calibration under `PTM_B`. That mattered more after SoC-B than before it: PTM-B had
+become the build the Pockels-class numbers come from, so the speed story and the
+accuracy story could not be measured on the same tile.
+
+The probe is now four `t` steps instead of `2R+2C` — present the row, let the core's
+hop-gated register take it, shoot, read every column off the one shot. At eight
+repeats on the SoC, `PTA_CAL_CYC` falls from **14,980 cycles to 3,780**, and both
+tiles report the same residual (`ERR_FOUND` 2,688, `ERR_MAX` 5,056). The probe phase
+is eight times shorter; the zeroing and the estimator do not shrink, which is the
+rest of the difference.
+
+The agreement is about the device, not the dither. A broadside shot draws once per
+column where the skewed one drew once per shot, so the noise realisations differ by
+construction (E1 ties every draw to the loop order); at eight repeats that averages
+out and what is left is drift and programming error, which the probe does not
+perturb. That is the sense in which CPU document §4.2 says the two tiles must agree.
+
+**One knock-on, and it is a test's and not the guard's.** `pta_test.c`'s T5 checks
+that a START arriving during a calibration queues rather than dispatching into a busy
+tile. Its only gap between `CAL_NOW` and that START is the descriptor — eight MMIO
+writes — and the shorter calibration finished inside that gap, so `CAL_BUSY` was
+already clear, nothing queued, and T5 failed while the guard it tests was intact. The
+test now asks for eight repeats, which puts the race back where it is winnable on
+either tile and averages the probe's noise into the bargain.
+
+**Still not covered:** the core bench's `--pta engine` and `--pta sched` modes need
+`--tile ptm_c`, so the broadside probe's only coverage is the iverilog bench and the
+SoC firmware. Widening the core bench to drive the engine against PTM-B would give
+the schedulers of §5.1 a second tile to run on, and nothing needs it yet.
 
 **What SoC-B found.** Two things, neither of them the RTL's.
 
@@ -156,8 +190,8 @@ it is marked *new*.
 
    The skips print as SKIP rather than PASS. The firmware still sets their DIAG bits,
    because `RESULT` has to stay meaningful, but a test reporting PASS on something it
-   did not do is worse than a gap that says so. **The broadside probe is still owed**
-   — it is the same item C2 tile's row records.
+   did not do is worse than a gap that says so. Those skips are gone again: the
+   broadside probe was built the same day (below).
 
 **What C4(c) found.** The sweep's own numbers are in the CPU document §6.2. Two
 of its results belong here because they change what other steps should expect.
