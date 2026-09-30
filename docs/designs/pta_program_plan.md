@@ -42,7 +42,8 @@ either names its document or is this one's.
 | Error model (C1) | Closed: all six impairments built in grx930 and bitwise against the C reference; the accuracy sweep ran, missed its allowance at 3 bits, and the miss is recorded (§3.1) |
 | Tile: PTM-B (C2 tile) | Landed and gated: `make core_c2`. §2.1's form holds; two of its constants and F1's predictions did not |
 | Multi-bank tile, both loop orders (MB) | Landed and gated: `make core_mb`. §6.2's EO-res point is measured in both orders — the shipped one wins by 2.6×, not 7.2× |
-| §6.2's sweep on the SoC (C4(c)) | Landed and gated: `make pta_sweep`. All four points measured through MMIO. §2.1's terms account for every total exactly; PTM-C's drain is 81–88% of the GEMM at the Pockels-class end, and `PTA_TS` is inert until the SoC builds PTM-B |
+| §6.2's sweep on the SoC (C4(c)) | Landed and gated: `make pta_sweep`. All four points measured through MMIO. §2.1's terms account for every total exactly; PTM-C's drain is 81–88% of the GEMM at the Pockels-class end |
+| PTM-B SoC build (SoC-B) | Landed and gated: `make pta_sweep PTM_B=1`. §6.2's `Ts` axis is reachable — the shot moves with `PTA_TS` at §2.1's slope, and the Pockels-class end gets 3.8–4.8× faster |
 | Calibration (C3) | Landed and gated; the broadside probe is owed (C2 tile's row) |
 | SoC integration, firmware, Vivado (C4) | Not started |
 | G100 tile (G0–G3) | Not started; staged behind C2 |
@@ -136,7 +137,27 @@ it is marked *new*.
 | C4(a) | **Done, 2026-09-24, both halves.** The widened CSR decode, the PTA register block at `0x100` (not `0x40`: that is NPU1's window), and the two counters it reads and nothing produced. It cost three fixes outside the block: the CPU's M unit deadlocked against a store in MEM, C cannot be cleared from the CPU (the L2 stops tracking a line the CPU writes), and the probe amplitude is a bit position with no way to learn its bounds — CPU document §3.3 | `make npu` in both builds and `make pta_fw PTM_C=1`: the same seven checks over AXI-Lite and from a RISC-V program, plus `make mul_store` for the CPU fix | C3 |
 | C4(b) | **Part done, 2026-09-24.** Vivado 2026.1 out of context on `xc7a200tfbg484-1`: the NPU baseline, the calibration engine, the CSR and S_ACT measured and placed against §6.1; §6.1's stated baseline shown to be no run's; A-synth's cut named, taken (`ACT_P` 7 → 8) and measured at 55.5 MHz. **Owed:** the tile's own row — `c930_ptm_c` and the PTM-C NPU both exceed this VM's memory | §6.1's table against what the tools say, and 100 MHz or a named pipeline cut | C4(a), A-synth |
 | C4(c) | **Done, 2026-09-29, for the `Tw` axis.** MB's three modes reach the tile from `PTA_CTRL` bits 9:7, `arow_stall_cnt` reads back at `NPU_REG_AROW_CT`, and `sw/pta_sweep.c` drives all four §6.2 points from a RISC-V program through MMIO. EO-res is measured, not modelled, and §2.1's terms account for every total exactly. It cost two fixes in C4(a)'s own code: the DMA's core watchdog was sized from the shape alone and aborted TO-1ms as a hung core, and `PTA_WLOAD_CT` counted a level rather than an event so it read 3,004 programmings where the shape makes four. **Owed:** the `Ts` axis — the SoC builds PTM-C, whose drain is fixed, so `PTA_TS` is inert on it (below) | `make pta_sweep`: every point runs, C exact at each, EO-res among them | C2 tile, MB, C4(a) |
-| SoC-B | *New:* a PTM-B SoC build, so §6.2's `Ts` axis can be swept where §6.1's numbers and the DMA live. The core already selects its tile on `PTM_B`; what this needs is the SoC's build path and a shape whose `Nt·Kt` banks fit | `make pta_sweep` on a PTM-B SoC: the shot moves with `PTA_TS`, and the drain's 81% of the GEMM goes with it | C4(c) |
+| SoC-B | **Done, 2026-09-30.** The SoC's Verilator flags defined `PTM_C` and not `PTM_B`, so the file list carried `c930_ptm_b.sv` while the core still elaborated PTM-C. One define. `make pta_sweep PTM_B=1` now sweeps §6.2 on a broadside SoC and the drain becomes a shot: EO-scan 2,528 → 672 cycles, EO-res 2,337 → 487, and the range widens from 159× to 596×. The gate is the slope — the total moves by `M·Nt·Kt` = 32 cycles a unit of `PTA_TS`, 449 against the model's 448 from `PTA_TS` 2 to 16 | `make pta_sweep PTM_B=1`: the shot moves with `PTA_TS` at §2.1's slope, and the same run on `PTM_C=1` reports the register inert rather than passing quietly | C4(c) |
+
+**What SoC-B found.** Two things, neither of them the RTL's.
+
+1. **The whole obstacle was a missing `-DPTM_B`** in the SoC's Verilator flags. The
+   Makefile already added `c930_ptm_b.sv` to the file list and already put the build
+   in `build/ptm_b`, so everything looked right while the core elaborated PTM-C. The
+   sweep now derives the shot's cost per run from each total rather than assuming a
+   tile, so a build that silently answers with the wrong one shows up as a flat 64
+   cycles instead of hiding.
+2. **The PTA firmware image had to be split per tile.** `pta_test.c` now takes
+   `-DPTM_B` so it can skip the calibration test — the engine's probe walks PTM-C's
+   staggered readout, which a broadside tile has none of, and `tb_c930_npu` already
+   SKIPs it for the same reason. Both builds had shared `sw/pta_prog.hex`, so make
+   reused whichever was compiled last and the other build reported the wrong tile's
+   skips. There is an image per tile now, and the harness is told which to load.
+
+   The skips print as SKIP rather than PASS. The firmware still sets their DIAG bits,
+   because `RESULT` has to stay meaningful, but a test reporting PASS on something it
+   did not do is worse than a gap that says so. **The broadside probe is still owed**
+   — it is the same item C2 tile's row records.
 
 **What C4(c) found.** The sweep's own numbers are in the CPU document §6.2. Two
 of its results belong here because they change what other steps should expect.
@@ -441,7 +462,7 @@ grxgpu's RTL owners, under the boundary rule of `AGENTS.md` §2.
 |---|---|---|
 | Now | Immediately, in parallel | S0; A3; A-synth; G1 (D1–D4 settled; F0 and C0 done) |
 | Next | C0 green, as it now is | C1; G0 and C3 once C1 is green (F1 done) |
-| Then | C1, C2 tile and MB now green | F2 next, on MB's numbers; G2 once G1 has reported |
+| Then | C1, C2 tile, MB, C4 and SoC-B now green | F2 next, on a PTM-B SoC where its question is finally askable; G2 once G1 has reported |
 | Last | C2 tile, MB, C3 and A-synth green | C4; then S1 and S2 on its CSR map, F3 on its numbers, and G3 |
 
 The critical path is C0 → C1 → C2 tile → MB → C4. Everything else runs beside

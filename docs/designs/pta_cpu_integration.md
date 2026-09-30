@@ -1188,18 +1188,46 @@ EO-res **88%** — and the drain is exactly what PTM-B replaces with a shot (§4
 
 Two consequences, and they are the useful part of this step:
 
-- **`PTA_TS` is inert on the SoC.** The `Tw` axis of the sweep above is real — the
-  settle is the core's own and the thermo-optic points move with it, 159× across
-  the range. The `Ts` axis needs PTM-B, which the SoC does not build, so the
-  Pockels-class *shot* cannot be emulated here at all. A PTM-B SoC build is what
-  C4(c) turns out to need, and it is not a large change: the core already selects
-  the tile on `PTM_B`.
-- **The feed is not what binds this end, and §2.1's sentence about it is still
-  unmeasured.** §2.1 says a resident tile "is bound by the host — its feed and its
-  writes — not by the tile". On this SoC the writes are 192 cycles of 2,337 and the
-  feed is zero, so the sentence is not confirmed here; what binds it is the tile.
-  That may well change once PTM-B cuts the drain to a shot, which is the point at
-  which the claim becomes testable — and it is F2's question, not this step's.
+- **`PTA_TS` was inert on the SoC, and step SoC-B fixed it.** The `Tw` axis of the
+  sweep above is real — the settle is the core's own and the thermo-optic points
+  move with it. The `Ts` axis needed PTM-B, and the SoC turned out not to build it
+  for one reason: the Verilator flags defined `PTM_C` and not `PTM_B`, so the file
+  list carried `c930_ptm_b.sv` while the core still elaborated PTM-C. One define.
+  `make pta_sweep PTM_B=1` now runs the sweep on a broadside SoC, and the drain
+  becomes a shot:
+
+  | Point | PTM-C | PTM-B | |
+  |---|---|---|---|
+  | TO-1ms | 402,527 | 400,801 | 1.00× |
+  | TO-10µs | 6,528 | 4,800 | 1.36× |
+  | EO-scan | 2,528 | 672 | **3.76×** |
+  | EO-res | 2,337 | 487 | **4.80×** |
+
+  The whole range, TO-1ms to EO-scan, widens from 159× to **596×** — the drain was
+  flooring the cheap end, which is what made the thermal range look narrower than
+  it is. And the shot per run, derived from each total by removing §2.1's other
+  terms, is 64 flat on PTM-C and `PTA_TS + 6` on PTM-B, which is C2's floor
+  measured a second way and through MMIO this time.
+
+  **SoC-B's gate is the slope.** With `PTA_TS` swept at EO-scan's other settings,
+  the total moves by `M · Nt · Kt` = 32 cycles a unit — §2.1's shot term, measured
+  on the SoC: from `PTA_TS` 2 to 16 the total rises 449 cycles against the 448 the
+  model asks for. `PTA_TS` = 1 sits below the shot's six-cycle floor, so the step
+  out of it is not on the line and the gate does not treat it as though it were.
+- **§2.1's sentence about the feed becomes testable on PTM-B, and is not yet
+  settled.** §2.1 says a resident tile "is bound by the host — its feed and its
+  writes — not by the tile". On the PTM-C SoC it was plainly the tile: the drain was
+  81–88% of the GEMM. On the PTM-B SoC at EO-res the core spends **487** cycles —
+  192 of shot, 192 of write, 96 of restore — while the DMA is busy **820**. So the
+  fetch now outlasts the arithmetic by two thirds.
+
+  That is not the same as saying the feed binds it, and `S_AROW` says why: it is
+  **zero**, so within a GEMM the core never waits for an operand. The DMA's extra
+  work sits outside the core's busy window, before the start and after the finish.
+  Whether that becomes the binding cost depends on how much of it the PF1/PF2
+  prefetch can hide behind the *previous* GEMM's compute — which is a queued-GEMM
+  measurement, and is exactly F2's question. What SoC-B provides is the first build
+  on which asking it makes sense.
 
 `DMA/core` above one at every point says only that the DMA is busy longer than the
 core computes; the two counters overlap, so their quotient is not a share of

@@ -88,6 +88,19 @@ MEASURED_C4C = {
 # the SoC does not build -- plan step SoC-B.
 PTM_C_DRAIN = 2 * 2 * (NUM_ROWS + NUM_COLS)
 
+# ---- measured, SoC-B (grx930 `make pta_sweep PTM_B=1`) ---------------------
+# The same points on a PTM-B SoC, where the drain becomes a shot and PTA_TS sets
+# it.  The tile is the only thing that changed.
+MEASURED_SOCB = {
+    "TO-1ms":  (100_000, 5, False, 400_801),
+    "TO-10us": (  1_000, 5, False,   4_800),
+    "EO-scan": (      0, 1, False,     672),
+    "EO-res":  (      0, 1, True,      487),
+}
+# PTA_TS swept at EO-scan's other settings: (PTA_TS, cycles).  PTA_TS = 1 is below
+# the shot's floor, so the line starts at 2.
+MEASURED_SOCB_TS = ((1, 672), (2, 735), (4, 800), (8, 927), (16, 1_184))
+
 # ---- published ------------------------------------------------------------
 TFLN_BW_HZ = 45e9
 
@@ -378,6 +391,40 @@ def main():
           " bind this end -- the tile's own drain does")
     print("  PTA_TS is inert here: the drain is fixed, so 6.2's Ts axis waits on a"
           " PTM-B SoC build (plan step SoC-B)")
+
+    # 4e. The same points on a PTM-B SoC (SoC-B, measured).
+    section("4e. The same points on a PTM-B SoC: the drain becomes a shot (SoC-B)")
+    print(f"  {'point':<9}{'PTM-C':>10}{'PTM-B':>9}{'faster':>9}"
+          f"   the shot, a run")
+    for name, (tw, ts, resident, got_b) in MEASURED_SOCB.items():
+        got_c = MEASURED_C4C[name][3]
+        shots = SOC_M * snt * skt
+        scan = (snt * skt * MB_TW if resident
+                else SOC_N * SOC_K + snt * skt * (tw + (tw & 1)))
+        other = scan + SOC_M * (skt - 1) * SOC_N + SOC_M * skt * SOC_N
+        shot_b = (got_b - other) / shots
+        shot_c = (got_c - other) / shots
+        # PTM-C's drain is fixed; PTM-B's shot is PTA_TS plus its handshake, and at
+        # PTA_TS = 1 it sits on the floor C2 measured.
+        assert abs(shot_c - PTM_C_DRAIN) <= 1, (name, shot_c)
+        assert abs(shot_b - (ts + SHOT_FLOOR)) <= 1, (name, shot_b, ts)
+        print(f"  {name:<9}{got_c:>10,}{got_b:>9,}{got_c / got_b:>8.2f}x"
+              f"   {shot_c:>5.1f} -> {shot_b:.1f}")
+    print(f"  the range TO-1ms to EO-scan widens from"
+          f" {MEASURED_C4C['TO-1ms'][3] / MEASURED_C4C['EO-scan'][3]:.0f}x to"
+          f" {MEASURED_SOCB['TO-1ms'][3] / MEASURED_SOCB['EO-scan'][3]:.0f}x:"
+          f" the drain was flooring the cheap end")
+
+    # SoC-B's gate: the total's slope in PTA_TS is the number of runs.
+    runs = SOC_M * snt * skt
+    lo_ts, lo_cyc = MEASURED_SOCB_TS[1]          # PTA_TS = 2, where the line starts
+    hi_ts, hi_cyc = MEASURED_SOCB_TS[-1]
+    span, want_span = hi_cyc - lo_cyc, runs * (hi_ts - lo_ts)
+    assert abs(span - want_span) <= runs, (span, want_span)
+    print(f"  PTA_TS {lo_ts} to {hi_ts}: {span:+,} cycles, want {want_span:+,}"
+          f" ({runs} a unit = Nt*Kt*M, section 2.1's shot term)")
+    print(f"  PTA_TS = 1 is the shot's floor ({MEASURED_SOCB_TS[0][1]} cycles,"
+          f" {SHOT_FLOOR} a run), so the line starts at 2")
 
     # 5. Sweeping PTA_TW between them.
     section("5. PTA_TW swept at PTA_TS = 1: interchange gain (shipped / interchanged)")
