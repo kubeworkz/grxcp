@@ -42,6 +42,7 @@ either names its document or is this one's.
 | Error model (C1) | Closed: all six impairments built in grx930 and bitwise against the C reference; the accuracy sweep ran, missed its allowance at 3 bits, and the miss is recorded (§3.1) |
 | Tile: PTM-B (C2 tile) | Landed and gated: `make core_c2`. §2.1's form holds; two of its constants and F1's predictions did not |
 | Multi-bank tile, both loop orders (MB) | Landed and gated: `make core_mb`. §6.2's EO-res point is measured in both orders — the shipped one wins by 2.6×, not 7.2× |
+| §6.2's sweep on the SoC (C4(c)) | Landed and gated: `make pta_sweep`. All four points measured through MMIO; the feed is 72–78% of the GEMM at the Pockels-class end |
 | Calibration (C3) | Landed and gated; the broadside probe is owed (C2 tile's row) |
 | SoC integration, firmware, Vivado (C4) | Not started |
 | G100 tile (G0–G3) | Not started; staged behind C2 |
@@ -134,7 +135,36 @@ it is marked *new*.
 | C3 | **Done, 2026-09-23.** C3(a) measured the correction in the C reference — the board plan's X3 — and C3(b) built the RTL: the trim and the affine in PTM-C, the calibration engine and its four schedulers, and the `cal_busy` dispatch guard. Gates P7 to P9 | CPU document §6, run with drift at TFLT's fitted rate and again at TFLN's | C1, D3 |
 | C4(a) | **Done, 2026-09-24, both halves.** The widened CSR decode, the PTA register block at `0x100` (not `0x40`: that is NPU1's window), and the two counters it reads and nothing produced. It cost three fixes outside the block: the CPU's M unit deadlocked against a store in MEM, C cannot be cleared from the CPU (the L2 stops tracking a line the CPU writes), and the probe amplitude is a bit position with no way to learn its bounds — CPU document §3.3 | `make npu` in both builds and `make pta_fw PTM_C=1`: the same seven checks over AXI-Lite and from a RISC-V program, plus `make mul_store` for the CPU fix | C3 |
 | C4(b) | **Part done, 2026-09-24.** Vivado 2026.1 out of context on `xc7a200tfbg484-1`: the NPU baseline, the calibration engine, the CSR and S_ACT measured and placed against §6.1; §6.1's stated baseline shown to be no run's; A-synth's cut named, taken (`ACT_P` 7 → 8) and measured at 55.5 MHz. **Owed:** the tile's own row — `c930_ptm_c` and the PTM-C NPU both exceed this VM's memory | §6.1's table against what the tools say, and 100 MHz or a named pipeline cut | C4(a), A-synth |
-| C4(c) | The §6.2 sweep at both ends, thermo-optic and Pockels-class | CPU document §6, with EO-res measured rather than modelled | C2 tile, MB, C4(a) |
+| C4(c) | **Done, 2026-09-29.** MB's three modes reach the tile from `PTA_CTRL` bits 9:7, and `sw/pta_sweep.c` drives all four §6.2 points from a RISC-V program through MMIO. EO-res is measured, not modelled. It cost two fixes in C4(a)'s own code: the DMA's core watchdog was sized from the shape alone and aborted TO-1ms as a hung core, and `PTA_WLOAD_CT` counted a level rather than an event so it read 3,004 programmings where the shape makes four | `make pta_sweep`: every point runs, C exact at each, EO-res among them | C2 tile, MB, C4(a) |
+
+**What C4(c) found.** The sweep's own numbers are in the CPU document §6.2. Two
+of its results belong here because they change what other steps should expect.
+
+**The feed, not the tile, is what the Pockels-class end is waiting for — measured
+rather than argued.** Subtracting §2.1's terms from each measured total leaves the
+cycles the core spends outside them, and the operands are the same size at every
+point, so the term is nearly constant and its share is what moves:
+
+| Point | Total | §2.1's terms | Outside them | Share |
+|---|---|---|---|---|
+| TO-1ms | 402,528 | 400,832 | 1,696 | 0.4% |
+| TO-10µs | 6,528 | 4,832 | 1,696 | 26% |
+| EO-scan | 2,528 | 704 | 1,824 | 72% |
+| EO-res | 2,336 | 516 | 1,820 | 78% |
+
+That is F2's whole question arriving with evidence, and it sharpens F2's brief: the
+candidate worth measuring first is whatever cuts a fixed ~1,700-cycle feed, not
+anything in the loop nest. **It also names F2's first blocker:** the attribution is a
+subtraction, because `arow_stall_cnt` still has no CSR — the F0 row already says so
+— and until it has one the A-row wait cannot be read back to confirm it is most of
+what sits outside the model. Exposing it is the cheapest thing F2 can start with.
+
+**The shape is the SoC's, not §6.2's**, and that is not fixable at C4: this NPU is
+`MAX_M = 8, MAX_K = 16, MAX_N = 12` and cannot be asked for `M = 64, N = 8,
+K = 256`, the same gap §6.1 records about its baseline. So C4(c)'s absolute cycle
+counts and MB's are not comparable; what the two share is the model, which holds at
+both shapes. A SoC that could run §6.2's shape is a separate change with its own
+memory cost, and nothing in the plan needs it.
 
 **What C2 tile found, beyond its own gate.** All three are the model's, not the
 core's, and all three are recorded in the CPU document:
