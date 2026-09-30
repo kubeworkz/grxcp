@@ -134,10 +134,39 @@ it is marked *new*.
 | C2 tile | **Done, 2026-09-29.** PTM-B in the interchanged core: the broadside tile is `c930_ptm_c`'s arithmetic under `BROADSIDE = 1` with a shot-and-wait schedule around it, so the two variants agree by construction rather than by comparison. The gate measures each §2.1 term against the counter that makes it up — `o_stall_count`, `o_op_count / 64`, the write residual — and holds the scan, the restore and the write to equality at six shapes × 25 `(PTA_TW, PTA_TS)` points. It corrected §2.1 twice and re-derived F1 (below). The broadside calibration probe this row used to owe was built on 2026-09-30 (below) | `make core_c2`: total cycles match §2.1 at every runnable §6.2 point, affine in `PTA_TW` | C1 |
 | MB | **Done, 2026-09-29.** The tile takes a `NUM_BANKS` parameter (two, the DMA's double buffer, is the default and changes nothing); the core can address a bank per (N tile, K tile) and skip the scan when they are already loaded; and the loop order is selectable, `m`-outer restored without the `S_PRELOAD` double-buffering it originally needed. A shape with more tiles than banks is refused, not aliased | `make core_mb`: EO-res totals match §2.1 in both orders with `Tw` at the RTL's bank-select cycle, and both orders return the same C from the same banks | C2 tile |
 | C3 | **Done, 2026-09-23.** C3(a) measured the correction in the C reference — the board plan's X3 — and C3(b) built the RTL: the trim and the affine in PTM-C, the calibration engine and its four schedulers, and the `cal_busy` dispatch guard. Gates P7 to P9 | CPU document §6, run with drift at TFLT's fitted rate and again at TFLN's | C1, D3 |
-| C4(a) | **Done, 2026-09-24, both halves.** The widened CSR decode, the PTA register block at `0x100` (not `0x40`: that is NPU1's window), and the two counters it reads and nothing produced. It cost three fixes outside the block: the CPU's M unit deadlocked against a store in MEM, C cannot be cleared from the CPU (the L2 stops tracking a line the CPU writes), and the probe amplitude is a bit position with no way to learn its bounds — CPU document §3.3 | `make npu` in both builds and `make pta_fw PTM_C=1`: the same seven checks over AXI-Lite and from a RISC-V program, plus `make mul_store` for the CPU fix | C3 |
+| C4(a) | **Done, 2026-09-24, both halves.** The widened CSR decode, the PTA register block at `0x100` (not `0x40`: that is NPU1's window), and the two counters it reads and nothing produced. It cost three fixes outside the block: the CPU's M unit deadlocked against a store in MEM, C could not be cleared from the CPU, because the L2 stopped tracking a line the CPU wrote — since fixed, 2026-09-30 (below), and the probe amplitude is a bit position with no way to learn its bounds — CPU document §3.3 | `make npu` in both builds and `make pta_fw PTM_C=1`: the same seven checks over AXI-Lite and from a RISC-V program, plus `make mul_store` for the CPU fix | C3 |
 | C4(b) | **Part done, 2026-09-24.** Vivado 2026.1 out of context on `xc7a200tfbg484-1`: the NPU baseline, the calibration engine, the CSR and S_ACT measured and placed against §6.1; §6.1's stated baseline shown to be no run's; A-synth's cut named, taken (`ACT_P` 7 → 8) and measured at 55.5 MHz. **Owed:** the tile's own row — `c930_ptm_c` and the PTM-C NPU both exceed this VM's memory | §6.1's table against what the tools say, and 100 MHz or a named pipeline cut | C4(a), A-synth |
 | C4(c) | **Done, 2026-09-29, for the `Tw` axis.** MB's three modes reach the tile from `PTA_CTRL` bits 9:7, `arow_stall_cnt` reads back at `NPU_REG_AROW_CT`, and `sw/pta_sweep.c` drives all four §6.2 points from a RISC-V program through MMIO. EO-res is measured, not modelled, and §2.1's terms account for every total exactly. It cost two fixes in C4(a)'s own code: the DMA's core watchdog was sized from the shape alone and aborted TO-1ms as a hung core, and `PTA_WLOAD_CT` counted a level rather than an event so it read 3,004 programmings where the shape makes four. **Owed:** the `Ts` axis — the SoC builds PTM-C, whose drain is fixed, so `PTA_TS` is inert on it (below) | `make pta_sweep`: every point runs, C exact at each, EO-res among them | C2 tile, MB, C4(a) |
 | SoC-B | **Done, 2026-09-30.** The SoC's Verilator flags defined `PTM_C` and not `PTM_B`, so the file list carried `c930_ptm_b.sv` while the core still elaborated PTM-C. One define. `make pta_sweep PTM_B=1` now sweeps §6.2 on a broadside SoC and the drain becomes a shot: EO-scan 2,528 → 672 cycles, EO-res 2,337 → 487, and the range widens from 159× to 596×. The gate is the slope — the total moves by `M·Nt·Kt` = 32 cycles a unit of `PTA_TS`, 449 against the model's 448 from `PTA_TS` 2 to 16 | `make pta_sweep PTM_B=1`: the shot moves with `PTA_TS` at §2.1's slope, and the same run on `PTM_C=1` reports the register inert rather than passing quietly | C4(c) |
+
+**The L2 directory hole, 2026-09-30.** C4(a)'s second finding is closed. The L2
+recorded a sharer on a read fill and, on a write-through with no allocate, dropped
+the line's tag and sharer vector along with its data — while the writer's L1 kept
+the line. So the directory stopped describing reality and a later write to that
+line invalidated nobody, leaving the writer reading its own stale value. The rule
+"firmware must not write a buffer the accelerator writes" had been living in two
+firmwares' comments since.
+
+Of the three candidates the CPU document listed, keeping the writer as a sharer is
+what was built: it is the only one that adds no new hazard. Invalidating the
+writer's own line would race its next read against the write-through still in
+flight to DDR, and making the L1 write no-allocate reaches past this SoC. The two
+validities are separate now — the directory's tag survives the data it no longer
+has.
+
+Keeping the entry opened a second hole, recorded because it is the same bug one
+step removed: a read miss checks the data's validity, so it would allocate the
+same tag into another way and split the line's sharers between two entries. A read
+miss reuses a way that already holds its tag now, and the install ORs the reader in
+rather than replacing.
+
+Three tests, each failing without the fix: `tb_l2_coherent` T10 and T11, and
+`make l2_coh` — a firmware reproducer whose control and read-only cases passed
+while its written case returned the CPU's own poison, which is what identified the
+directory rather than the GEMM. **One of the bench's own tests had been passing
+because of the bug:** T5 wrote `0x30` and called it an untouched line, but the line
+is 32 bytes and `0x30` shares it with the `0x20` the tests above it use. It passed
+only while a write wiped the directory entry.
 
 **The broadside calibration probe, 2026-09-30.** The engine's probe was PTM-C's —
 `C_SHOT` walked `t` to `2R+2C−1` and captured one column per two steps, emulating the

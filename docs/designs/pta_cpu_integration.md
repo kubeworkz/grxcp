@@ -502,18 +502,53 @@ thing than it looks.
 
 Two things cost C4(a) its firmware half, and neither is in the register table.
 
-**A line the CPU has written is outside the L2's directory.** `c930_l2.sv`
-records a sharer on a read fill, and a write is write-through with no allocate:
-the L2 invalidates the sharers it knows of and drops its own copy. The L1 keeps
-the written data. So after the CPU writes a line, the L2 no longer tracks it —
-and the NPU DMA's later write to that line invalidates nobody. The CPU reads its
-own stale value for as long as the line survives. A driver that clears C before
-a GEMM and reads C after it therefore reads its own zeros: an impaired GEMM
-looks right (C all zero) and an exact one looks wrong (C zero, not K), which is
-the worse way round. Firmware must not write a buffer the accelerator writes.
-The general fix is one of three — keep the writer as a sharer, invalidate the
-writer's own line, or make the L1 write no-allocate — and it belongs to the SoC,
-not to this block.
+**A line the CPU had written was outside the L2's directory — fixed
+2026-09-30.** `c930_l2.sv` records a sharer on a read fill, and a write is
+write-through with no allocate: the L2 invalidated the sharers it knew of and
+dropped its own copy, tag and sharer vector included. But the L1 keeps the written
+data, so the directory stopped describing reality — and the NPU DMA's later write
+to that line invalidated nobody. The CPU read its own stale value for as long as
+the line survived. A driver that cleared C before a GEMM and read C after it
+therefore read its own zeros: an impaired GEMM looked right (C all zero) and an
+exact one looked wrong (C zero, not K), which is the worse way round. The rule
+"firmware must not write a buffer the accelerator writes" lived in two firmwares'
+comments for six days.
+
+Of the three candidates above — keep the writer as a sharer, invalidate the
+writer's own line, or make the L1 write no-allocate — the first is what was
+built, because it is the only one that adds no new hazard. Invalidating the
+writer's own line would have raced its own next read against the write-through
+still in flight to DDR, and an L1 change reaches past this SoC. The L2's *data*
+really is stale after a write-through and must go; its *tag and sharer vector*
+must not, so the two validities are now separate: `dir_mem` says the directory
+tracks this tag, `valid_mem` says the data is here as well. A read hit needs the
+data; a write's directory lookup needs only the tag. A write-through clears the
+data, keeps the tag, and records the writer alone. A writer with no L1 to
+invalidate — the DMA — gets no entry, so its way stays free.
+
+Keeping the entry opened a second hole, which is worth recording because it is the
+same bug one step removed. A read miss checks the data's validity, which a
+dir-only entry has cleared, so it would allocate the same tag into another way and
+leave the set holding one line twice with its sharers split between the entries; a
+later write would invalidate whichever entry its lookup found. So a read miss
+reuses a way that already holds its tag, and the install ORs the reader into that
+way's sharers rather than replacing them.
+
+Three tests, and each fails without the fix: `tb_l2_coherent` T10 (a line its own
+writer still holds is invalidated when another master writes it) and T11 (the
+writer's record survives another core refilling the same line), and `make l2_coh`,
+a firmware reproducer that poisons C from the CPU, runs a GEMM over it and reads it
+back. That last one reports the diagnosis rather than just a failure: its control
+(C untouched) and its read-only case both passed while the written case returned
+the CPU's own poison, which said the directory worked and only lost the entry on a
+write.
+
+One of the bench's own tests had been passing *because* of the bug. T5 asserted
+that a write to an untouched line leaves another line's sharers alone, and wrote
+`0x30` — but the line is 32 bytes, so `0x30` sits in the same line as the `0x20`
+the tests above it read and wrote. It passed only while the write at T3 wiped the
+directory entry. It now uses an address in a line nothing has touched, which is
+what it always meant.
 
 **The probe amplitude is a bit position with no way to learn its bounds.**
 `PTA_CAL_CFG`'s amplitude is a shift, valid only in `[DIN_W - B_a, DIN_W - 2]`,
