@@ -1159,36 +1159,52 @@ the shape they were tabulated at does not.
 | TO-1ms | 402,528 | 402,861 | 400,288 | 4 | 1.00 |
 | TO-10µs | 6,528 | 6,861 | 4,288 | 4 | 1.05 |
 | EO-scan | 2,528 | 2,861 | 288 | 4 | 1.13 |
-| EO-res | 2,336 | 2,669 | 100 | 4 | 1.14 |
+| EO-res | 2,337 | 2,670 | 100 | 4 | 1.14 |
 
 C is exact at every point, and the weight-movement column lands on §2.1's
 `nc`-exact terms to the cycle: EO-scan's 288 is `N·K + M·(Kt−1)·N` = 192 + 96, and
 EO-res's 100 is four bank selects plus the same 96. Resident saves exactly the
-scan — 2,528 − 2,336 = 192 = `N·K` — which is 8% of this GEMM. The whole range,
+scan — 2,528 − 2,337 = 191, one cycle of hop alignment off `N·K` = 192 — which
+is 8% of this GEMM. The whole range,
 TO-1ms to EO-scan, is 159× at this shape.
 
-**The feed is the binding cost here, and this is the first place that is measured
-rather than argued.** Subtracting §2.1's terms from each total leaves the cycles the
-core spends outside them:
+**What binds the Pockels-class end here is the tile's own drain, and PTM-B is
+what removes it.** `arow_stall_cnt` now reads back on a CSR
+(`NPU_REG_AROW_CT`, 0x1E0), and the A-row wait is **zero at every point** — the DMA
+keeps this core fed at this shape, which is what track F's F0 already measured on
+the hop core. With that settled, §2.1's terms account for the totals exactly:
 
-| Point | Total | §2.1's terms | Outside them | Share |
-|---|---|---|---|---|
-| TO-1ms | 402,528 | 400,832 | 1,696 | 0.4% |
-| TO-10µs | 6,528 | 4,832 | 1,696 | 26% |
-| EO-scan | 2,528 | 704 | 1,824 | 72% |
-| EO-res | 2,336 | 516 | 1,820 | 78% |
+| Point | Total | Settle | Scan | Restore | Write | Drain | A-row | Model − measured |
+|---|---|---|---|---|---|---|---|---|
+| TO-1ms | 402,528 | 400,000 | 192 | 96 | 192 | 2,048 | 0 | 0 |
+| TO-10µs | 6,528 | 4,000 | 192 | 96 | 192 | 2,048 | 0 | 0 |
+| EO-scan | 2,528 | 0 | 192 | 96 | 192 | 2,048 | 0 | 0 |
+| EO-res | 2,337 | 0 | ~0 | 96 | 192 | 2,048 | 0 | −3 |
 
-The operands are the same size at every point, so that term is nearly constant and
-its *share* is what moves: under half a per cent at the thermal end, 78% at the
-resident one. §2.1 says a resident tile "is bound by the host — its feed and its
-writes — not by the tile"; this is that sentence with numbers under it, and it is
-also why `DMA/core` is above one at every point. The DMA is busy longer than the
-core computes, so the two counters overlap and their quotient is not a share of
-anything — it is the fetch outlasting the arithmetic.
+The drain is `2 · 2 · (NUM_ROWS + NUM_COLS)` = 64 cycles a run, 32 runs, because
+**this SoC builds PTM-C**: its readout is the array's skewed one, `t` walking
+0 … 2R+2C−1 on hop edges. So at EO-scan the drain is **81% of the GEMM**, and at
+EO-res **88%** — and the drain is exactly what PTM-B replaces with a shot (§4.2).
 
-The attribution is a subtraction, not a measurement. `arow_stall_cnt` still has no
-CSR, so the A-row wait cannot be read back to confirm that it is most of what sits
-outside the model. Exposing it is what F2 will want first.
+Two consequences, and they are the useful part of this step:
+
+- **`PTA_TS` is inert on the SoC.** The `Tw` axis of the sweep above is real — the
+  settle is the core's own and the thermo-optic points move with it, 159× across
+  the range. The `Ts` axis needs PTM-B, which the SoC does not build, so the
+  Pockels-class *shot* cannot be emulated here at all. A PTM-B SoC build is what
+  C4(c) turns out to need, and it is not a large change: the core already selects
+  the tile on `PTM_B`.
+- **The feed is not what binds this end, and §2.1's sentence about it is still
+  unmeasured.** §2.1 says a resident tile "is bound by the host — its feed and its
+  writes — not by the tile". On this SoC the writes are 192 cycles of 2,337 and the
+  feed is zero, so the sentence is not confirmed here; what binds it is the tile.
+  That may well change once PTM-B cuts the drain to a shot, which is the point at
+  which the claim becomes testable — and it is F2's question, not this step's.
+
+`DMA/core` above one at every point says only that the DMA is busy longer than the
+core computes; the two counters overlap, so their quotient is not a share of
+anything. With `S_AROW` at zero it means the fetch finishes in the shadow of the
+drain, not that the core waits for it.
 
 **Two things C4(c) found, both in code C4(a) wrote:**
 
@@ -1242,9 +1258,10 @@ Three rules hold at the Pockels-class end:
   construction. The orders agree about arithmetic, not about noise.
 - **`DMA_CT` is part of the result.** A GEMM of a few thousand cycles is no
   longer long beside the DMA fetch of its operands, so the fetch cannot be
-  subtracted as overhead at this end. C4(c) measured it: `DMA_CT` exceeds the
-  core's own cycle count at every point of the sweep, and the cycles outside
-  §2.1's terms are 72% of the GEMM at EO-scan and 78% at EO-res.
+  subtracted as overhead at this end. C4(c) measured it: `DMA_CT` exceeds the core's
+  own cycle count at every point. That does not yet make the feed the binding cost,
+  though — `S_AROW` is zero throughout, so the fetch finishes inside the shadow of
+  PTM-C's drain. The rule stands and the test of it waits on a PTM-B SoC build.
 - **Dilation is a claim about the host.** Raising `PTA_TS` above its floor to
   stretch a sub-cycle shot is the same as assuming a host that many times
   faster than the FPGA, because the scan, the row write and the fetch keep
