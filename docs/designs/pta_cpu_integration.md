@@ -343,6 +343,59 @@ are available and each is separately measurable:
 the headline before the first step is measured is how a plan starts lying to
 itself.
 
+### 2.4 What the DMA costs around the loop nest — per beat, not per GEMM
+
+§2.1 to §2.3 price the core. The DMA's cost sits around them, and F0 recorded it
+as three measured constants per level: an initial load, a per-row prefetch, and a
+C writeback. They are not constants. Each is a count of AXI beats times a
+per-beat cost that `c930_npu_dma.sv`'s state machine fixes, and reading them off
+the machine rather than fitting them is what lets the feed be priced at a shape
+nobody has run — which is what step F3 has to hand the fabric plan.
+
+| Phase | Cycles a beat | Why |
+|---|---|---|
+| `P_READ_A`, `P_READ_B` | **2**, plus 2 for the AR | `RS_R` latches the beat, `RS_UNPACK` writes all of it through the wide port |
+| PF1's row prefetch | **1** | the same work restructured, `rready` held across the burst |
+| `P_WRITE_C`, until 2026-09-30 | **5**, plus 3 | `WS_ADDR`, `WS_DATA`, `WS_PACK`, then `WS_DRIVE` twice — one cycle to raise `m_axi_wvalid` and one for the handshake |
+| `P_WRITE_C`, now | **1**, plus 3 and one cycle of fill | `WS_STREAM`: one address yields the whole beat |
+
+A beat is 8 bytes, so C is two INT32 to a beat. On the NPU bench, whose AXI
+answers a read the cycle after its AR, this is **exact** — 66, 514 and 1,283
+cycles at `M = 64, N = 8, K = 256`, with nothing fitted. On the SoC each is a
+floor, and the excess is the DMA arbiter, the crossbar and the L2, which the
+state machine does not contain.
+
+**The write burst was five cycles a beat to put 8 bytes on a channel that takes
+8 bytes a cycle.** It walked the beat's two words through one read port, a word
+at a time, then spent two more cycles driving it. At F0's shape that was 1,283
+cycles of an 1,867-cycle feed — 69% of it, and 80% at the SoC's smaller shape.
+The cost was the state machine's, not the memory's: `c_mem` is distributed RAM
+specifically so that its reads can be asynchronous (the comment at its
+declaration says so), and `o_c_rdata` is a combinational read.
+
+So a second asynchronous read one word up, `o_c_rdata_hi = c_mem[i_c_raddr + 1]`,
+fills a whole beat from a single address, and `WS_STREAM` replaces all four
+states. Advancing that address only on a `W` handshake makes the whole thing a
+pipeline that needs no skid buffer: when `wready` drops, the address has not
+moved, so the same pair is still on the read port next cycle. Measured on the
+NPU bench, same shape and same core, the burst went **1,283 → 260 cycles** — the
+model's prediction to the cycle — and the whole GEMM fell by exactly 1,023, the
+burst's saving and nothing else.
+
+> Not to be confused with §2.3's writeback. That is `S_WRITE`, the core moving
+> its accumulators into `c_mem`, 16,384 cycles at this shape and still foldable
+> into `S_RUN`'s tail. This is the DMA moving `c_mem` out to DDR. The two are
+> different phases of different units that happen to share a name.
+
+**At one beat a cycle the burst asks the fabric for the whole W channel**, where
+at five it never asked for more than a fifth. Whether the crossbar and L2 would
+take it was the open question, and F2 settled it: the feed's excess over the
+model's floor was +30 cycles before and +33 after, unmoved. Had the write path
+throttled, asking for five times the beat rate would have widened that gap. So
+those ~30 cycles are burst setup latency, paid once a GEMM, not a per-beat
+ceiling — and the floor holds. At the SoC's shape the feed went 333 → 145 cycles
+and an EO-res GEMM 721 → 533.
+
 ---
 
 ## 3. Precision codes and the CSR address space
@@ -402,7 +455,7 @@ added the PTA block's row, and said what the fall-through now aliases.
 
 | Offset | Name | Access | Description |
 |---|---|---|---|
-| 0x40 | `PTA_CTRL` | RW | bit0 EN, bit1 CAL_NOW, bit2 CAL_AUTO, bit3 MODEL_RST, bits[6:4] CAL_SCHED |
+| 0x40 | `PTA_CTRL` | RW | bit0 EN, bit1 CAL_NOW, bit2 CAL_AUTO, bit3 MODEL_RST, bits[6:4] CAL_SCHED, bit7 RESIDENT, bit8 WSKIP, bit9 MORDER (MB), bit10 STAGE_A (F2) |
 | 0x44 | `PTA_STATUS` | R | bit0 CAL_BUSY, bit1 CAL_VALID, bit2 SAT_STICKY, bit3 DRIFT_ALARM, bits[23:8] last calibration residual |
 | 0x48 | `PTA_IMPAIR` | RW | one enable bit per impairment: QUANT, THERMAL, SHOT, DRIFT, XTALK, MZM_NL, PROG_ERR |
 | 0x4C | `PTA_BITS` | RW | [3:0] activation bits, [7:4] weight bits, [11:8] ADC bits, [17:12] ADC shift `S`, so `LSB_adc` = 2^S |
@@ -1397,6 +1450,29 @@ Three rules hold at the Pockels-class end:
   own cycle count at every point. That does not yet make the feed the binding cost,
   though — `S_AROW` is zero throughout, so the fetch finishes inside the shadow of
   PTM-C's drain. The rule stands and the test of it waits on a PTM-B SoC build.
+
+  **F2 ran that test on 2026-09-30** (`make pta_feed PTM_B=1`), and two things
+  need correcting here. First, `DMA_CT` counts every cycle with `phase != P_IDLE`
+  and `P_LAUNCH` is one of those phases, so it is not the fetch — it is the whole
+  GEMM, first `AR` to `o_done`, and the fetch is `DMA_CT − CYCLE_LO`. A ratio of
+  `DMA_CT` to the core is therefore `1 + feed/core` and can never fall below one,
+  which is why "exceeds the core at every point" read as a finding when it was an
+  identity. The sweep's harness printed it that way and now prints the feed.
+
+  Second, the feed was 333 cycles at both Pockels points, 46% of an EO-res GEMM,
+  and **81% of it was the C write burst** — not the operand fetch at all. §2.4
+  rebuilt the burst and the feed fell to 145 cycles, 27% of a GEMM. `S_AROW` is
+  still zero in every mode, so PF1 never makes this core wait at this shape, and
+  the third of F2's options — staging the whole GEMM before launch — loses by the
+  28 cycles it adds and cannot win by removing a wait that does not exist.
+
+  **What binds now is the host, not the feed.** The wall clock is the CPU's, so
+  `wall − DMA_CT` is time outside the engine: the submit's MMIO writes and the
+  drain's polling. That is 1,091 cycles a GEMM, unchanged by the write burst
+  (1,086 before), which is the check that it really is outside. At EO-res it is
+  67% of the wall and **2.0× the whole GEMM** — more than the core (388) and the
+  feed (145) together. Cutting the feed 56% moved the wall 10%. F3 carries this
+  as a property of this SoC's MMIO path, not of any fabric.
 - **Dilation is a claim about the host.** Raising `PTA_TS` above its floor to
   stretch a sub-cycle shot is the same as assuming a host that many times
   faster than the FPGA, because the scan, the row write and the fetch keep
@@ -1492,6 +1568,25 @@ Recorded so the next reader knows what was considered and deliberately deferred.
    not the same matrix. Since no mesh is being built, the topology is a
    parameter with no ground truth; the model should carry a pluggable coupling
    matrix and the document should keep saying it is a hypothesis.
+6. **`PTA_CTRL.PF2_OFF` — turning the cross-GEMM prefetch off on its own.**
+   F2 measured PF2 as a net loss of about 22 cycles a queued GEMM, at two
+   shapes, and the rebuilt write burst (§2.4) left it fetching 29 of the 288
+   beats it needs instead of 143 — the same rate in a fifth of the window. So
+   the best feed this SoC can reach is *PF1 on, PF2 off, queued*, and no bit
+   says that: `STAGE_A` disables both prefetches together, because its own
+   correctness requires it (`P_STAGING` jumps straight to `P_LAUNCH` with only
+   row 0 staged, so a core told every row is ready would read rows 1..M−1 before
+   anything wrote them). A bit 11 on the same pattern, adding one term to PF2's
+   entry guard, would turn F2's arithmetic into a measurement. Deferred only to
+   keep the write-burst change reviewable on its own; it is the smallest
+   outstanding item in track F and it should precede F3, since F3 quotes rates
+   that PF2 currently depresses.
+
+   The honest alternative is to fix PF2 rather than switch it off: it cannot
+   finish because it unpacks one element per cycle (`PF2_UNPK`) while PF1's path
+   was long ago restructured to a beat a cycle. The same restructuring would
+   make PF2 complete inside even the new 260-cycle writeback. That is the larger
+   change and nothing has measured whether a completed PF2 pays.
 
 ---
 
