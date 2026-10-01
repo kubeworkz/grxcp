@@ -639,9 +639,43 @@ grxgpu's RTL owners, under the boundary rule of `AGENTS.md` §2.
 
 | Step | What | Gate | Needs |
 |---|---|---|---|
-| S0 | The D2 property specified: its fields, what an NPU without a tile reports, and the `grx-smi` line | Review; no code | D2 |
+| S0 | **Done, below.** The D2 property specified: its fields, what an NPU without a tile reports, and the `grx-smi` line | Review; no code. CPU document §7.1, which also states what S1 must do to satisfy it, so the specification is testable rather than agreeable | D2 |
 | S1 | The property populated from the PTA CSRs, and the vendored DPI shim extended to answer on them | `AGENTS.md` §3: every field sourced or reported unknown (−1); the NPU BACKEND GATE in `ci/build_mock.sh` green | S0, C4's CSR map |
 | S2 | The two gates: bitwise against the model, its golden data regenerated only as a reviewed step, and the distributional report | CPU document §7 | S1 |
+
+**S0, specified.** CPU document §7.1. D2 had settled that the property is a
+struct rather than a flag; S0 is its shape, and three things came out of writing
+it down that the one-line brief did not contain.
+
+**The no-tile case is three cases, not two.** A tile that is present with
+`PTA_CTRL.EN` clear is not the same as no tile, and both are "not emulated". So
+the struct carries `tileIsPresent` beside `gemmIsAnalogEmulated`, and a user
+asking why their GEMM is not analog can tell *this build has no tile* from *you
+did not enable it* — which is otherwise a silent difference, and the kind of
+thing that gets diagnosed twice.
+
+**In both inactive cases every other field is `-1`, not the CSR's contents.**
+With `EN` clear the registers still read back whatever was last written, and
+those values describe a model that is not running. Reporting them would invent a
+provenance for a result that does not have one. `-1` for not-applicable is
+already the house convention — `grxFuncAttributes` guards `numRegs` and
+`ptxVersion` the same way — and it is why two of the fields are signed 64-bit:
+a full 32-bit register value and `-1` both have to fit.
+
+**The impairment mask needs a second mask beside it.** `PTA_IMPAIR` defines
+seven bits and the tile implements six: bit 5, MZM_NL, has no phase in this
+build, and a START with it set is *refused* rather than ignored (CPU document
+§4.3). Without `impairmentsImplemented` a caller cannot tell a bit that is off
+from a bit that cannot be on, and would read that refusal as a driver bug.
+`impairments & ~impairmentsImplemented` is exactly the set that will refuse.
+
+Two things S0 deliberately does not settle, both left where there will be code
+to look at. Whether `grxblasGemmEx` should refuse a GEMM carrying an
+unimplemented impairment or pass it down and let the START refuse it — the
+second is what the hardware does today, the first duplicates a rule in two
+places, and that is how two rules drift apart. And the wording of the
+distributional report, which is S2's and depends on numbers C1 has not finished
+moving.
 
 ---
 
@@ -649,7 +683,7 @@ grxgpu's RTL owners, under the boundary rule of `AGENTS.md` §2.
 
 | Wave | Starts when | Steps |
 |---|---|---|
-| Now | Immediately, in parallel | S0; A3; A-synth; G1 (D1–D4 settled; F0 and C0 done) |
+| Now | Immediately, in parallel | A3; G1 (D1–D4 settled; F0 and C0 done). S0 and A-synth are done |
 | Next | C0 green, as it now is | C1; G0 and C3 once C1 is green (F1 done) |
 | Then | C1, C2 tile, MB, C4, SoC-B and F2 now green | F3 next, on F2's numbers — with the host's 1,091 cycles labelled as this SoC's MMIO path, not a fabric rate; G2 once G1 has reported |
 | Last | C2 tile, MB, C3 and A-synth green | C4; then S1 and S2 on its CSR map, F3 on its numbers, and G3 |
