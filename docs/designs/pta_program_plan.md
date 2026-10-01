@@ -45,6 +45,7 @@ either names its document or is this one's.
 | The shot's floor (2026-09-30) | Two cycles, not six: the hop came out of the broadside path. Every §2.1 term is an equality now, and EO-res got a third of its margin back |
 | §6.2's sweep on the SoC (C4(c)) | Landed and gated: `make pta_sweep`. All four points measured through MMIO. §2.1's terms account for every total exactly; PTM-C's drain is 81–88% of the GEMM at the Pockels-class end |
 | PTM-B SoC build (SoC-B) | Landed and gated: `make pta_sweep PTM_B=1`. §6.2's `Ts` axis is reachable — the shot moves with `PTA_TS` at §2.1's slope, and the Pockels-class end gets 3.8–4.8× faster |
+| Feed options at the Pockels points (F2) | Landed and gated: `make pta_feed PTM_B=1`. None of the three options was the answer — 81% of the feed was the C write burst. Rebuilt, it is 1,283 → 260 cycles at F0's shape and the feed 333 → 145 at the SoC's. What binds now is the host's MMIO path, at 2.0× the GEMM |
 | Calibration (C3) | Landed and gated, on both tiles: the engine has a probe per tile since 2026-09-30, so C3's apparatus runs where the Pockels-class numbers come from |
 | SoC integration, firmware, Vivado (C4) | Not started |
 | G100 tile (G0–G3) | Not started; staged behind C2 |
@@ -478,7 +479,7 @@ requirements where it cannot.
 |---|---|---|---|
 | F0 | **Done, below.** Run the `M = 64, N = 8, K = 256` GEMM on the Verilator SoC and record `DMA_LAST`, `STALL_CT` and the core's A-row wait (`arow_stall_cnt`, not yet on a CSR), split into the initial load, PF1 (A rows fetched during compute) and PF2 (the next GEMM's operands, fetched while C is written) | *New:* fetch cycles per operand, and the A-row wait on the digital array, identical run to run | — |
 | F1 | **Predictions made, below; checked at C2 tile and MB.** Add a feed term to the §2.1 model, built from F0's fetch rate | *New:* the model predicts the A-row wait and `DMA_CT` at C2 tile and MB, before they are measured | F0 |
-| F2 | Feed options at the Pockels points: PF1 and PF2 as built; B tiles prefetched straight into resident banks; the whole GEMM staged before launch | *New:* chosen by measured total cycles, A-row wait included, at EO-scan and EO-res | C2 tile, MB |
+| F2 | **Done, below.** Feed options at the Pockels points: PF1 and PF2 as built; B tiles prefetched straight into resident banks; the whole GEMM staged before launch | `make pta_feed PTM_B=1`: nine batches at both points, two batch sizes each, every C exact including an odd `M·N` tail; the A-row wait is checked to be zero rather than assumed, and `STAGE_A` must lengthen the DMA or the bit is reported inert | C2 tile, MB |
 | F3 | Requirements for the fabric plan: operands per second at each §6.2 point, which operands are resident and which streamed, and how long the tile can wait. They are handed to the board plan's X2, which adds the die-to-die term | *New:* every number traced to F0–F2 or to a model F1 checked | F1, F2, C4 |
 
 F0's numbers belong to this SoC and its simulated DDR, not to any fabric, and
@@ -544,6 +545,65 @@ So writeback and PF2 lead F2's candidates by more than they did, and the shot
 is no longer the larger term: it was cut from six cycles to two on 2026-09-30
 (§3.1).
 
+**F2, measured.** `make pta_feed PTM_B=1` runs nine batches on a broadside SoC:
+EO-scan and EO-res, each with the feed as built and with a new
+`PTA_CTRL.STAGE_A`, each of those at `Q = 1` and `Q = 4`, plus the resident fill.
+Two batch sizes because every per-GEMM counter — `CYCLE_LO`, `DMA_CT`,
+`STALL_CT`, `AROW_CT` — resets on `START`, so a drained batch of four reports only
+its last GEMM; `4·wall(Q=1) − wall(Q=4)` is then what queueing buys, measured
+rather than modelled. The shape is this SoC's `M = 8, N = 12, K = 16`, the same
+as C4(c)'s, so the two sets of numbers sit side by side.
+
+The three options in F2's brief map onto this as: *as built* is `modes = 0`;
+*B tiles prefetched straight into resident banks* **is** the EO-res point, since
+EO-scan with `RESIDENT|WSKIP` would be EO-res by definition, so the two levels
+span that option rather than it being a third axis; and *the whole GEMM staged
+before launch* is `STAGE_A`, which takes the path INT4 has always needed —
+nibble packing makes rows share bytes — at a precision that does not.
+
+| Point | core | GEMM | feed | `S_AROW` |
+|---|---|---|---|---|
+| EO-scan, as built | 576 | 909 → **721** | 333 → **145** | 0 |
+| EO-scan, `STAGE_A` | 576 | 937 → 749 | 361 → 173 | 0 |
+| EO-res, as built | 388 | 721 → **533** | 333 → **145** | 0 |
+| EO-res, `STAGE_A` | 388 | 749 → 561 | 361 → 173 | 0 |
+
+**None of the three options was the answer.** `S_AROW` is zero at every point in
+every mode, so PF1 never makes this core wait at this shape and staging cannot
+win by removing a wait — it only adds the 28 cycles of 14 more A beats at the
+read path's two cycles a beat, which is what it measures, exactly, at both
+levels. Residency cuts the *core* (576 → 388, and weight movement 288 → 100
+cycles, exactly the gap), not the feed, which is 333 cycles at both points.
+
+**81% of that feed was the C write burst**, and it was five cycles a beat to put
+8 bytes on a channel that takes 8 bytes a cycle. CPU document §2.4 rebuilt it;
+the arrow in each cell above is that change. `make npu_feed` gives the clean
+reading at F0's shape: **1,283 → 260 cycles**, the model's prediction to the
+cycle, with the whole GEMM falling by exactly 1,023 and 256 AXI beats either way.
+The fabric did take a beat a cycle — the feed's excess over the structural floor
+was +30 cycles before and +33 after, so those are burst setup, paid once a GEMM.
+
+**PF2 is a net loss of about 22 cycles a queued GEMM**, which confirms F0's
+finding at a second shape. `STAGE_A` disables PF2 as well, so its `Q = 4` penalty
+should be 4 × 28 = 112 and measures +17 to +26; the difference is PF2's cost
+refunded. Shortening the writeback did not make that worse — the cost is
+`P_DONE` draining an abandoned burst, which depends on the burst in flight — but
+it did make PF2 more pointless: it now fetches 29 of the 288 beats it needs
+instead of 143, the same rate in a fifth of the window.
+
+So the best of the three is **PF1 as built, queued**, and the best reachable is
+*PF1 on, PF2 off, queued*, which no control bit currently expresses — `STAGE_A`
+couples the two prefetches. That is the one thing F2 leaves owed (CPU document
+§8, item added 2026-09-30).
+
+**What binds now is the host.** The wall clock is the CPU's, so `wall − DMA_CT`
+is spent outside the engine, on the submit's MMIO writes and the drain's poll:
+1,091 cycles a GEMM, and the write burst did not move it (1,086 before), which
+is the check that it is really outside. At EO-res that is 67% of the wall and
+**2.0× the whole GEMM**, more than the core and the feed together. Cutting the
+feed 56% moved the wall 10%. F3 carries that as this SoC's MMIO path, not as a
+fabric number — which is the distinction §3.3's preamble already insists on.
+
 ### 3.4 Track G — the G100 (grxgpu, by proposal)
 
 Every step lands as a proposal in `grxgpu/docs/proposals/`, written with
@@ -572,7 +632,7 @@ grxgpu's RTL owners, under the boundary rule of `AGENTS.md` §2.
 |---|---|---|
 | Now | Immediately, in parallel | S0; A3; A-synth; G1 (D1–D4 settled; F0 and C0 done) |
 | Next | C0 green, as it now is | C1; G0 and C3 once C1 is green (F1 done) |
-| Then | C1, C2 tile, MB, C4 and SoC-B now green | F2 next, on a PTM-B SoC where its question is finally askable; G2 once G1 has reported |
+| Then | C1, C2 tile, MB, C4, SoC-B and F2 now green | F3 next, on F2's numbers — with the host's 1,091 cycles labelled as this SoC's MMIO path, not a fabric rate; G2 once G1 has reported |
 | Last | C2 tile, MB, C3 and A-synth green | C4; then S1 and S2 on its CSR map, F3 on its numbers, and G3 |
 
 The critical path is C0 → C1 → C2 tile → MB → C4. Everything else runs beside

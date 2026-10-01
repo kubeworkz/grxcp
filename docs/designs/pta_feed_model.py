@@ -73,6 +73,70 @@ FIRST_ROW = 1        # A row r lands at FIRST_ROW + r * period cycles after laun
 CORE_START = 2       # the core's first K tile starts this many cycles after launch
 HOP_RUN = 64         # S_RUN per K tile after the half-rate hop
 
+# ---- the DMA's own costs, read off c930_npu_dma.sv (F2) --------------------
+# Not fitted: each is a count of states the machine passes through per beat.
+BYTES_PER_BEAT = 8   # 64-bit AXI
+READ_BEAT = 2        # RS_R latches the beat, RS_UNPACK writes it through the
+                     # wide port.  PF1's path does a beat a cycle; P_READ_A and
+                     # P_READ_B kept the second cycle, since they run once per
+                     # GEMM rather than once per output row.
+READ_SETUP = 2       # the AR handshake
+# The C write burst, before and after F2 rebuilt it.  WALK is what F0 measured:
+# WS_ADDR, WS_DATA, WS_PACK, then WS_DRIVE twice -- one cycle to set
+# m_axi_wvalid and one for the handshake -- because the beat's two words came
+# through one read port a word at a time.  STREAM is the second read port
+# (o_c_rdata_hi): one address yields a whole beat, so the burst runs at the W
+# channel's own rate and the only extra cycle is the pipeline's first fill.
+WRITE_BEAT_WALK = 5
+WRITE_BEAT = 1
+WRITE_SETUP = 3      # AW, and B at the end
+WRITE_FILL = 1       # WS_STREAM presents beat 0 the cycle after it loads it
+WORDS_PER_BEAT = 2   # C is INT32, two to a 64-bit beat
+
+F0_SHAPE = (sweep.M, sweep.N, sweep.K)      # 64, 8, 256 -- what F0 measured
+SOC_SHAPE = (8, 12, 16)                     # what pta_sweep.c and pta_feed.c run
+
+# ---- measured, F2 (`make pta_feed PTM_B=1`, SOC_SHAPE, 2026-09-30) ---------
+# Per GEMM at Q = 1, from NPU_REG_DMA_CT (the whole GEMM: DMA_CT counts
+# P_LAUNCH) and NPU_REG_CYCLE_LO (the core).  "walk" is the five-cycle write
+# burst, "stream" the one-cycle one.
+# wall_walk is None for EO-scan: the only Q = 1 EO-scan batch in the run that
+# measured the walking burst was the first one, and it paid ~290 cycles for the
+# CPU's cold I-cache.  pta_feed.c now runs a discarded warm-up batch first, but
+# that fix and the new burst landed together, so there is no warm pre-change
+# wall at this level to compare against.  EO-res's was warm.
+MEASURED_F2 = {
+    "EO-scan": dict(core=576, gemm_walk=909, gemm=721, wall_walk=None, wall=1_823),
+    "EO-res":  dict(core=388, gemm_walk=721, gemm=533, wall_walk=1_807, wall=1_624),
+}
+# STAGE_A's cost, measured identically at both levels and both write bursts:
+# 14 more beats of A read before launch, at the read path's 2 cycles a beat.
+MEASURED_F2_STAGE_A = 28
+# The A-row wait, at every point, in every mode, both write bursts.  PF1 never
+# makes this core wait at this shape, which is why staging cannot help.
+MEASURED_F2_AROW = 0
+# Weight movement, EO-scan -> EO-res: what WSKIP saves, and exactly the gap
+# between the two cores (576 - 388).
+MEASURED_F2_WMOVE = (288, 100)
+
+
+def beats_of(elems, elem_bytes):
+    """AXI beats to move `elems` elements of `elem_bytes` each."""
+    return -(-(elems * elem_bytes) // BYTES_PER_BEAT)
+
+
+def c_beats_of(words):
+    return -(-words // WORDS_PER_BEAT)
+
+
+def feed_part(beats, kind, walk=False):
+    """Cycles for one DMA phase.  `walk` prices the retired write burst."""
+    if kind == "read":
+        return beats * READ_BEAT + READ_SETUP
+    if walk:
+        return beats * WRITE_BEAT_WALK + WRITE_SETUP
+    return beats * WRITE_BEAT + WRITE_SETUP + WRITE_FILL
+
 # ---- measured, F0 ----------------------------------------------------------
 LEVELS = {
     "NPU bench": dict(read_a=66, read_b=514, pf1_busy=2_142, write_c=1_283, drain=145),
@@ -85,6 +149,14 @@ MEASURED = {
     ("NPU bench", HOP_RUN): (165_375, 0, 167_242),
     ("SoC", HOP_RUN): (165_375, 0, 167_375),
 }
+
+# ---- measured, F2, on the NPU bench after the write burst was rebuilt -------
+# `make npu_feed`, 2026-09-30, same shape and same core as the HOP_RUN rows
+# above, so these differ from them by the write burst and nothing else.  The
+# bench reports the phase breakdown directly, which is why this is the clean
+# reading: 256 beats either way (axi wbeats=256), 1,283 cycles against 260.
+BENCH_F2 = dict(write_c=260, gemm=166_219, read_a=66, read_b=514, arow=0,
+                wbeats=256)
 
 
 def period(level):
@@ -214,6 +286,149 @@ def main():
     for level, p in LEVELS.items():
         print(f"  {level:<10} +{p['drain']} cycles each for PF2's drain, at every point:"
               " writeback is 512 words regardless of the tile")
+
+    # 5. The feed's parts from the DMA's structure, not from a fit (F2).
+    section("5. The feed per beat, read off c930_npu_dma.sv and checked against F0")
+    print("  F0's load and writeback were three measured constants per level.  They")
+    print("  are not constants: they are beat counts times a per-beat cost the state")
+    print("  machine fixes, which is what lets F2 price the feed at a shape F0 never")
+    print("  ran and F3 quote a rate rather than one SoC's numbers.")
+    print()
+    print(f"    reads   {READ_BEAT} cycles a beat   RS_R latches the beat, RS_UNPACK writes")
+    print( "                              all of it through the wide port (one cycle")
+    print( "                              per beat on PF1's path, which restructured it)")
+    print(f"    write   {WRITE_BEAT_WALK} cycles a beat   WS_ADDR, WS_DATA, WS_PACK, then WS_DRIVE")
+    print( "            (retired)         twice -- set m_axi_wvalid, then the handshake")
+    print(f"    write   {WRITE_BEAT} cycle a beat    WS_STREAM: one address yields the whole")
+    print( "            (F2)              beat from c_mem's two read ports")
+    print(f"    AR/AW   +{READ_SETUP} / +{WRITE_SETUP}          the address handshake, and B for a write")
+    print()
+    print(f"  {'part':<22}{'beats':>7}{'model':>9}{'measured':>10}{'level':>12}")
+    for level in LEVELS:
+        p = LEVELS[level]
+        for name, beats, want, kind in (
+            ("A row 0, K=256 INT8", beats_of(sweep.K, 1), p["read_a"], "read"),
+            ("B, K*N bytes", beats_of(sweep.K * sweep.N, 1), p["read_b"], "read"),
+            ("C, M*N INT32 words", c_beats_of(sweep.M * sweep.N), p["write_c"], "write"),
+        ):
+            # F0 ran the walking write burst, so that is what its numbers check.
+            got = feed_part(beats, kind, walk=True)
+            print(f"  {name:<22}{beats:>7}{got:>9,}{want:>10,}{level:>12}")
+            # The NPU bench's AXI answers a read the cycle after its AR, so the
+            # structure is exact there.  The SoC's reads cross the DMA arbiter,
+            # the crossbar and the L2, which adds latency the state machine does
+            # not contain -- so there it is a floor, and the gap is the fabric's.
+            if level == "NPU bench":
+                assert got == want, (level, name, got, want)
+            else:
+                assert want >= got, (level, name, got, want)
+    print("  exact on the NPU bench, a floor on the SoC: the difference is the")
+    print("  crossbar and L2, which the state machine does not contain.")
+    print()
+    # The rebuilt burst on the same bench, same shape, same core -- so the only
+    # thing that changed is the write burst, and the model has to get it right
+    # for the same reason it got the walking one right.
+    cb = c_beats_of(sweep.M * sweep.N)
+    want = feed_part(cb, "write")
+    print(f"  the rebuilt burst, NPU bench, same shape and core:"
+          f"  C model {want} measured {BENCH_F2['write_c']}"
+          f"   ({cb} beats, AXI reported {BENCH_F2['wbeats']})")
+    assert want == BENCH_F2["write_c"], (want, BENCH_F2["write_c"])
+    assert BENCH_F2["wbeats"] == cb, (BENCH_F2["wbeats"], cb)
+    # And the whole GEMM must fall by exactly the writeback's saving: nothing
+    # else in the GEMM was touched, so any other delta would be a side effect.
+    walked = feed_part(cb, "write", walk=True)
+    before = MEASURED[("NPU bench", HOP_RUN)][2]
+    assert before - BENCH_F2["gemm"] == walked - want, \
+        (before - BENCH_F2["gemm"], walked - want)
+    print(f"  and the whole GEMM fell {before:,} -> {BENCH_F2['gemm']:,}, which is"
+          f" {walked - want:,} -- exactly the burst's saving and nothing else")
+    print("  exact for BOTH bursts with no fitted constant, which is what makes")
+    print("  the per-beat costs usable at shapes nobody has run (F3).")
+
+    section("5b. What rebuilding the write burst is worth (F2)")
+    print("  c_mem is read combinationally (o_c_rdata = c_mem[i_c_raddr]) and is")
+    print("  distributed RAM precisely so that it can be, so the five cycles were")
+    print("  the state machine's, not the memory's.  A second asynchronous read one")
+    print("  word up fills a beat from one address; advancing that address only on")
+    print("  a W handshake makes the whole thing a pipeline with no skid buffer.")
+    print()
+    print(f"  {'shape':<28}{'C walk':>9}{'C stream':>10}{'feed':>9}{'->':>4}"
+          f"{'feed':>8}{'change':>9}")
+    for shape, label in ((F0_SHAPE, "F0's, M=64 N=8 K=256"),
+                         (SOC_SHAPE, "the SoC's, M=8 N=12 K=16")):
+        m, n, k = shape
+        rd_a = feed_part(beats_of(k, 1), "read")
+        rd_b = feed_part(beats_of(k * n, 1), "read")
+        cb = c_beats_of(m * n)
+        wr_walk = feed_part(cb, "write", walk=True)
+        wr_strm = feed_part(cb, "write")
+        rest = rd_a + rd_b + HANDOFF + DONE
+        print(f"  {label:<28}{wr_walk:>9,}{wr_strm:>10,}{rest + wr_walk:>9,}"
+              f"{'->':>4}{rest + wr_strm:>8,}"
+              f"{(rest + wr_strm) / (rest + wr_walk) - 1:>+9.0%}")
+        print(f"    writeback was {wr_walk / (rest + wr_walk):.0%} of the feed and is"
+              f" now {wr_strm / (rest + wr_strm):.0%}; A row 0 {rd_a}, B {rd_b},"
+              f" hand-off {HANDOFF}, done {DONE}")
+    print()
+    print("  This is a floor.  At five cycles a beat the burst never asked the")
+    print("  crossbar and L2 for more than a fifth of the W channel; at one it asks")
+    print("  for all of it, and whatever they will not take shows up as wready low.")
+
+    # 5c. The floor against the SoC, measured both ways.  The question the model
+    # could not answer was whether the write path would sustain a beat a cycle.
+    section("5c. F2 measured: did the fabric take a beat a cycle?")
+    m, n, k = SOC_SHAPE
+    rest = (feed_part(beats_of(k, 1), "read") + feed_part(beats_of(k * n, 1), "read")
+            + HANDOFF + DONE)
+    floor_walk = rest + feed_part(c_beats_of(m * n), "write", walk=True)
+    floor_strm = rest + feed_part(c_beats_of(m * n), "write")
+    print(f"  {'point':<10}{'feed walk':>11}{'floor':>8}{'over':>7}"
+          f"{'feed stream':>13}{'floor':>8}{'over':>7}")
+    excess = {}
+    for name, d in MEASURED_F2.items():
+        fw, fs = d["gemm_walk"] - d["core"], d["gemm"] - d["core"]
+        excess[name] = (fw - floor_walk, fs - floor_strm)
+        print(f"  {name:<10}{fw:>11,}{floor_walk:>8,}{excess[name][0]:>+7}"
+              f"{fs:>13,}{floor_strm:>8,}{excess[name][1]:>+7}")
+    # If the write path had throttled, the excess over the floor would have grown
+    # with the beat rate -- five times the beats per cycle asked for, five times
+    # the wready gaps.  It did not move, so the excess is burst setup latency in
+    # the crossbar and L2, paid once per GEMM, not a per-beat ceiling.
+    for name, (ew, es) in excess.items():
+        assert abs(es - ew) <= 8, (name, ew, es)
+    print(f"  the excess over the floor barely moves ({excess['EO-res'][0]:+d} ->"
+          f" {excess['EO-res'][1]:+d} at EO-res), so it is burst setup in the")
+    print("  crossbar and L2, paid once a GEMM -- NOT a per-beat ceiling.  The W")
+    print("  channel did take a beat a cycle, and the model's floor holds.")
+    print()
+    for name, d in MEASURED_F2.items():
+        print(f"  {name:<10} GEMM {d['gemm_walk']:,} -> {d['gemm']:,} "
+              f"({d['gemm'] / d['gemm_walk'] - 1:+.0%}), feed "
+              f"{d['gemm_walk'] - d['core']:,} -> {d['gemm'] - d['core']:,}, "
+              f"feed's share {(d['gemm_walk'] - d['core']) / d['gemm_walk']:.0%}"
+              f" -> {(d['gemm'] - d['core']) / d['gemm']:.0%}")
+
+    # 5d. What binds now.  The wall clock is the CPU's, so wall - GEMM is spent
+    # outside the engine: the submit's seven MMIO writes and the drain's poll.
+    section("5d. What binds after F2: the host, not the feed")
+    for name, d in MEASURED_F2.items():
+        if d["wall_walk"] is None:
+            print(f"  {name:<10} host {d['wall'] - d['gemm']:,} cycles a GEMM"
+                  f" ({(d['wall'] - d['gemm']) / d['wall']:.0%} of the wall);"
+                  f" no warm pre-change wall at this level (see MEASURED_F2)")
+            continue
+        hw, hs = d["wall_walk"] - d["gemm_walk"], d["wall"] - d["gemm"]
+        print(f"  {name:<10} host {hw:,} -> {hs:,} cycles a GEMM, "
+              f"{hs / d['wall']:.0%} of the wall and {hs / d['gemm']:.1f}x the GEMM")
+        # The host's cost is outside the engine, so shortening the write burst
+        # must not move it.  That it does not is the check that `wall - GEMM` is
+        # really the host's and not some of the DMA's leaking in.
+        assert abs(hs - hw) <= 16, (name, hw, hs)
+    print("  Cutting the feed 56% moved the wall 10%: the submit writes and the")
+    print("  drain poll are now the largest term in a GEMM, larger than the core")
+    print("  and the feed together.  That is F3's finding to carry, and it is this")
+    print("  SoC's MMIO path rather than anything a fabric would fix.")
 
 
 if __name__ == "__main__":
