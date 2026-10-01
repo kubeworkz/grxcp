@@ -546,10 +546,62 @@ Each lands when its decision settles, in its own document's repository.
 
 ---
 
+**B8 — The die-to-die link's signalling: NRZ, not PAM4.** *Settled
+2026-10-01.*
+
+Mostly settled already by B4, and worth writing down because the arguments
+usually offered for it are not the ones that apply. UCIe-S standard-package
+signalling at 32 GT/s is NRZ, and X2's model is parameterised on exactly that
+— one module of 16 lanes at 32 GT/s, 57.6 GB/s a direction at 90% efficiency.
+PAM4 enters only at UCIe's higher-rate modes or on a custom link, and leaving
+UCIe costs the interoperability B4 chose it for.
+
+*What actually supports it:* bandwidth is the weakest lever this design has.
+PAM4 buys 2×. On X2's 256 × 64 tile at 1 GS/s, the batch buys 15× — 1,028
+GB/s inbound at batch 16, 260 at 64, 68 at 256. B4's own split removes 38 to 75%
+of the traffic that is not weights (X2 §4). Weight residency, which step MB
+built and measured on the c930, removes the weight traffic across batches, and
+at batch 64 the weights are most of the traffic either way. So the ordering is
+residency, then batch, then where the activation stage sits, and modulation
+last. At batch 64 a 256 × 64 tile is five modules inbound, which is a sane
+number for a link we are not otherwise straining.
+
+*Two arguments not to use,* recorded so they are not re-imported later:
+
+- **FEC latency.** The usual case against PAM4 is that forward error correction
+  adds latency. The PTA plan's F3 measured this program's budget: the tile waits
+  101 cycles — **1,010 ns** — for an A row before it stalls, against the 100 ns
+  request-and-return X2 assumes. There is roughly 900 ns of slack and FEC fits
+  inside it comfortably. Our own measurement refutes this argument.
+- **The 9.5 dB SNR penalty reaching the computation.** It does not. The link is
+  digital and FEC-protected, so the penalty lands in the SerDes and not on the
+  tile's analog budget. That budget is separately tight — C1's accuracy sweep
+  missed its allowance at 3 bits, and A3 measured a 25 to 57% uncalibrated
+  detuning residual at the knee — but PAM4 would not have made it worse.
+
+*What would flip it:* a 256 × 128 geometry with the batch capped at 16. Inbound
+passes 2 TB/s and the module count passes thirty, and there modulation stops
+being the smallest lever and becomes the difference between feasible and not.
+Even then the first response is batch and residency.
+
+*What this does not settle:* the tile's **optical** shot rate, which is open
+question 1 below and a different quantity entirely — how often the photonic
+tile fires one MAC, `M·Nt·Kt` of them a GEMM, with `PTA_TS` its duration.
+X2 quotes shots in GS/s and the link in GB/s separately for that reason. The two
+share the phrase "shot rate" and share nothing else, and a source that defines
+it as "the per-lane modulation rate of your photonic transceivers" is answering
+the link's question, not the tile's.
+
+---
+
 ## 8. Open questions
 
-1. **How big is the PTA chiplet, and how fast?** Its inputs, outputs and shot
-   rate set X2, the laser (B5) and the EIC's area. Nothing here fixes them.
+1. **How big is the PTA chiplet, and how fast?** Its inputs, outputs and
+   **optical** shot rate set X2, the laser (B5) and the EIC's area. Nothing here
+   fixes them, and X2 sweeps candidate geometries rather than claiming one
+   because of it. The *link's* signalling is no longer part of this question:
+   B8 settles that as NRZ. Geometry and batch are what decide the module count,
+   and the module count is what could reopen B8.
 2. **What does the development kit cost, and how many are built?** That settles
    B1 and B2 more than any technical argument does.
 3. **Does the GRX930's NPU keep a PTA of its own?** The c930 PTM work is built
