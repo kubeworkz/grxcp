@@ -44,16 +44,23 @@ MEASURED_INTERCHANGED = 71_168
 MEASURED_FOLD_SAVES = 15_872
 
 # ---- measured, C2's gate (grx930 `make core_c2`) ---------------------------
-# A shot's fixed cost on the c930: the hop-gated feed in, the hop-aligned
-# capture, the registered valid.  PTA_TS buys dilation on top of it.
-SHOT_FLOOR = 6
+# A shot's fixed cost on the c930: the register at the tile's input and the
+# register at its output.  PTA_TS buys dilation on top of it.
+#
+# It was six until 2026-09-30, when the hop came out of the broadside path: the
+# core had been feeding the tile on half-rate hop edges and the capture had been
+# waiting for one, which is what PTM-C needs to emulate a systolic array and what
+# PTM-B was borrowing.  Retiring that took four cycles off every shot AND made the
+# shot deterministic -- there is no hop left to shift it, so section 2.1's terms
+# are equalities now rather than a band.
+SHOT_FLOOR = 2
 # The core's totals at 6.2's shape, from tb_core_verilator --c2.  The hop's entry
 # parity leaves a residue of up to one cycle a shot, so these sit at or just
 # inside the low end of the model's band.
 MEASURED_C2 = {
-    "TO-1ms": 3_254_785,
-    "TO-10us": 86_784,
-    "EO-scan": 46_592,
+    "TO-1ms": 3_248_640,
+    "TO-10us": 80_640,
+    "EO-scan": 40_448,
 }
 
 # ---- measured, MB's gate (grx930 `make core_mb`, BANKS=32) -----------------
@@ -64,8 +71,8 @@ MEASURED_C2 = {
 # the resident regime.
 MB_TW = 1
 MEASURED_MB = {
-    "interchanged": 44_608,
-    "m-outer": 16_896,
+    "interchanged": 38_432,
+    "m-outer": 8_704,
 }
 
 # ---- measured, C4(c) (grx930 `make pta_sweep`) -----------------------------
@@ -92,14 +99,14 @@ PTM_C_DRAIN = 2 * 2 * (NUM_ROWS + NUM_COLS)
 # The same points on a PTM-B SoC, where the drain becomes a shot and PTA_TS sets
 # it.  The tile is the only thing that changed.
 MEASURED_SOCB = {
-    "TO-1ms":  (100_000, 5, False, 400_801),
-    "TO-10us": (  1_000, 5, False,   4_800),
-    "EO-scan": (      0, 1, False,     672),
-    "EO-res":  (      0, 1, True,      487),
+    "TO-1ms":  (100_000, 5, False, 400_704),
+    "TO-10us": (  1_000, 5, False,   4_704),
+    "EO-scan": (      0, 1, False,     576),
+    "EO-res":  (      0, 1, True,      388),
 }
-# PTA_TS swept at EO-scan's other settings: (PTA_TS, cycles).  PTA_TS = 1 is below
-# the shot's floor, so the line starts at 2.
-MEASURED_SOCB_TS = ((1, 672), (2, 735), (4, 800), (8, 927), (16, 1_184))
+# PTA_TS swept at EO-scan's other settings: (PTA_TS, cycles).  Straight from
+# PTA_TS = 1 now -- the floor that used to bend the first step is gone.
+MEASURED_SOCB_TS = ((1, 576), (2, 608), (4, 672), (8, 800), (16, 1_056))
 
 # ---- published ------------------------------------------------------------
 TFLN_BW_HZ = 45e9
@@ -182,8 +189,13 @@ def core_shipped_resident(pta_ts, m=M, n=N, k=K, rows=NUM_ROWS, cols=NUM_COLS):
 
 
 def core_band(m=M, n=N, k=K, rows=NUM_ROWS, cols=NUM_COLS):
-    """One cycle a shot: the hop's entry parity, the same residue A1 needed."""
-    return m * (-(-n // cols)) * (-(-k // rows))
+    """Zero.  The band was one cycle a shot of hop alignment, and the broadside
+    path has no hop left in it -- the core bench holds every term of 2.1 to
+    equality now (grx930 `make core_c2`, six shapes by 25 points).  Kept as a
+    function because the callers read better with it, and because a band is what
+    would come back if a hop dependence did.
+    """
+    return 0
 
 
 def break_even(td, m=M, kt=KT, restore=False):
@@ -325,8 +337,10 @@ def main():
               f"  = {restore:,} + {shot_over:,}")
     print(f"  the restore is 2.1's unfolded M*Nt*(Kt-1)*Td, which 2.3 measures at"
           f" {MEASURED_FOLD_SAVES:,} and 6.2's table folds away")
-    print(f"  the shot's floor is {SHOT_FLOOR} cycles, so 6.2's Ts = 1 and Ts = 5"
-          f" are both unreachable; the nearest are {SHOT_FLOOR} and {4 + SHOT_FLOOR}")
+    print(f"  the shot is PTA_TS + {SHOT_FLOOR}, so 6.2's Ts = 5 is reachable now"
+          f" (PTA_TS = {5 - SHOT_FLOOR}) where at a floor of six it was not")
+    print(f"  6.2's Ts = 1 still is not: PTA_TS at its minimum gives"
+          f" {1 + SHOT_FLOOR}, which is the two registers plus the start strobe's")
     print(f"  Tw = nc*kr + PTA_TW and Td = nc; at this shape the tile is full, so"
           f" they are 6.2's {SCAN} and {TD}")
 
@@ -417,14 +431,14 @@ def main():
 
     # SoC-B's gate: the total's slope in PTA_TS is the number of runs.
     runs = SOC_M * snt * skt
-    lo_ts, lo_cyc = MEASURED_SOCB_TS[1]          # PTA_TS = 2, where the line starts
+    lo_ts, lo_cyc = MEASURED_SOCB_TS[0]          # the line is straight from here
     hi_ts, hi_cyc = MEASURED_SOCB_TS[-1]
     span, want_span = hi_cyc - lo_cyc, runs * (hi_ts - lo_ts)
     assert abs(span - want_span) <= runs, (span, want_span)
     print(f"  PTA_TS {lo_ts} to {hi_ts}: {span:+,} cycles, want {want_span:+,}"
           f" ({runs} a unit = Nt*Kt*M, section 2.1's shot term)")
-    print(f"  PTA_TS = 1 is the shot's floor ({MEASURED_SOCB_TS[0][1]} cycles,"
-          f" {SHOT_FLOOR} a run), so the line starts at 2")
+    print(f"  the line is straight from PTA_TS = 1 ({MEASURED_SOCB_TS[0][1]} cycles,"
+          f" {1 + SHOT_FLOOR} a run): the shot has no hop left to bend it")
 
     # 5. Sweeping PTA_TW between them.
     section("5. PTA_TW swept at PTA_TS = 1: interchange gain (shipped / interchanged)")
