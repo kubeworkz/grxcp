@@ -138,7 +138,7 @@ it is marked *new*.
 | C3 | **Done, 2026-09-23.** C3(a) measured the correction in the C reference — the board plan's X3 — and C3(b) built the RTL: the trim and the affine in PTM-C, the calibration engine and its four schedulers, and the `cal_busy` dispatch guard. Gates P7 to P9 | CPU document §6, run with drift at TFLT's fitted rate and again at TFLN's | C1, D3 |
 | C4(a) | **Done, 2026-09-24, both halves.** The widened CSR decode, the PTA register block at `0x100` (not `0x40`: that is NPU1's window), and the two counters it reads and nothing produced. It cost three fixes outside the block: the CPU's M unit deadlocked against a store in MEM, C could not be cleared from the CPU, because the L2 stopped tracking a line the CPU wrote — since fixed, 2026-09-30 (below), and the probe amplitude is a bit position with no way to learn its bounds — CPU document §3.3 | `make npu` in both builds and `make pta_fw PTM_C=1`: the same seven checks over AXI-Lite and from a RISC-V program, plus `make mul_store` for the CPU fix | C3 |
 | C4(b) | **Part done, 2026-09-24.** Vivado 2026.1 out of context on `xc7a200tfbg484-1`: the NPU baseline, the calibration engine, the CSR and S_ACT measured and placed against §6.1; §6.1's stated baseline shown to be no run's; A-synth's cut named, taken (`ACT_P` 7 → 8) and measured at 55.5 MHz. **Owed:** the tile's own row — `c930_ptm_c` and the PTM-C NPU both exceed this VM's memory | §6.1's table against what the tools say, and 100 MHz or a named pipeline cut | C4(a), A-synth |
-| C4(c) | **Done, 2026-09-29, for the `Tw` axis.** MB's three modes reach the tile from `PTA_CTRL` bits 9:7, `arow_stall_cnt` reads back at `NPU_REG_AROW_CT`, and `sw/pta_sweep.c` drives all four §6.2 points from a RISC-V program through MMIO. EO-res is measured, not modelled, and §2.1's terms account for every total exactly. It cost two fixes in C4(a)'s own code: the DMA's core watchdog was sized from the shape alone and aborted TO-1ms as a hung core, and `PTA_WLOAD_CT` counted a level rather than an event so it read 3,004 programmings where the shape makes four. **Owed:** the `Ts` axis — the SoC builds PTM-C, whose drain is fixed, so `PTA_TS` is inert on it (below) | `make pta_sweep`: every point runs, C exact at each, EO-res among them | C2 tile, MB, C4(a) |
+| C4(c) | **Done, 2026-09-29, for the `Tw` axis.** MB's three modes reach the tile from `PTA_CTRL` bits 9:7, `arow_stall_cnt` reads back at `NPU_REG_AROW_CT`, and `sw/pta_sweep.c` drives all four §6.2 points from a RISC-V program through MMIO. EO-res is measured, not modelled, and §2.1's terms account for every total exactly. It cost two fixes in C4(a)'s own code: the DMA's core watchdog was sized from the shape alone and aborted TO-1ms as a hung core, and `PTA_WLOAD_CT` counted a level rather than an event so it read 3,004 programmings where the shape makes four. The `Ts` axis this row owed — the SoC built PTM-C, whose drain is fixed, so `PTA_TS` was inert on it — was discharged by SoC-B the next day (below) | `make pta_sweep`: every point runs, C exact at each, EO-res among them | C2 tile, MB, C4(a) |
 | SoC-B | **Done, 2026-09-30.** The SoC's Verilator flags defined `PTM_C` and not `PTM_B`, so the file list carried `c930_ptm_b.sv` while the core still elaborated PTM-C. One define. `make pta_sweep PTM_B=1` now sweeps §6.2 on a broadside SoC and the drain becomes a shot: EO-scan 2,528 → 672 cycles, EO-res 2,337 → 487, and the range widens from 159× to 596×. The gate is the slope — the total moves by `M·Nt·Kt` = 32 cycles a unit of `PTA_TS`, 449 against the model's 448 from `PTA_TS` 2 to 16 | `make pta_sweep PTM_B=1`: the shot moves with `PTA_TS` at §2.1's slope, and the same run on `PTM_C=1` reports the register inert rather than passing quietly | C4(c) |
 
 **The shot's floor, 2026-09-30.** §2.1 recorded the shot's six cycles as open
@@ -583,18 +583,37 @@ cycle, with the whole GEMM falling by exactly 1,023 and 256 AXI beats either way
 The fabric did take a beat a cycle — the feed's excess over the structural floor
 was +30 cycles before and +33 after, so those are burst setup, paid once a GEMM.
 
-**PF2 is a net loss of about 22 cycles a queued GEMM**, which confirms F0's
-finding at a second shape. `STAGE_A` disables PF2 as well, so its `Q = 4` penalty
-should be 4 × 28 = 112 and measures +17 to +26; the difference is PF2's cost
-refunded. Shortening the writeback did not make that worse — the cost is
-`P_DONE` draining an abandoned burst, which depends on the burst in flight — but
-it did make PF2 more pointless: it now fetches 29 of the 288 beats it needs
-instead of 143, the same rate in a fifth of the window.
+**PF2 costs almost nothing, and the first attempt to price it was wrong.**
+F2 began by inferring about 22 cycles a queued GEMM from `STAGE_A`'s refund:
+`STAGE_A` turns PF2 off as well, so its `Q = 4` penalty should be 4 × 28 = 112
+and measured +17 to +26, the difference being PF2's cost returned. That
+arithmetic prices `STAGE_A` by its `DMA_CT` delta (+28) when its *wall* cost is
++12 — the rest hides behind the host's ~1,090 cycles of submit and poll — so
+it subtracted quantities that do not subtract.
 
-So the best of the three is **PF1 as built, queued**, and the best reachable is
-*PF1 on, PF2 off, queued*, which no control bit currently expresses — `STAGE_A`
-couples the two prefetches. That is the one thing F2 leaves owed (CPU document
-§8, item added 2026-09-30).
+`PTA_CTRL.PF2_OFF` (bit 11, 2026-10-01) turns PF2 off on its own and measures it
+directly: **+4 cycles over four GEMMs at EO-scan, −8 at EO-res**. Both sit
+inside the harness's own floor, which the same run established: a batch with
+extra batches ahead of it moved by up to **45 cycles** on the wall while every
+counter stayed bit-identical, because the C block addresses and the cache state
+travel with execution history. So this harness cannot resolve PF2 at all — and
+neither could its "EO-res, `PF2_OFF` wins by 8" verdict, which is now reported
+as the tie it is.
+
+`tb_npu_feed.sv` can, from phase counters rather than a wall: a GEMM with a next
+one queued takes `done = 4` against `done = 1`, with `drain_beats = 3`. **PF2
+costs 3 cycles.** F0's recorded 145 was the old write burst's — with 1,283
+cycles to run, PF2 issued several bursts and left many beats in flight when it
+was abandoned; it now issues one `AR`, gets 29 of its 32 beats and leaves 3. So
+rebuilding the write burst (CPU document §2.4) cut PF2's cost from 145 cycles
+to 3 incidentally, while making it more pointless still: 29 of the 288 beats it
+needs instead of 143.
+
+So of everything the engine can now be asked for, **as built and `PF2_OFF` are
+indistinguishable**, and `STAGE_A` loses by more than the floor. `PF2_OFF` is
+not a performance win. What it buys is that the claim about PF2 is a reading
+rather than a subtraction, and it gates as an exact no-op at `Q = 1`, where an
+empty queue means PF2 never starts.
 
 **What binds now is the host.** The wall clock is the CPU's, so `wall − DMA_CT`
 is spent outside the engine, on the submit's MMIO writes and the drain's poll:
