@@ -1526,6 +1526,107 @@ same function, so automatic selection would silently change a program's
 numerics. Current-device-only stops being the conservative default and becomes
 the only defensible one.
 
+### 7.1 The property, specified (S0)
+
+D2 settled that it is a struct and not a flag, because a flag says a device is
+analog and not *how* analog, and the distributional gate needs the how. S0 is
+the shape, and it is a specification only: no code, and S1 is what populates it.
+
+```c
+// Every sanctioned emulation is reported through a device property
+// (AGENTS.md section 3).  A GEMM on a PTA-enabled c930 is not the GEMM the
+// caller asked for -- it is a noisy approximation of it -- so this carries
+// enough of the error model to reproduce the answer, not merely to be warned
+// about it.
+//
+// -1 in any field means NOT APPLICABLE, never zero.  Zero activation bits is a
+// plausible-looking value and a wrong one; the same convention guards
+// grxFuncAttributes.  The signed 64-bit fields exist so that a full 32-bit
+// register value and -1 can both be represented.
+typedef struct {
+  int     gemmIsAnalogEmulated;   // 1: GEMMs on this device run on the PTA tile
+  int     tileIsPresent;          // 1: the tile exists, whatever PTA_CTRL.EN says
+  int     activationBits;         // PTA_BITS[3:0]
+  int     weightBits;             // PTA_BITS[7:4]
+  int     adcBits;                // PTA_BITS[11:8]
+  int     adcShift;               // PTA_BITS[17:12]; LSB_adc = 2^adcShift
+  int64_t seed;                   // PTA_SEED, and what makes gate 1 bitwise
+  int64_t impairments;            // PTA_IMPAIR[6:0], the enables in force
+  int64_t impairmentsImplemented; // which of those bits this tile actually has
+} grxAnalogGemm_t;
+```
+
+It hangs off `grxDeviceProp_t` in the honesty-flag block, as
+`grxAnalogGemm_t analogGemm;`. The block's existing fields are flat `int`s; this
+one is nested because D2 asked for a struct, and because the fields only mean
+anything together.
+
+**Why `impairmentsImplemented` is there, and it is not padding.** `PTA_IMPAIR`
+defines seven bits — QUANT, THERMAL, SHOT, DRIFT, XTALK, MZM_NL, PROG_ERR — and
+the tile implements six. Bit 5, MZM_NL, has no phase in this build, and a START
+with it set is *refused* rather than ignored (§4.3). Without a second mask a
+caller cannot tell a bit that is off from a bit that cannot be on, and would
+read a refused START as a driver bug. Reporting both masks is the honest form,
+and `impairments & ~impairmentsImplemented` is exactly the set that will refuse.
+
+**What a c930 without a tile reports.** This is the question S0 was asked, and
+the answer is three cases rather than two, because a tile that is present and
+disabled is not the same as no tile:
+
+| | `gemmIsAnalogEmulated` | `tileIsPresent` | the rest |
+|---|---|---|---|
+| No tile in this build | 0 | 0 | `-1` |
+| Tile present, `PTA_CTRL.EN` clear | 0 | **1** | `-1` |
+| Tile present and enabled | 1 | 1 | populated |
+
+The rest is `-1` in both inactive cases, not the CSR's contents. When `EN` is
+clear the registers still read back whatever was last written to them, and those
+values describe a model that is not running — reporting them would be
+inventing a provenance for a result that does not have one. `tileIsPresent`
+exists so that a user asking why their GEMM is not analog can tell "this build
+has no tile" from "you did not enable it", which is otherwise a silent
+difference.
+
+**The `grx-smi` line.** In the `software stand-ins in effect` section, which
+already exists for this purpose, in the 23-column label field the rest of that
+section uses (four spaces of indent, then the label padded to 23, so the value
+starts at column 28 and a continuation line is 27 spaces):
+
+```
+  software stand-ins in effect
+    analog GEMM            EMULATED on the PTA tile: a8/w8, ADC 6 bits << 3, seed 0x0000002a
+                           impairments QUANT|THERMAL|SHOT|DRIFT|XTALK|PROG_ERR
+                           MZM_NL is defined but not implemented; a START with it is refused
+                           this device does NOT compute the same function as a digital c930
+```
+
+and, in the two inactive cases, one line each:
+
+```
+    analog GEMM            native (no PTA tile in this build)
+    analog GEMM            native (PTA tile present, PTA_CTRL.EN clear)
+```
+
+The last line of the enabled form is there because §7's dispatch rule depends on
+it: the two engines no longer compute the same function, which is what makes
+current-device-only the only defensible selection rather than merely the
+conservative one. A user comparing numbers needs that where they are already
+looking.
+
+**What S1 has to do to satisfy this**, so the spec is testable rather than
+agreeable: populate every field from the CSRs named above; set the two inactive
+cases exactly as tabulated, `-1` and not zero; derive `impairmentsImplemented`
+from the build rather than hard-coding seven; print the four lines; and extend
+the vendored DPI shim to answer on the same registers so the mock backend
+reports the same struct. `AGENTS.md` §3's rule is that every field is sourced or
+reported unknown, and `-1` is how this one reports unknown.
+
+**What S0 does not settle.** Whether `grxblasGemmEx` should *refuse* a GEMM when
+`impairments & ~impairmentsImplemented` is non-empty, or pass it to the driver
+and let the START be refused there. The second is what the hardware does today.
+The first is friendlier and duplicates a rule in two places, which is how the
+two drift apart. Left to S1, where there will be code to look at.
+
 ---
 
 ## 8. Proposed but not yet implemented
