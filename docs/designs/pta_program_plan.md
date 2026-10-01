@@ -459,7 +459,7 @@ design note, §5, has the tables, the ablation and the reported sweeps.
 
 | Step | What | Gate | Needs |
 |---|---|---|---|
-| A3 | Chain mode: reset interval × photons × detuning × curve shape | Reported, not gated: the reset-interval-versus-photons curve the review's kill criterion is evaluated on | A2 (done); D3 for its second stage |
+| A3 | **Done, below, for its first stage.** Chain mode: reset interval × photons × detuning × curve shape | Reported, not gated, as specified: `make core_act_chain` and `sim/act_chain_sweep.py` in grx930, 400 points with every layer bitwise against the C reference and 64 excluded for an overflow A2 never covered. The curve says the crossover is 10⁴ photons at the knee | A2 (done); D3 for its second stage |
 | A-synth | **Measured, 2026-09-24: 41.2 MHz, not 100.** Routed out of context on the 200T. The limiting cone is stage 6 — three variable shifts, a clamp against bounds recomputed per element, and the saturation counter hanging off the end — not stage 1's wide multiply. Lifting the configuration-fixed parts out cost no latency and gave 51.2 MHz with 12% fewer LUTs; the cut for the rest is **taken** — stage 6 splits after the multiply, `ACT_P` 7 → 8, A2 bitwise unchanged with the saturation counts exact, and gate A1 down from 13 failures to 5 — and measured at **55.5 MHz**, the path moving to stage 1's wide multiply exactly as this plan's risk row predicted | 100 MHz on the 200T, or a named pipeline cut with `ACT_P` updated to match | — |
 | A-CSR | CSR mapping, snapshot bit, firmware | The S_ACT design note's order: only after A3 reports | A3 |
 
