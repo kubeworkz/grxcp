@@ -455,7 +455,7 @@ added the PTA block's row, and said what the fall-through now aliases.
 
 | Offset | Name | Access | Description |
 |---|---|---|---|
-| 0x40 | `PTA_CTRL` | RW | bit0 EN, bit1 CAL_NOW, bit2 CAL_AUTO, bit3 MODEL_RST, bits[6:4] CAL_SCHED, bit7 RESIDENT, bit8 WSKIP, bit9 MORDER (MB), bit10 STAGE_A (F2) |
+| 0x40 | `PTA_CTRL` | RW | bit0 EN, bit1 CAL_NOW, bit2 CAL_AUTO, bit3 MODEL_RST, bits[6:4] CAL_SCHED, bit7 RESIDENT, bit8 WSKIP, bit9 MORDER (MB), bits[11:10] STAGE_A, PF2_OFF (F2) |
 | 0x44 | `PTA_STATUS` | R | bit0 CAL_BUSY, bit1 CAL_VALID, bit2 SAT_STICKY, bit3 DRIFT_ALARM, bits[23:8] last calibration residual |
 | 0x48 | `PTA_IMPAIR` | RW | one enable bit per impairment: QUANT, THERMAL, SHOT, DRIFT, XTALK, MZM_NL, PROG_ERR |
 | 0x4C | `PTA_BITS` | RW | [3:0] activation bits, [7:4] weight bits, [11:8] ADC bits, [17:12] ADC shift `S`, so `LSB_adc` = 2^S |
@@ -1568,25 +1568,31 @@ Recorded so the next reader knows what was considered and deliberately deferred.
    not the same matrix. Since no mesh is being built, the topology is a
    parameter with no ground truth; the model should carry a pluggable coupling
    matrix and the document should keep saying it is a hypothesis.
-6. **`PTA_CTRL.PF2_OFF` — turning the cross-GEMM prefetch off on its own.**
-   F2 measured PF2 as a net loss of about 22 cycles a queued GEMM, at two
-   shapes, and the rebuilt write burst (§2.4) left it fetching 29 of the 288
-   beats it needs instead of 143 — the same rate in a fifth of the window. So
-   the best feed this SoC can reach is *PF1 on, PF2 off, queued*, and no bit
-   says that: `STAGE_A` disables both prefetches together, because its own
-   correctness requires it (`P_STAGING` jumps straight to `P_LAUNCH` with only
-   row 0 staged, so a core told every row is ready would read rows 1..M−1 before
-   anything wrote them). A bit 11 on the same pattern, adding one term to PF2's
-   entry guard, would turn F2's arithmetic into a measurement. Deferred only to
-   keep the write-burst change reviewable on its own; it is the smallest
-   outstanding item in track F and it should precede F3, since F3 quotes rates
-   that PF2 currently depresses.
+6. **`PTA_CTRL.PF2_OFF` — built 2026-10-01, and it settled the question
+   against the guess.** Bit 11 turns the cross-GEMM prefetch off without
+   touching PF1, which `STAGE_A` cannot do: `P_STAGING` jumps straight to
+   `P_LAUNCH` with only row 0 staged, so a core told every row is ready would
+   read rows 1..M−1 before anything wrote them, and `STAGE_A` must therefore
+   disable both. The bit exists because F2 had priced PF2 at about 22 cycles a
+   queued GEMM by subtracting `STAGE_A`'s refund, and that was wrong — it used
+   `STAGE_A`'s `DMA_CT` delta (+28) where its wall cost is +12, the rest hiding
+   behind the host's ~1,090 cycles of submit and poll.
 
-   The honest alternative is to fix PF2 rather than switch it off: it cannot
-   finish because it unpacks one element per cycle (`PF2_UNPK`) while PF1's path
-   was long ago restructured to a beat a cycle. The same restructuring would
-   make PF2 complete inside even the new 260-cycle writeback. That is the larger
-   change and nothing has measured whether a completed PF2 pays.
+   Measured directly, PF2 costs **3 cycles** a queued GEMM. Not from the SoC
+   harness, whose wall drifts up to 45 cycles with execution history while every
+   counter holds, but from `tb_npu_feed.sv`'s phase counters: `done = 4` against
+   `done = 1`, `drain_beats = 3`. F0's recorded 145-cycle drain was the old
+   write burst's, when PF2 had 1,283 cycles, issued several bursts and left many
+   beats in flight; it now issues one `AR` and nearly finishes it. So §2.4's
+   change cut PF2's cost to almost nothing by accident, and `PF2_OFF` saves
+   nothing worth having.
+
+   What remains open is the opposite question: whether a PF2 that *finished*
+   would pay. It cannot today, because it unpacks one element per cycle
+   (`PF2_UNPK`) where PF1's path was long ago restructured to a beat a cycle, so
+   it fetches 29 of the 288 beats it needs. The same restructuring would let it
+   complete inside even a 260-cycle writeback. Nothing has measured whether that
+   is worth having, and at 3 cycles of cost there is no urgency to find out.
 
 ---
 

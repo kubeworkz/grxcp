@@ -55,7 +55,10 @@ period whatever the core does -- as it did across the hop -- that S_AROW gates
 the shipped order the way it gates the interchanged one, and that the tile
 changes nothing about load and writeback.  A GEMM queued behind another pays
 the PF2 drain as well: PF2 as built cannot finish inside a 512-word writeback,
-so it saves nothing.
+so it saves nothing.  That drain was 145 cycles when F0 measured it and is 3
+now -- not because PF2 improved but because the write burst got shorter, so PF2
+issues one AXI burst instead of several and leaves 3 beats in flight rather than
+many (section 6).
 
 Standard library only.  Run:  python3 docs/designs/pta_feed_model.py
 """
@@ -156,7 +159,24 @@ MEASURED = {
 # bench reports the phase breakdown directly, which is why this is the clean
 # reading: 256 beats either way (axi wbeats=256), 1,283 cycles against 260.
 BENCH_F2 = dict(write_c=260, gemm=166_219, read_a=66, read_b=514, arow=0,
-                wbeats=256)
+                wbeats=256,
+                # P_DONE with PF2 running against without: done=4 vs done=1,
+                # drain_beats=3 vs 0.  This is PF2's whole cost, and the only
+                # instrument that can see it (section 6).
+                drain=3, pf2_busy=260, pf2_ars=1, pf2_beats=29)
+
+# ---- measured, PF2_OFF (PTA_CTRL bit 11), SoC harness, 2026-10-01 -----------
+# Wall cycles over four queued GEMMs, PF2 off against PF2 as built.  Both are
+# inside the harness's own floor; MEASURED_F2_WALL_DRIFT is why.
+MEASURED_PF2_OFF_Q4 = {"EO-scan": +4, "EO-res": -8}
+# The same run, with four batches inserted ahead of the later ones: every core
+# and DMA counter held bit-identical while walls moved by up to this much.  The
+# C block addresses and the cache state travel with execution history, so a wall
+# difference smaller than this says nothing at all.
+MEASURED_F2_WALL_DRIFT = 45
+# And the no-op that PF2_OFF must be at Q = 1, where i_next_valid is low:
+# GEMM and core unchanged at both levels.
+MEASURED_PF2_OFF_Q1_IS_NOOP = True
 
 
 def period(level):
@@ -284,8 +304,10 @@ def main():
 
     section("4. Queued GEMMs")
     for level, p in LEVELS.items():
-        print(f"  {level:<10} +{p['drain']} cycles each for PF2's drain, at every point:"
-              " writeback is 512 words regardless of the tile")
+        print(f"  {level:<10} +{p['drain']} cycles each for PF2's drain, as F0 measured it,"
+              " at every point: writeback was 512 words regardless of the tile")
+    print(f"  Since the write burst was rebuilt that drain is {BENCH_F2['drain']} cycles"
+          f" (section 6), so this row is history.")
 
     # 5. The feed's parts from the DMA's structure, not from a fit (F2).
     section("5. The feed per beat, read off c930_npu_dma.sv and checked against F0")
@@ -429,6 +451,43 @@ def main():
     print("  drain poll are now the largest term in a GEMM, larger than the core")
     print("  and the feed together.  That is F3's finding to carry, and it is this")
     print("  SoC's MMIO path rather than anything a fabric would fix.")
+
+
+    # 6. What PF2 costs, and which instrument can say so.
+    section("6. PF2, measured twice: the wrong way and the right way")
+    print("  F2 first priced PF2 by subtracting STAGE_A's refund.  STAGE_A turns PF2")
+    print("  off as well, so its Q=4 penalty should be 4 * 28 = 112 and measured +17")
+    print("  to +26; the difference looked like PF2's cost returned, about -22 cycles")
+    print("  a GEMM.  It is not: that prices STAGE_A by its DMA_CT delta (+28) when")
+    print("  its wall cost is +12, the rest hiding behind the host's ~1,090 cycles of")
+    print("  submit and poll.  Quantities that do not subtract.")
+    print()
+    print("  PTA_CTRL.PF2_OFF turns PF2 off alone.  Measured, four queued GEMMs:")
+    for name, d in MEASURED_PF2_OFF_Q4.items():
+        print(f"    {name:<10} {d:+d} cycles over four GEMMs ({d / 4:+.1f} a GEMM)")
+    print(f"  Both inside this harness's floor of {MEASURED_F2_WALL_DRIFT} cycles: in the same")
+    print("  run, batches with extra batches ahead of them moved by up to that much")
+    print("  on the wall while every core and DMA counter stayed bit-identical.  PF2")
+    print("  only affects a GEMM with a next one queued, and the only queued-batch")
+    print("  instrument there is the wall, so the SoC harness cannot see PF2 at all.")
+    assert MEASURED_PF2_OFF_Q1_IS_NOOP
+    for d in MEASURED_PF2_OFF_Q4.values():
+        assert abs(d) < MEASURED_F2_WALL_DRIFT, d
+    print()
+    print("  tb_npu_feed.sv can, from phase counters rather than a wall:")
+    print(f"    P_DONE {BENCH_F2['drain'] + 1} cycles with PF2 running against 1 without,"
+          f" drain_beats {BENCH_F2['drain']} against 0")
+    print(f"    PF2 ran {BENCH_F2['pf2_busy']} cycles, issued {BENCH_F2['pf2_ars']} AR,"
+          f" fetched {BENCH_F2['pf2_beats']} beats of the 288 it needs")
+    print(f"  so PF2 costs {BENCH_F2['drain']} cycles a queued GEMM, against F0's 145 --")
+    print("  and the difference is the write burst, not PF2.  With 1,283 cycles to run")
+    print("  it issued several bursts and left many beats in flight when abandoned;")
+    print("  with 260 it issues one and nearly finishes it.")
+    print()
+    print("  So PF2_OFF saves nothing worth having.  What it buys is that the claim is")
+    print("  a reading rather than a subtraction.  The open question is the opposite")
+    print("  one -- whether a PF2 that finished would pay -- and at 3 cycles of cost")
+    print("  there is no urgency to find out (CPU document section 8, item 6).")
 
 
 if __name__ == "__main__":
