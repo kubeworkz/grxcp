@@ -94,11 +94,15 @@ def section(title):
 
 
 # The §6.2 points, with the order each one wins in (§2.1, §6.2).
+# PTA_TW per point.  At EO-res it is not zero: the core still spends the bank
+# select's own cycle, which step MB measured and sweep.MB_TW records.  Section
+# 6.2's table writes Tw = 0 there, and that is the idealisation rather than the
+# RTL -- 2,048 cycles a GEMM at this shape, since m-outer programs once a shot.
 POINTS = (
     ("TO-1ms", 100_000, 5, True, "interchanged"),
     ("TO-10us", 1_000, 5, True, "interchanged"),
     ("EO-scan", 0, 1, True, "interchanged"),
-    ("EO-res", 0, 1, False, "shipped"),
+    ("EO-res", sweep.MB_TW, 1, False, "shipped"),
 )
 # Candidate chiplet geometries: the emulated tile, then wider ones.
 GEOMETRIES = ((8, 8), (64, 8), (128, 64), (256, 64), (256, 128))
@@ -107,7 +111,7 @@ BIG = dict(kin=4096, nout=4096, mb=64)          # an illustrative dense layer
 
 def main():
     # 1. F3's handoff, in operands per second.
-    section("1. F3's handoff: section 6.2's shape, its operand rates, from F1's cycles")
+    section("1. F3's handoff: section 6.2's shape, its operand rates, every number traced")
     a_bytes, b_bytes = sweep.M * sweep.K * A_BYTES, sweep.K * sweep.N * W_BYTES
     c_bytes = sweep.M * sweep.N * ACC_BYTES
     shots = sweep.M * sweep.NT * sweep.KT
@@ -115,24 +119,80 @@ def main():
     assert sweep.shipped(0, 1, sweep.TD) == 2_560         # section 6.2's EO-res core
     print(f"  A {fmt_bytes(a_bytes)} in, B {fmt_bytes(b_bytes)} in, C {fmt_bytes(c_bytes)} out,"
           f" {shots:,} shots a GEMM, {CYCLE_NS:.0f} ns a cycle")
+    print(f"  Traced: every core here is MEASURED at this shape -- the three"
+          f" interchanged ones by C2 (make core_c2),")
+    print(f"  the resident one by MB (make core_mb) -- and asserted against those"
+          f" readings, not quoted. Section 2.1")
+    print(f"  with C2's shot floor of {sweep.SHOT_FLOOR} cycles a shot and MB's"
+          f" bank-select Tw of {sweep.MB_TW} reproduces all four.")
+    print(f"  S_AROW and the margin are F1's race, which F2 checked")
+    print(f"  (S_AROW is zero exactly where the margin is positive); the feed is"
+          f" F0's measured loads plus the rebuilt")
+    print(f"  write burst, {feed.feed_part(feed.c_beats_of(sweep.M * sweep.N), 'write')}"
+          f" cycles, which the NPU bench measured to the cycle (feed model section 5).")
     print(f"  {'point':<10}{'order':<14}{'core':>12}{'GEMM':>12}{'GEMM us':>10}"
-          f"{'shots/s':>12}{'in GB/s':>9}{'out GB/s':>10}")
+          f"{'shots/s':>12}{'in GB/s':>9}{'out GB/s':>10}{'margin':>9}")
+    # Each of the four cores has been measured at THIS shape: the three
+    # interchanged ones by C2 (make core_c2) and the resident one by MB
+    # (make core_mb, BANKS=32).  F3's gate is that every number traces, so they
+    # are asserted here rather than quoted.
+    measured_core = dict(sweep.MEASURED_C2)
+    measured_core["EO-res"] = sweep.MEASURED_MB["m-outer"]
+    out = {}
     for name, tw, ts, scanned, order in POINTS:
         per = feed.period("NPU bench")
         full_tw = (sweep.SCAN if scanned else 0) + tw
+        # C2 measured a shot at PTA_TS + 2.  Section 6.2's table has none of it,
+        # and this handoff used to inherit that: 2 cycles x 2,048 shots a GEMM.
+        shot = ts + sweep.SHOT_FLOOR
         if order == "interchanged":
-            core = sweep.interchanged(full_tw, ts, sweep.TD, restore=True)
-            arow = feed.arow_interchanged(full_tw, ts, sweep.TD, per)
+            core = sweep.interchanged(full_tw, shot, sweep.TD, restore=True)
+            arow = feed.arow_interchanged(full_tw, shot, sweep.TD, per)
+            mg = feed.margin_interchanged(full_tw, shot, sweep.TD, per)
         else:
-            core = sweep.shipped(full_tw, ts, sweep.TD)
-            arow = feed.arow_shipped(full_tw, ts, sweep.TD, per)
-        total = feed.gemm("NPU bench", core, arow)
+            core = sweep.shipped(full_tw, shot, sweep.TD)
+            arow = feed.arow_shipped(full_tw, shot, sweep.TD, per)
+            mg = feed.margin_shipped(full_tw, shot, sweep.TD, per)
+        assert core == measured_core[name], (name, core, measured_core[name])
+        total = feed.gemm_stream("NPU bench", core, arow)
         seconds = total * CYCLE_NS * 1e-9
+        out[name] = dict(total=total, seconds=seconds, margin=mg, arow=arow)
         print(f"  {name:<10}{order:<14}{core:>12,}{total:>12,}{seconds * 1e6:>10.1f}"
               f"{shots / seconds:>12,.0f}{(a_bytes + b_bytes) / seconds / 1e9:>9.2f}"
-              f"{c_bytes / seconds / 1e9:>10.2f}")
-    print("  B is resident at EO-res and scanned at the others; A streams a row at a time;")
-    print("  C leaves once a GEMM.  The tile can wait as long as F1's S_AROW, no longer.")
+              f"{c_bytes / seconds / 1e9:>10.2f}{mg:>9,}")
+    print()
+    print("  WHICH OPERANDS ARE RESIDENT AND WHICH STREAM, which is the part that")
+    print("  decides where the link's bandwidth goes:")
+    print("    B, the weights   resident at EO-res, in a bank per (N tile, K tile)")
+    print("                     (step MB); scanned every tile at the other three, so")
+    print("                     at those points B crosses Nt*Kt times a GEMM, not once")
+    print("    A, the rows      streamed, one row at a time, during compute (PF1), at")
+    print("                     one beat a cycle once the burst is open")
+    print("    C, the outputs   once a GEMM, in one burst, now at a beat a cycle")
+    print("    next GEMM's A+B  PF2 fetches these during C's writeback and does not")
+    print("                     finish: 29 of 288 beats.  Costs 3 cycles, saves nothing")
+    print("                     (feed model section 6).  A fabric should not count on it")
+    print()
+    print("  HOW LONG THE TILE CAN WAIT, per A row, which is the margin column:")
+    eo = out["EO-res"]
+    print(f"    EO-res, shipped   {eo['margin']:,} cycles ="
+          f" {eo['margin'] * CYCLE_NS:,.0f} ns, against this model's assumed")
+    print(f"                      {ROUND_TRIP_NS:.0f} ns round trip -- so the link's latency fits,"
+          f" with margin")
+    for name in ("TO-10us", "EO-scan"):
+        d = out[name]
+        print(f"    {name + ', interchanged':<22}{d['margin']:,} cycles: already negative, and the core"
+              f" waits {d['arow']:,}")
+    print("                      cycles there.  Those points are feed-bound before any")
+    print("                      link is added, which is F1's finding, not a new one.")
+    print()
+    print("  WHAT THIS HANDOFF DOES NOT COVER.  These are the DMA's rates.  On the")
+    print("  measured SoC the wall clock is dominated by the host, not the feed: the")
+    print("  submit's MMIO writes and the drain's poll cost ~1,090 cycles a GEMM, which")
+    print("  at EO-res is 2.0x the whole GEMM and did not move when the feed was cut")
+    print("  56% (F2).  That is this SoC's MMIO path, not a fabric rate, and a link")
+    print("  sized to the table above still leaves it as the limiter.  Whoever owns the")
+    print("  chiplet's command path should size that separately.")
 
     # 2. The chiplet's link, under B4's split.
     section("2. The die-to-die term, B4's split, one dense layer"

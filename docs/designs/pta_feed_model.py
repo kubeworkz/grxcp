@@ -197,8 +197,40 @@ def race(start, row_time, per, m=M):
     return wait
 
 
+def margin(start, row_time, per, m=M):
+    """The race's slack: extra per-row feed latency the core absorbs before stalling.
+
+    race() returns what the core waits when PF1 is late.  This returns how early
+    PF1 is at its tightest row, which is the quantity F3 owes the fabric plan: a
+    link that adds L cycles to every row's arrival shifts every `lands` by L, so
+    for L <= margin no row is late and for L > margin at least one is.  It is a
+    first-order bound -- once a row is late the stall cascades -- and that is the
+    direction a link wants to be told about.
+
+    Zero or negative means the core already waits, and then race() is the number
+    that matters instead.
+    """
+    t, out = start, None
+    for r in range(1, m):
+        t += row_time
+        lands = FIRST_ROW + r * per
+        slack = t - lands
+        out = slack if out is None else min(out, slack)
+        if lands >= t:
+            t = lands + 1
+    return out
+
+
 def arow_interchanged(tw, ts, td, per):
     return race(CORE_START + tw, ts + td, per)
+
+
+def margin_interchanged(tw, ts, td, per):
+    return margin(CORE_START + tw, ts + td, per)
+
+
+def margin_shipped(tw, ts, td, per):
+    return margin(CORE_START, KT * (tw + ts) + td, per)
 
 
 def arow_shipped(tw, ts, td, per):
@@ -209,6 +241,23 @@ def gemm(level, core, arow, queued=False):
     p = LEVELS[level]
     total = p["read_a"] + p["read_b"] + core + arow + HANDOFF + p["write_c"] + DONE
     return total + (p["drain"] if queued else 0)
+
+
+def gemm_stream(level, core, arow, shape=None, queued=False):
+    """A GEMM as the RTL stands after F2: F0's measured loads, and the rebuilt
+    write burst from the per-beat model (section 5), which the NPU bench measured
+    at exactly the model's 260 cycles.
+
+    gemm() above is kept as F0 measured it, because section 1 checks the model
+    against those numbers and they belong to the write burst that has been
+    retired.  Everything quoting the machine as it is now uses this.
+    """
+    p = LEVELS[level]
+    m, n, _ = shape or F0_SHAPE
+    wr = feed_part(c_beats_of(m * n), "write")
+    total = p["read_a"] + p["read_b"] + core + arow + HANDOFF + wr + DONE
+    # PF2's drain, 3 cycles since the burst shortened, not F0's 145 (section 6).
+    return total + (BENCH_F2["drain"] if queued else 0)
 
 
 def section(title):
@@ -488,6 +537,44 @@ def main():
     print("  a reading rather than a subtraction.  The open question is the opposite")
     print("  one -- whether a PF2 that finished would pay -- and at 3 cycles of cost")
     print("  there is no urgency to find out (CPU document section 8, item 6).")
+
+
+    # 7. What F3 hands the fabric plan, in cycles.  The rates in bytes per second
+    # are X2's section 1 (board_program_plan.md); this is the part that belongs
+    # to the feed model, because it is the race that decides it.
+    section("7. F3: how long the tile can wait, per A row")
+    print("  A link that adds L cycles to every row's arrival stalls the core when L")
+    print("  exceeds the tightest row's margin.  Checked against F2's measurement:")
+    print("  S_AROW is zero exactly where the margin is positive.")
+    print()
+    print(f"  {'point':<24}{'order':<14}{'margin':>9}{'S_AROW':>9}{'agree':>8}")
+    pts = (("TO-1ms", 100_000, 5, True), ("TO-10us", 1_000, 5, True),
+           ("EO-scan", 0, 1, True), ("EO-res", 0, 1, False))
+    for name, pta_tw, pta_ts, scanned in pts:
+        tw = (SCAN if scanned else 0) + pta_tw
+        ts = pta_ts + sweep.SHOT_FLOOR
+        for order in ("interchanged", "shipped"):
+            if order == "interchanged" and not scanned:
+                continue
+            if order == "shipped" and scanned and pta_tw:
+                continue
+            per = period("NPU bench")
+            if order == "interchanged":
+                mg = margin_interchanged(tw, ts, TD, per)
+                aw = arow_interchanged(tw, ts, TD, per)
+            else:
+                mg = margin_shipped(tw, ts, TD, per)
+                aw = arow_shipped(tw, ts, TD, per)
+            ok = (aw == 0) == (mg > 0)
+            print(f"  {name:<24}{order:<14}{mg:>9,}{aw:>9,}{'yes' if ok else 'NO':>8}")
+            assert ok, (name, order, mg, aw)
+    print()
+    print(f"  At EO-res, shipped -- the point TFLT targets -- the margin is")
+    print(f"  {margin_shipped(0, 1 + sweep.SHOT_FLOOR, TD, period('NPU bench')):,} cycles a row,"
+          f" which at {10} ns a cycle is the latency budget a")
+    print("  die-to-die link has before the tile stalls on its activations.")
+    print("  The weights are not in this number: at EO-res they are resident (MB), so")
+    print("  they cross once and the link's latency for them is amortised, not per row.")
 
 
 if __name__ == "__main__":

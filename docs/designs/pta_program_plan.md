@@ -480,7 +480,7 @@ requirements where it cannot.
 | F0 | **Done, below.** Run the `M = 64, N = 8, K = 256` GEMM on the Verilator SoC and record `DMA_LAST`, `STALL_CT` and the core's A-row wait (`arow_stall_cnt`, not yet on a CSR), split into the initial load, PF1 (A rows fetched during compute) and PF2 (the next GEMM's operands, fetched while C is written) | *New:* fetch cycles per operand, and the A-row wait on the digital array, identical run to run | — |
 | F1 | **Predictions made, below; checked at C2 tile and MB.** Add a feed term to the §2.1 model, built from F0's fetch rate | *New:* the model predicts the A-row wait and `DMA_CT` at C2 tile and MB, before they are measured | F0 |
 | F2 | **Done, below.** Feed options at the Pockels points: PF1 and PF2 as built; B tiles prefetched straight into resident banks; the whole GEMM staged before launch | `make pta_feed PTM_B=1`: nine batches at both points, two batch sizes each, every C exact including an odd `M·N` tail; the A-row wait is checked to be zero rather than assumed, and `STAGE_A` must lengthen the DMA or the bit is reported inert | C2 tile, MB |
-| F3 | Requirements for the fabric plan: operands per second at each §6.2 point, which operands are resident and which streamed, and how long the tile can wait. They are handed to the board plan's X2, which adds the die-to-die term | *New:* every number traced to F0–F2 or to a model F1 checked | F1, F2, C4 |
+| F3 | **Done, below.** Requirements for the fabric plan: operands per second at each §6.2 point, which operands are resident and which streamed, and how long the tile can wait. They are handed to the board plan's X2, which adds the die-to-die term | Delivered into [`pta_chiplet_link.py`](pta_chiplet_link.py) §1, every number traced: the core is §2.1 with C2's shot floor, the feed is F0's measured loads with F2's rebuilt write burst, and the per-row margin is F1's race with `S_AROW` as its check — zero exactly where the margin is positive | F1, F2, C4 |
 
 F0's numbers belong to this SoC and its simulated DDR, not to any fabric, and
 F3 says so: the fabric plan gets rates and access patterns, not this SoC's
@@ -544,6 +544,15 @@ feed cycles now sit beside a 6,656-cycle core rather than a 14,848-cycle one.
 So writeback and PF2 lead F2's candidates by more than they did, and the shot
 is no longer the larger term: it was cut from six cycles to two on 2026-09-30
 (§3.1).
+
+These predictions are left as they were made, which is the point of having
+them. Two things in them have since been measured otherwise, and F3 found the
+second: the feed is 844 cycles at this shape, not ~1,900, because F2 rebuilt
+the C write burst; and the shipped-order EO-res core is 8,704, not 6,656,
+because §6.2's `Tw = 0` at the resident point is an idealisation and MB
+measured the bank select's own cycle. Both move the feed's share the same way,
+down from 22% to 9%, and neither disturbs the verdict. The current numbers are
+F3's table below.
 
 **F2, measured.** `make pta_feed PTM_B=1` runs nine batches on a broadside SoC:
 EO-scan and EO-res, each with the feed as built and with a new
@@ -623,6 +632,70 @@ is the check that it is really outside. At EO-res that is 67% of the wall and
 feed 56% moved the wall 10%. F3 carries that as this SoC's MMIO path, not as a
 fabric number — which is the distinction §3.3's preamble already insists on.
 
+**F3, delivered.** The handoff lives in the board plan's own model,
+[`pta_chiplet_link.py`](pta_chiplet_link.py) §1, because X2 is what consumes it. At
+§6.2's shape, `M = 64 N = 8 K = 256`, 10 ns a cycle. Every core in it has
+been measured at that shape — the three interchanged ones by C2, the resident
+one by MB — and the model asserts against those readings rather than quoting
+them:
+
+| Point | Order | core | GEMM | shots/s | in GB/s | out GB/s | margin |
+|---|---|---|---|---|---|---|---|
+| TO-1ms | interchanged | 3,248,640 | 3,249,484 | 63,025 | 0.00 | 0.00 | 98,742 |
+| TO-10µs | interchanged | 80,640 | 81,743 | 2,505,413 | 0.02 | 0.00 | –20 |
+| EO-scan | interchanged | 40,448 | 42,803 | 4,784,711 | 0.04 | 0.00 | –24 |
+| EO-res | shipped | 8,704 | 9,548 | 21,449,518 | 0.19 | 0.02 | **101** |
+
+**Which operands are resident and which stream**, which is what decides where a
+link's bandwidth goes. **B**, the weights: resident at EO-res in a bank per
+(N tile, K tile) (step MB), scanned every tile at the other three — so at those
+points B crosses `Nt·Kt` times a GEMM, not once. **A**, the rows: streamed one
+row at a time during compute, at a beat a cycle once the burst is open. **C**:
+once a GEMM, in one burst, now also at a beat a cycle. **The next GEMM's A and
+B**: PF2 fetches these during C's writeback and does not finish — 29 of 288
+beats — so a fabric should not count on it.
+
+**How long the tile can wait** is the margin column, and it is the number F3
+owed that F1 had not isolated. `S_AROW` says how long the core *did* wait; the
+margin says how much extra per-row latency it would absorb before it starts.
+Adding L cycles to every row's arrival shifts every landing by L, so the core
+stalls when L passes the tightest row's margin. At EO-res with the shipped order
+— the point TFLT targets — that is **101 cycles, 1,010 ns**, against the 100 ns
+request-and-return X2 assumes, so the link has an order of magnitude in hand. So latency is not what binds the link; bandwidth
+is. The two thermo-optic points have *negative* margin and the core already
+waits there, which is F1's finding restated rather than a new one. The check
+that this is the same race F1 built: `S_AROW` is zero at exactly the points
+where the margin is positive, asserted at all five.
+
+**It corrected the rate X2 was built on, by 2.2×.** The handoff first read
+0.42 GB/s in and 0.05 out at EO-res; it is 0.19 and 0.02. Its EO-res GEMM was
+4,427 cycles and is 9,548, and the difference is three separate things, two of
+them pulling the same way:
+
+- **The shot floor.** It took the core from §6.2's table, whose shot costs
+  `PTA_TS` and nothing else, where C2 measured `PTA_TS + 2`. At 2,048 shots a
+  GEMM that is 4,096 cycles.
+- **`Tw` at the resident point.** §6.2's table writes `Tw = 0` there, as though
+  selecting a bank were free. MB measured the select's own cycle, and `m`-outer
+  programs once a shot, so that is another 2,048 cycles. This one is the easiest
+  to miss, because `Tw = 0` is what makes EO-res look like the point of the
+  exercise, and it is still the point — just not by as much.
+- **The write burst**, which F2 rebuilt from five cycles a beat to one. This
+  pulled the other way, by 1,023 cycles, which is how the first two stayed
+  hidden: +6,144 against —1,023 nets to a GEMM a little over twice as long.
+
+X2's verdict — that the c930's tile would never trouble a link — is unchanged
+and holds more comfortably, since the tile is slower than the handoff claimed.
+The margin moved the same way: `Tw` costs the core a cycle a shot, which is a
+cycle more for PF1 to land a row in, so 69 cycles of slack became 101.
+
+**What the handoff does not cover**, stated in it rather than left to be
+discovered: these are the DMA's rates. On the measured SoC the wall is dominated
+by the host, at ~1,090 cycles a GEMM against EO-res's 533-cycle GEMM, and a link
+sized to this table still leaves that as the limiter. Whoever owns the chiplet's
+command path has to size it separately, and it is not a number this program can
+hand them — it belongs to whatever replaces `npu_drv_submit` over a fabric.
+
 ### 3.4 Track G — the G100 (grxgpu, by proposal)
 
 Every step lands as a proposal in `grxgpu/docs/proposals/`, written with
@@ -685,7 +758,7 @@ moving.
 |---|---|---|
 | Now | Immediately, in parallel | A3; G1 (D1–D4 settled; F0 and C0 done). S0 and A-synth are done |
 | Next | C0 green, as it now is | C1; G0 and C3 once C1 is green (F1 done) |
-| Then | C1, C2 tile, MB, C4, SoC-B and F2 now green | F3 next, on F2's numbers — with the host's 1,091 cycles labelled as this SoC's MMIO path, not a fabric rate; G2 once G1 has reported |
+| Then | C1, C2 tile, MB, C4, SoC-B, F2 and F3 now green | G2 once G1 has reported. Track F is complete: F3's handoff is in the board plan's X2 §1, with the host's ~1,090 cycles labelled there as this SoC's MMIO path rather than a fabric rate |
 | Last | C2 tile, MB, C3 and A-synth green | C4; then S1 and S2 on its CSR map, F3 on its numbers, and G3 |
 
 The critical path is C0 → C1 → C2 tile → MB → C4. Everything else runs beside
