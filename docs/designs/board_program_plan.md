@@ -288,9 +288,23 @@ tree. So L4 is planned alongside L1, not after it.
 
 **X2, predicted.** [`pta_chiplet_link.py`](pta_chiplet_link.py) prices the
 link the way F1 priced the c930's feed, and carries F3's handoff in its first
-section: at the §6.2 shape the emulated tile moves 0.42 GB/s in and 0.05 GB/s
+section: at the §6.2 shape the emulated tile moves 0.19 GB/s in and 0.02 GB/s
 out at EO-res, and less at every thermo-optic point, so the c930's tile would
 never trouble a link. The chiplet is a different size of object.
+
+*Revised 2026-10-01, when F3 delivered.* That handoff first read 0.42 and 0.05
+GB/s, overstating the rate by 2.2×. Its EO-res GEMM was 4,427 cycles and is
+9,548, from three things: §6.2's table gives a shot `PTA_TS` and nothing else
+where C2 measured `PTA_TS + 2` (4,096 cycles a GEMM at 2,048 shots); it writes
+`Tw = 0` at the resident point as though selecting a bank were free, where MB
+measured the select's own cycle and `m`-outer programs once a shot (another
+2,048); and it carried the DMA's old five-cycle-a-beat C write burst, which F2
+rebuilt to one, pulling the other way by 1,023 and keeping the first two hidden.
+Every core in the handoff is now asserted against a measurement at that shape
+rather than quoted. The verdict is unchanged and more comfortable, not less,
+since the tile is slower than claimed. F3 adds two things X2 did not have: the
+per-row latency budget (below) and a caveat that these are the DMA's rates and
+not the host's.
 
 A layer of 4096 by 4096 at batch 64, with B4's split, one UCIe-S module taken
 as 16 lanes at 32 GT/s and 0.9 of that surviving overhead — 57.6 GB/s a
@@ -305,6 +319,14 @@ direction:
 
 Four things follow, and each is a number this plan can be held to.
 
+- **The tile can wait 1,010 ns for a row, and the link's round trip is 100.**
+  F3's margin: at EO-res with the shipped loop order, the tightest A row has 101
+  cycles of slack before the core stalls, 1,010 ns at 10 ns a cycle. The model's
+  assumed request-and-return is 100 ns, so latency is not what binds —
+  bandwidth is, with an order of magnitude in hand. The two thermo-optic points have *negative* margin and the core
+  already waits there (259 and 1,511 cycles), which is F1's finding and not a
+  link problem. Weights are not in this number: at EO-res they are resident, so
+  they cross once a GEMM rather than once a row.
 - **The link caps the tile, as B4 expected.** One module holds a 256 × 64 tile
   to 0.22 G shots a second at batch 64, and a 64 × 8 tile to 7.1 G. Whatever
   the optics can do, that is the rate.
