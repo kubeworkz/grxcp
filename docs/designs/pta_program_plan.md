@@ -703,10 +703,52 @@ grxgpu's RTL owners, under the boundary rule of `AGENTS.md` §2.
 
 | Step | What | Gate | Needs |
 |---|---|---|---|
-| G1 | SimX study of the three weight-set policies, with bank count `W` beside `Tw` | GPU document §7, plus the `W` axis | D4 |
+| G1 | **Part one done, below.** SimX study of the three weight-set policies, with bank count `W` beside `Tw` | GPU document §7, plus the `W` axis. The model is `pta_gpu_sched.py`, its claims as asserts; the proposal is `grxgpu/docs/proposals/pta_weight_set_policies.md`. The SimX run is the second half and the proposal names the three things it has to settle | D4 (settled) |
 | G0 | `VX_tcu_fedp_analog`, vendoring the c930 error model | GPU document §7, unchanged | C1, D1 |
 | G2 | Cluster-scope tile beside the DXA. On the board this becomes the chiplet attach (board plan, B4) | GPU document §7, with DXA transfer cycles reported as the feed term | C2 tile, MB, G1 |
 | G3 | The same block-scaled GEMM on both tiles | GPU document §7, with the two feeds compared | G2, C4 |
+
+**G1, part one.** The three policies are priced in
+[`pta_gpu_sched.py`](pta_gpu_sched.py), against the G100's own KMU and
+dispatcher rather than a sketch of them, and four things came out of it.
+
+**The null result the GPU document anticipated is real, and narrower than it
+expected.** At every bank count below the reference stream's period, weight-set
+affinity is **bit-identical** to the natural CTA order — same selects, same
+loads, at `W` = 1, 2, 4, 16 and 4096. Not close: identical. The reason is a fact
+the one-line brief did not contain: the grid is (n blocks, m blocks) and a CTA
+loops `k` inside, so **the weight set changes within a CTA**, and re-ordering CTAs
+cannot touch that. The period at the emulated 8×8 tile is 8192 banks, so every
+buildable `W` is in that regime, the c930's `W` = 2 included.
+
+**Affinity does help, but only at that capacity, and then by 32×.** So affinity
+and the mesh cache are **not alternatives on one axis** — each is worthless
+without the other, and the natural order gets nothing even at twice the period
+because a cluster sees CTAs from several n blocks.
+
+**The declared policy reaches affinity's best load count with one bank, and pays
+no selects at all.** Naming the weight slot is what lets the `k` loop be hoisted
+*above* the grid, and that is where the 32× comes from rather than from the
+scheduler. It is also the only one of the three that needs no hardware and no
+dispatcher change, which inverts the GPU document §3's ordering: it called policy
+3 the one that "may be the right trade" for a research vehicle, and it is simply
+the best of the three.
+
+**End to end it is a thermo-optic result.** 25.1× at a 1 ms tile, 2.11× at 10 us,
+and 1.16× at both Pockels points, because the shot term the policy cannot touch
+takes over. That is the same ordering §2.1's cost model gives for the CPU path and
+for the same reason, which is a useful cross-check on both: once `Tw` is small the
+weight movement stops being the term that matters.
+
+**What part one does not settle, stated rather than left to be discovered.** The
+model assumes a cluster sees every eighth CTA in grid order, and the KMU is one
+per processor with cores pulling on demand, so the real split is whatever sixteen
+cores' progress makes it. It assumes affinity can route a whole n column to one
+cluster, which `cta_dispatcher.cpp`'s LMEM co-residency bound may not allow —
+affinity is modelled at its theoretical best and still loses, so that bound only
+strengthens the result. And it does not price policy 3's failure mode, a kernel
+declaring the wrong slot, which is the one part a SimX run adds rather than
+confirms.
 
 ### 3.5 Track S — grxcp
 
@@ -758,7 +800,7 @@ moving.
 |---|---|---|
 | Now | Immediately, in parallel | A3; G1 (D1–D4 settled; F0 and C0 done). S0 and A-synth are done |
 | Next | C0 green, as it now is | C1; G0 and C3 once C1 is green (F1 done) |
-| Then | C1, C2 tile, MB, C4, SoC-B, F2 and F3 now green | G2 once G1 has reported. Track F is complete: F3's handoff is in the board plan's X2 §1, with the host's ~1,090 cycles labelled there as this SoC's MMIO path rather than a fabric rate |
+| Then | C1, C2 tile, MB, C4, SoC-B, F2 and F3 now green | G2: G1's model has reported, and what it still owes G2 is the SimX confirmation rather than the answer. Track F is complete: F3's handoff is in the board plan's X2 §1, with the host's ~1,090 cycles labelled there as this SoC's MMIO path rather than a fabric rate |
 | Last | C2 tile, MB, C3 and A-synth green | C4; then S1 and S2 on its CSR map, F3 on its numbers, and G3 |
 
 The critical path is C0 → C1 → C2 tile → MB → C4. Everything else runs beside

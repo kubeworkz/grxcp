@@ -171,6 +171,14 @@ All three are measurable in SimX before a line of RTL, because SimX already
 models the lockstep gate, the tile buffers and the LMEM port contention. That
 is the first GPU deliverable and it is cheap.
 
+**Measured, G1 part one (§7).** Option 3 wins, and not narrowly: it reaches
+option 1's *best case* load count with a single bank and pays no bank selects,
+because declaring the slot is what lets the `k` loop be hoisted above the grid.
+Option 1 is bit-identical to doing nothing at every buildable `W`, because the
+weight set changes within a CTA rather than between CTAs. Option 2 is what option
+1 needs to do anything at all, at 8192 banks for the emulated geometry. "Which,
+for a research vehicle, may be the right trade" above understates it.
+
 ---
 
 ## 4. ISA surface
@@ -294,10 +302,23 @@ tensor regressions; RTL↔SimX parity at a fixed seed.
 *Result:* accuracy-versus-impairment curves for real SGEMM and WGMMA
 workloads. Publishable on its own, and it needs no new fabric.
 
-**G1 — the scheduling study, in SimX only.** Model a cluster-scope
-weight-stationary tile with parameterized `Tw`, and compare the three §3
-policies on real kernels. *Gate:* a measured answer, including the null result
-that affinity does not help. No RTL.
+**G1 — the scheduling study.** Model a cluster-scope weight-stationary
+tile with parameterized `Tw`, and compare the three §3 policies on real kernels.
+*Gate:* a measured answer, including the null result that affinity does not help.
+No RTL.
+
+**Part one reported** ([`pta_gpu_sched.py`](pta_gpu_sched.py); the proposal is
+`grxgpu/docs/proposals/pta_weight_set_policies.md`). The null result holds in the
+regime that matters: below the reference stream's period, affinity is
+bit-identical to the natural CTA order, and the period is 8192 banks at the
+emulated tile. Affinity helps only at that capacity and then by 32×, so it and the
+mesh cache need each other rather than competing. **Policy 3 reaches affinity's
+best load count with one bank and no selects**, because naming the slot is what
+lets the `k` loop be hoisted above the grid — which inverts §3's ordering below.
+End to end: 25.1× at a 1 ms tile, 2.11× at 10 us, 1.16× at the Pockels points. The
+SimX run is the second half and the proposal names what it has to settle: the
+demand-driven CTA handout, the LMEM bound on how deep a CTA cluster can be, and
+policy 3's own failure mode when a kernel declares the wrong slot.
 
 **G2 — the engine.** Cluster-scope tile beside the DXA, the ISA of §4, the
 DXA weight-load path. *Gate:* end-to-end GEMM through the tile, matching the
