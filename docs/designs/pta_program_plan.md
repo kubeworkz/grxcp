@@ -232,10 +232,45 @@ already clear, nothing queued, and T5 failed while the guard it tests was intact
 test now asks for eight repeats, which puts the race back where it is winnable on
 either tile and averages the probe's noise into the bargain.
 
-**Still not covered:** the core bench's `--pta engine` and `--pta sched` modes need
-`--tile ptm_c`, so the broadside probe's only coverage is the iverilog bench and the
-SoC firmware. Widening the core bench to drive the engine against PTM-B would give
-the schedulers of §5.1 a second tile to run on, and nothing needs it yet.
+**Widened, 2026-10-02, and it found two bugs.** The note here used to say the
+core bench's PTA modes needed `--tile ptm_c`, so the broadside probe's only
+coverage was the iverilog bench and the SoC firmware, and that nothing needed it
+yet. Running them against a PTM-B build turned out to need no bench change at all
+— `--tile ptm_c` means "there is a tile", and under `PTM_B` that tile is the
+broadside one. What it needed was two fixes in `o_pta_sat_count`, both invisible to
+every PTM-C gate.
+
+**The counter counted one per capture, not one per column.** `c930_ptm_c`'s output
+stage incremented `sat_cnt` with a *non-blocking* assignment inside its unrolled
+per-column loop, so several columns saturating on one capture advanced it by
+exactly one. PTM-C could never show it: its guard models exactly one column per
+capture, so the count could not exceed one anyway. Under BROADSIDE every column is
+modelled on the single capture, and the undercount was the whole divergence — at
+M=16 N=8 K=64 the RTL reported **128** saturations against the model's **911**,
+which is one per shot exactly. C was never affected, because the partial sums
+assign to distinct bit ranges and only the shared scalar collides; that is why the
+divergence was saturation-count-only and why it survived a gate that checks C
+bitwise.
+
+**And then it counted columns that are not there.** With that fixed, every shape
+whose `N` is not a multiple of `NUM_COLS` still failed, and now in the other
+direction — 121 against 91, 90 against 48. A partial N tile has fewer valid
+columns than the array, and broadside models all of them. `i_pta_shot_cols` now
+carries the count from the core's `nc`, with zero meaning all of them so the
+lockstep bench's undriven instances behave as before.
+
+**What it buys.** `--pta quant`, `prog`, `refuse` and `sched` pass on PTM-B where
+all four failed, so the broadside tile has core-bench coverage for the first time
+— including `sched`, which is the second tile this note wanted for §5.1's
+schedulers.
+
+**What is still divergent, and it is the C reference's rather than the RTL's.**
+`thermal` and `shot`, because a broadside shot draws once per column where the
+skewed one drew once per shot, so the noise realisations differ by construction
+(above); `drift`, whose clock keys off the shot under BROADSIDE and off the hop
+under PTM-C; `xtalk`; and the three modes that include them. Teaching
+`pta_tile_model.c` the broadside draw order is what closes those, and it is a model
+change rather than a fix. PTM-C's twelve modes are unchanged.
 
 **What SoC-B found.** Two things, neither of them the RTL's.
 
