@@ -704,7 +704,7 @@ grxgpu's RTL owners, under the boundary rule of `AGENTS.md` §2.
 | Step | What | Gate | Needs |
 |---|---|---|---|
 | G1 | **Part one done, below.** SimX study of the three weight-set policies, with bank count `W` beside `Tw` | GPU document §7, plus the `W` axis. The model is `pta_gpu_sched.py`, its claims as asserts; the proposal is `grxgpu/docs/proposals/pta_weight_set_policies.md`. The SimX run is the second half and the proposal names the three things it has to settle | D4 (settled) |
-| G0 | `VX_tcu_fedp_analog`, vendoring the c930 error model | GPU document §7, unchanged | C1, D1 |
+| G0 | **The vendoring half done, below.** `VX_tcu_fedp_analog`, vendoring the c930 error model | GPU document §7, unchanged. The model was always vendorable per D1; what was missing was a contract it could be held to, which is now `make pta_vectors_check` in grx930 — sixteen cases a C compiler alone can verify, with no Verilator, RTL or SimX. The gate's own halves, bit-identity across the tensor regressions and RTL-to-SimX parity, still need SimX | C1 (closed), D1 |
 | G2 | Cluster-scope tile beside the DXA. On the board this becomes the chiplet attach (board plan, B4) | GPU document §7, with DXA transfer cycles reported as the feed term | C2 tile, MB, G1 |
 | G3 | The same block-scaled GEMM on both tiles | GPU document §7, with the two feeds compared | G2, C4 |
 
@@ -749,6 +749,41 @@ affinity is modelled at its theoretical best and still loses, so that bound only
 strengthens the result. And it does not price policy 3's failure mode, a kernel
 declaring the wrong slot, which is the one part a SimX run adds rather than
 confirms.
+
+**G0, the vendoring half.** D1 settled that the error model is shared IP and
+`sim/pta_tile_model.c` has been C99 with `<stdint.h>` and `<stdlib.h>` and nothing
+else ever since. That makes it *compilable* by a second repository, which is not
+the same as *checkable*: a vendored copy that quietly drops an impairment would
+build and run and be wrong. So G0's first deliverable is the contract rather than
+the port.
+
+`sim/pta_vectors.txt` in grx930 is a deterministic file the gated model emits and
+any implementation must reproduce bit for bit — sixteen cases: one per
+impairment, the clear case, and the combinations the error-model note's §4 says
+interact. Operands come from the file's own generator, so a reader needs no data
+either. The chain has three links and a vendoring repository only runs the third:
+`make core_pta_gates` holds the RTL to the model, `make pta_vectors` emits it, and
+`make pta_vectors_check` holds the file to the model with a C compiler and nothing
+else.
+
+**The check is deliberately not a diff**, because diffing a file against the
+program that wrote it proves only that nothing changed. It also requires that the
+clear case equal a plain integer `A`×`B` computed independently of the model, that
+no case be identical to the clear case, and that every two-GEMM case move between
+its GEMMs — drift is device state, so a copy that resets per GEMM has to fail, and
+it only can if the case moves.
+
+**The vacuity check earned itself immediately.** The combined case ran the
+quantisers at 4 bits with the ADC at one LSB of 2, which collapsed the output onto
+a grid of 2 at a magnitude of about 4; a drift of one weight LSB could not move
+that, so its two GEMMs came back identical and the check rejected it. It is now two
+cases, one at settings where every impairment is still expressible and one keeping
+the aggressive corner, labelled as not drift-sensitive rather than quietly dropped.
+
+**What G0 still owes** is its stated gate: bit-identity with impairments off across
+the existing tensor regressions, and RTL-to-SimX parity at a fixed seed. Both need
+SimX, which is also G1's second half, and this file is what a SimX backend would be
+held to once there is one.
 
 ### 3.5 Track S — grxcp
 
@@ -799,7 +834,7 @@ moving.
 | Wave | Starts when | Steps |
 |---|---|---|
 | Now | Immediately, in parallel | A3; G1 (D1–D4 settled; F0 and C0 done). S0 and A-synth are done |
-| Next | C0 green, as it now is | C1; G0 and C3 once C1 is green (F1 done) |
+| Next | C0 green, as it now is | C1 and C3 are green; G0's vendoring half has reported (below) and what it still owes, like G1, is SimX (F1 done) |
 | Then | C1, C2 tile, MB, C4, SoC-B, F2 and F3 now green | G2: G1's model has reported, and what it still owes G2 is the SimX confirmation rather than the answer. Track F is complete: F3's handoff is in the board plan's X2 §1, with the host's ~1,090 cycles labelled there as this SoC's MMIO path rather than a fabric rate |
 | Last | C2 tile, MB, C3 and A-synth green | C4; then S1 and S2 on its CSR map, F3 on its numbers, and G3 |
 
