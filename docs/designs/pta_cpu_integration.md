@@ -1655,9 +1655,47 @@ Recorded so the next reader knows what was considered and deliberately deferred.
    `Nt · Kt` banks and TFLT is the target (§4.4). Step MB parameterised the tile's
    banks, gave the core a resident mode and a selectable loop order, and measured
    the point in both (§6.2). A GEMM asking for more tiles than the tile has banks
-   is refused rather than aliased. What no one has yet is a policy for choosing
-   which weight set occupies which bank when the sets outnumber them — which is
-   the original item, and is what §5.5 would make urgent.
+   is refused rather than aliased.
+
+   **The allocation policy is now measured, and it is the wrong lever**
+   ([`pta_bank_policy.py`](pta_bank_policy.py)). Four things came out of pricing
+   it on D3's 784-100-10 network over a batch of eight.
+
+   *Within one GEMM there is no question at all.* The interchanged nest visits
+   each (N tile, K tile) once and streams every A row through it, so each weight
+   set is needed exactly once and every policy loads it exactly once. The banks
+   are not a within-GEMM cache; what they buy is residency across GEMMs, which is
+   what MB's resident mode with WSKIP is for.
+
+   *At the bank counts that exist, almost no policy matters.* The network needs
+   **1,300 weight sets** at the 8×8 tile and MB measured the tile at 32 banks, which
+   is 2.5% of it. The best policy — Belady, which is not implementable — saves
+   **2.2%** of the scans against LRU. There is nothing to keep. One threshold is
+   worth knowing: pinning can do *nothing* until the banks hold the smallest layer
+   whole, 26 sets here, below which it is bit-identical to LRU. MB's 32, chosen for
+   §6.2's `Nt`×`Kt`, is the first count past that.
+
+   *LRU is nevertheless the worst choice, structurally.* A batch of forward passes
+   is a **cyclic** reference stream, and on a cyclic stream LRU evicts precisely
+   the set needed next. G1 found the same shape on the GPU for a different reason
+   (`pta_gpu_integration.md` §7): below the stream's period, affinity was
+   bit-identical to doing nothing. Two tracks, two mechanisms, one conclusion —
+   the tile's reference streams are cyclic, and caching cyclic streams does not
+   work.
+
+   *The lever is the loop order, and the other axis is the tile's width.* The
+   cycles are **95% to 100% weight movement at every §6.2 point**, because a
+   64-beat scan is paid to do one shot. Putting the batch *inside* the weight set
+   rather than outside it — §2.1's interchange argument one level further out,
+   same shots and same arithmetic — cuts the total **6.1× to 8.0×**, against the
+   2.2% a replacement policy buys. And the same network needs 1,300 sets at 8×8
+   against **15 at 128×64**, where 32 banks hold the whole thing and every policy
+   collapses to one scan per set.
+
+   So the item stays deferred, now with a condition rather than a feeling: a
+   policy is worth building when the banks approach the reference stream's period,
+   around a quarter of it on the numbers above. Until then refusing is right,
+   because aliasing would buy nothing measurable.
 4. **A second tile.** The grx930 team's notes observe 41.5% LUT headroom is
    "enough for a second NPU tile." Two tiles with independent weight sets is
    how a real machine hides `Tw` completely, and it is the obvious C5. It is
