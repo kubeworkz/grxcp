@@ -1707,6 +1707,11 @@ Recorded so the next reader knows what was considered and deliberately deferred.
    not the same matrix. Since no mesh is being built, the topology is a
    parameter with no ground truth; the model should carry a pluggable coupling
    matrix and the document should keep saying it is a hypothesis.
+   *It has since acquired a consequence beyond crosstalk.* A ring bank tells its
+   inputs apart by wavelength and sums powers, so it needs a light source of one
+   line an input; a mesh sums fields from one coherent line. The hypothesis
+   therefore decides what kind of laser the chiplet is fed by, which is the
+   board plan's §8, question 8.
 6. **`PTA_CTRL.PF2_OFF` — built 2026-10-01, and it settled the question
    against the guess.** Bit 11 turns the cross-GEMM prefetch off without
    touching PF1, which `STAGE_A` cannot do: `P_STAGING` jumps straight to
