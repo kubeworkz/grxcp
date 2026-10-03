@@ -213,8 +213,21 @@ void print_json(int index, const grxDeviceProp_t& p, bool last) {
   std::printf("      \"adcShift\": %s,\n", json_num(a.adcShift).c_str());
   std::printf("      \"seed\": %s,\n", json_num(a.seed).c_str());
   std::printf("      \"impairments\": %s,\n", json_num(a.impairments).c_str());
-  std::printf("      \"impairmentsImplemented\": %s\n",
+  std::printf("      \"impairmentsImplemented\": %s,\n",
               json_num(a.impairmentsImplemented).c_str());
+  std::printf("      \"thermalSigmaQ8\": %s,\n", json_num(a.thermalSigmaQ8).c_str());
+  std::printf("      \"shotCoefficientQ8\": %s,\n", json_num(a.shotCoefficientQ8).c_str());
+  std::printf("      \"programmingSigmaQ8\": %s,\n", json_num(a.programmingSigmaQ8).c_str());
+  std::printf("      \"driftSigmaQ8\": %s,\n", json_num(a.driftSigmaQ8).c_str());
+  std::printf("      \"driftLog2Shots\": %s,\n", json_num(a.driftLog2Shots).c_str());
+  std::printf("      \"driftClampQ8\": %s,\n", json_num(a.driftClampQ8).c_str());
+  std::printf("      \"crosstalkQ8\": %s,\n", json_num(a.crosstalkQ8).c_str());
+  std::printf("      \"loopModes\": %s,\n", json_num(a.loopModes).c_str());
+  std::printf("      \"calibrationValid\": %s,\n", json_tri(a.calibrationValid));
+  std::printf("      \"tileRows\": %s,\n", json_num(a.tileRows).c_str());
+  std::printf("      \"tileCols\": %s,\n", json_num(a.tileCols).c_str());
+  std::printf("      \"operandBits\": %s,\n", json_num(a.operandBits).c_str());
+  std::printf("      \"accumulatorBits\": %s\n", json_num(a.accumulatorBits).c_str());
   std::printf("    }\n");
   std::printf("  }%s\n", last ? "" : ",");
 }

@@ -75,7 +75,16 @@ const uint32_t kTileBuilt = NPU_C930_PTA_DEFINED & ~NPU_C930_PTA_MZM_NL;
 
 bool model_unreported(const grxAnalogGemm_t& a) {
   return a.activationBits == -1 && a.weightBits == -1 && a.adcBits == -1 &&
-         a.adcShift == -1 && a.seed == -1 && a.impairments == -1;
+         a.adcShift == -1 && a.seed == -1 && a.impairments == -1 &&
+         a.thermalSigmaQ8 == -1 && a.shotCoefficientQ8 == -1 &&
+         a.programmingSigmaQ8 == -1 && a.driftSigmaQ8 == -1 &&
+         a.driftLog2Shots == -1 && a.driftClampQ8 == -1 &&
+         a.crosstalkQ8 == -1 && a.loopModes == -1 && a.calibrationValid == -1;
+}
+
+bool tile_unreported(const grxAnalogGemm_t& a) {
+  return a.tileRows == -1 && a.tileCols == -1 && a.operandBits == -1 &&
+         a.accumulatorBits == -1;
 }
 
 grxAnalogGemm_t read(int device) {
@@ -119,7 +128,8 @@ int main() {
     const grxAnalogGemm_t a = read(npu);
     check(a.gemmIsAnalogEmulated == -1 && a.tileIsPresent == -1,
           "UNKNOWN in both leading fields -- not 0, which would claim exactness");
-    check(model_unreported(a) && a.impairmentsImplemented == -1,
+    check(model_unreported(a) && tile_unreported(a) &&
+          a.impairmentsImplemented == -1,
           "and every other field unknown too");
   }
 
@@ -138,6 +148,7 @@ int main() {
     check(a.gemmIsAnalogEmulated == 0, "GEMMs are exact");
     check(a.impairmentsImplemented == 0 && model_unreported(a),
           "nothing implemented is 0, and no model field is reported");
+    check(tile_unreported(a), "nor a tile's geometry, there being no tile");
   }
   set(NPU_C930_PTA_IMPAIR, NPU_C930_PTA_SHOT);
   {
@@ -151,6 +162,7 @@ int main() {
   // ---- 3. a tile, nothing enabled ---------------------------------------
   section("a tile, PTA_IMPAIR clear");
   g_regs.built = kTileBuilt;
+  set(NPU_C930_PTA_CAPS0, 4u | (4u << 10) | (16u << 20) | (48u << 26));
   set(NPU_C930_PTA_BITS, 0x00003688u);   // stale, from whoever was here last
   set(NPU_C930_PTA_SEED, 0x77u);
   set(NPU_C930_PTA_CTRL, 0x1u);          // EN: the calibration engine's
@@ -163,6 +175,9 @@ int main() {
           "what the tile can model is reported: 0x5f, all but MZM_NL");
     check(model_unreported(a),
           "the stale BITS and SEED are not reported for a model that is not running");
+    check(a.tileRows == 4 && a.tileCols == 4 && a.operandBits == 16 &&
+          a.accumulatorBits == 48,
+          "the tile's geometry is: 4 x 4, 16-bit operands, 48-bit sums");
   }
 
   // ---- 4. the tile, impaired, with EN clear -----------------------------
@@ -171,6 +186,22 @@ int main() {
   set(NPU_C930_PTA_IMPAIR, kTileBuilt);
   set(NPU_C930_PTA_BITS, 8u | (8u << 4) | (6u << 8) | (3u << 12));
   set(NPU_C930_PTA_SEED, 0x2au);
+  set(NPU_C930_PTA_SIGMA_TH, 64u);
+  set(NPU_C930_PTA_SIGMA_SH, 47u);
+  set(NPU_C930_PTA_SIGMA_PR, 256u);
+  set(NPU_C930_PTA_DRIFT_CFG, 55u | (31u << 16));
+  set(NPU_C930_PTA_XTALK_CHI, 5u);
+  set(NPU_C930_PTA_DRIFT_MAX, 8643u);
+  {
+    const grxAnalogGemm_t a = read(npu);
+    check(a.thermalSigmaQ8 == 64 && a.shotCoefficientQ8 == 47 &&
+          a.programmingSigmaQ8 == 256 && a.crosstalkQ8 == 5,
+          "how much: thermal 0.25 LSB, 30 photons an LSB, programming 1 LSB, 2%");
+    check(a.driftSigmaQ8 == 55 && a.driftLog2Shots == 31 && a.driftClampQ8 == 8643,
+          "and the drift walk");
+    check(a.loopModes == 0 && a.calibrationValid == 0,
+          "in the shipped loop order, with no calibration's trims in force");
+  }
   {
     const grxAnalogGemm_t a = read(npu);
     check(a.gemmIsAnalogEmulated == 1,

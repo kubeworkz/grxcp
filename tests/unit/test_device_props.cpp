@@ -104,7 +104,13 @@ int main() {
     check(a.gemmIsAnalogEmulated == 0 && a.tileIsPresent == 0,
           "analog GEMM: native, and known to be -- no tile on a GPU");
     check(a.activationBits == -1 && a.weightBits == -1 && a.adcBits == -1 &&
-          a.adcShift == -1 && a.seed == -1 && a.impairments == -1,
+          a.adcShift == -1 && a.seed == -1 && a.impairments == -1 &&
+          a.thermalSigmaQ8 == -1 && a.shotCoefficientQ8 == -1 &&
+          a.programmingSigmaQ8 == -1 && a.driftSigmaQ8 == -1 &&
+          a.driftLog2Shots == -1 && a.driftClampQ8 == -1 &&
+          a.crosstalkQ8 == -1 && a.loopModes == -1 && a.calibrationValid == -1 &&
+          a.tileRows == -1 && a.tileCols == -1 && a.operandBits == -1 &&
+          a.accumulatorBits == -1,
           "and no error-model field carries a value that could be mistaken "
           "for a setting");
     check(a.impairmentsImplemented == 0,

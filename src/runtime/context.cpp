@@ -66,6 +66,19 @@ grxAnalogGemm_t analog_gemm_none() {
   a.seed                   = -1;
   a.impairments            = -1;
   a.impairmentsImplemented = 0;
+  a.thermalSigmaQ8         = -1;
+  a.shotCoefficientQ8      = -1;
+  a.programmingSigmaQ8     = -1;
+  a.driftSigmaQ8           = -1;
+  a.driftLog2Shots         = -1;
+  a.driftClampQ8           = -1;
+  a.crosstalkQ8            = -1;
+  a.loopModes              = -1;
+  a.calibrationValid       = -1;
+  a.tileRows               = -1;
+  a.tileCols               = -1;
+  a.operandBits            = -1;
+  a.accumulatorBits        = -1;
   return a;
 }
 
@@ -261,6 +274,19 @@ static grxAnalogGemm_t read_npu_analog(npu_c930_device_t* dev) {
   a.seed                   = n.seed;
   a.impairments            = n.impairments;
   a.impairmentsImplemented = n.impairments_implemented;
+  a.thermalSigmaQ8         = n.sigma_thermal_q8;
+  a.shotCoefficientQ8      = n.shot_k_q8;
+  a.programmingSigmaQ8     = n.sigma_prog_q8;
+  a.driftSigmaQ8           = n.drift_sigma_q8;
+  a.driftLog2Shots         = n.drift_log2_shots;
+  a.driftClampQ8           = n.drift_clamp_q8;
+  a.crosstalkQ8            = n.crosstalk_q8;
+  a.loopModes              = n.loop_modes;
+  a.calibrationValid       = n.calibration_valid;
+  a.tileRows               = n.tile_rows;
+  a.tileCols               = n.tile_cols;
+  a.operandBits            = n.operand_bits;
+  a.accumulatorBits        = n.accumulator_bits;
   return a;
 }
 

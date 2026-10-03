@@ -35,12 +35,24 @@ foreach(src ${UNIT_SRC})
   # compiled in. Read from what it includes, the same rule the library links
   # above use -- a filename convention is one rename away from silently not
   # building.
+  # A test that includes the TILE adapter gets the same shim compiled as a build
+  # that can have the photonic tile, with the reference error model linked
+  # behind it. Checked first: the tile adapter includes the plain one, but the
+  # test's own text names only the one it asked for.
   set(_extra_src "")
-  if(GRXCP_ENABLE_NPU AND _src_text MATCHES "npu_shim_adapter\\.h")
+  set(_extra_defs "")
+  if(GRXCP_ENABLE_NPU AND _src_text MATCHES "npu_tile_adapter\\.h")
+    set(_extra_src ${CMAKE_SOURCE_DIR}/third_party/grx930/npu_dpi_shim.c
+                   ${CMAKE_SOURCE_DIR}/third_party/grx930/pta_tile_model.c)
+    set(_extra_defs NPU_DPI_WITH_PTA)
+  elseif(GRXCP_ENABLE_NPU AND _src_text MATCHES "npu_shim_adapter\\.h")
     set(_extra_src ${CMAKE_SOURCE_DIR}/third_party/grx930/npu_dpi_shim.c)
   endif()
 
   add_executable(${name} ${src} ${_extra_src})
+  if(_extra_defs)
+    target_compile_definitions(${name} PRIVATE ${_extra_defs})
+  endif()
   target_link_libraries(${name} PRIVATE ${_unit_libs} grxrt)
   target_include_directories(${name} PRIVATE
       ${CMAKE_CURRENT_SOURCE_DIR}/common
@@ -84,11 +96,19 @@ foreach(src ${LIB_TEST_SRC})
 
   if(_libs)
     set(_extra_src "")
-    if(GRXCP_ENABLE_NPU AND _src_text MATCHES "npu_shim_adapter\\.h")
+    set(_extra_defs "")
+    if(GRXCP_ENABLE_NPU AND _src_text MATCHES "npu_tile_adapter\\.h")
+      set(_extra_src ${CMAKE_SOURCE_DIR}/third_party/grx930/npu_dpi_shim.c
+                     ${CMAKE_SOURCE_DIR}/third_party/grx930/pta_tile_model.c)
+      set(_extra_defs NPU_DPI_WITH_PTA)
+    elseif(GRXCP_ENABLE_NPU AND _src_text MATCHES "npu_shim_adapter\\.h")
       set(_extra_src ${CMAKE_SOURCE_DIR}/third_party/grx930/npu_dpi_shim.c)
     endif()
 
     add_executable(${name} ${src} ${_extra_src})
+    if(_extra_defs)
+      target_compile_definitions(${name} PRIVATE ${_extra_defs})
+    endif()
     target_include_directories(${name} PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/unit
         ${CMAKE_CURRENT_SOURCE_DIR}/common
@@ -111,6 +131,23 @@ foreach(src ${LIB_TEST_SRC})
                          WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/libs)
   endif()
 endforeach()
+
+# The vendored photonic error model, against the vectors its owners froze.
+#
+# third_party/grx930/pta_tile_model.c is grx930's, and the bitwise gate above
+# (test_grxblas_pta) holds grxblasGemmEx to it. That is only worth something if
+# this copy IS the model grx930 gates its RTL against, and pta_vectors.txt is
+# how a repository with a C compiler and nothing else finds out: sixteen cases
+# the model must reproduce bit for bit, one per impairment and the combinations
+# that interact. Plain C99, no device, no NPU flag -- it runs in every build.
+add_executable(pta_vectors_check
+    ${CMAKE_SOURCE_DIR}/third_party/grx930/pta_vectors_check.c
+    ${CMAKE_SOURCE_DIR}/third_party/grx930/pta_tile_model.c)
+target_include_directories(pta_vectors_check PRIVATE
+    ${CMAKE_SOURCE_DIR}/third_party/grx930)
+add_test(NAME pta_vectors_check
+         COMMAND pta_vectors_check
+                 ${CMAKE_SOURCE_DIR}/third_party/grx930/pta_vectors.txt)
 
 # The device-property contract must hold on an FPGA backend too, where managed
 # memory has to be gated off. Same binary, different backend selection.

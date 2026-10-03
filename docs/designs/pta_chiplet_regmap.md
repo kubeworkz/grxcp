@@ -79,6 +79,11 @@ rate of its own. And `PTA_CAPS0` reports the systolic array's geometry on a buil
 with no tile, where `PTA_CAPS1` says nothing is built; a driver reads `PTA_CAPS1`
 before it believes there is a tile to have a geometry.
 
+*A fourth tile kind, 2026-10-03.* `PTA_CAPS2[19:18]` reads 3 on grx930's register
+model when it is built with the reference error model behind it (the PTA plan's
+S2): the model on its own, its arithmetic with no tile's timing. No RTL build
+reports 3. The board plan's X5 twin is the same kind of object.
+
 ---
 
 ## 3. Interrupts, new

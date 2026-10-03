@@ -35,6 +35,15 @@ inline std::string impair_names(int64_t mask) {
   return s.empty() ? "none" : s;
 }
 
+// A Q8.8 register as the number it stands for, to three places. Every sigma in
+// the tile's map is in this format; printing the raw integer would make a
+// reader do the division, and get it wrong for the one that is Q0.8.
+inline std::string q8(int v) {
+  char buf[32];
+  std::snprintf(buf, sizeof(buf), "%.3f", v / 256.0);
+  return buf;
+}
+
 // One string per printed line, without the newline.
 //
 // UNKNOWN is as loud as EMULATED. A device that cannot say whether its GEMMs
@@ -63,7 +72,7 @@ inline std::vector<std::string> analog_gemm_lines(const grxAnalogGemm_t& a) {
 
   // Zero bits is a real setting -- unquantised -- and "a0" would read as a
   // zero-bit activation, so it is spelled out.
-  char buf[160];
+  char buf[200];
   std::string act = "a=full", wgt = "w=full", adc = "ADC unquantised";
   if (a.activationBits > 0) {
     std::snprintf(buf, sizeof(buf), "a%d", a.activationBits);
@@ -77,10 +86,70 @@ inline std::vector<std::string> analog_gemm_lines(const grxAnalogGemm_t& a) {
     std::snprintf(buf, sizeof(buf), "ADC %d bits << %d", a.adcBits, a.adcShift);
     adc = buf;
   }
+  // "of 16": a bit count means nothing without the width it is a count of. Six
+  // bits of a sixteen-bit operand is not a six-bit quantiser for int8 data, it
+  // is a quantiser that rounds all of it to zero.
+  std::string of;
+  if (a.operandBits > 0 && (a.activationBits > 0 || a.weightBits > 0)) {
+    std::snprintf(buf, sizeof(buf), " of %d", a.operandBits);
+    of = buf;
+  }
   std::snprintf(buf, sizeof(buf), "seed 0x%08llx", (unsigned long long)a.seed);
-  out.push_back(label + "EMULATED on the PTA tile: " + act + "/" + wgt + ", " +
-                adc + ", " + buf);
+  out.push_back(label + "EMULATED on the PTA tile: " + act + "/" + wgt + of +
+                ", " + adc + ", " + buf);
   out.push_back(cont + "impairments " + impair_names(a.impairments));
+
+  // The quantiser keeps the TOP of the operand word. An int8 operand lives in
+  // the low eight bits, so a setting that keeps eight or more bits fewer than
+  // the word has rounds every one of them to zero -- and int8 is the only
+  // operand grxBLAS sends this device. A C of all zeros that is exactly what
+  // was configured is worth one line before somebody debugs it as a fault.
+  if ((a.impairments & GRX_ANALOG_QUANT) && a.operandBits > 0) {
+    const bool act_dead = a.activationBits > 0 && a.operandBits - a.activationBits >= 8;
+    const bool wgt_dead = a.weightBits > 0 && a.operandBits - a.weightBits >= 8;
+    if (act_dead || wgt_dead) {
+      std::snprintf(buf, sizeof(buf),
+                    "%s of %d keeps the top %d bits: every int8 %s rounds to zero",
+                    act_dead ? act.c_str() : wgt.c_str(), a.operandBits,
+                    act_dead ? a.activationBits : a.weightBits,
+                    act_dead && wgt_dead ? "operand"
+                        : (act_dead ? "activation" : "weight"));
+      out.push_back(cont + buf);
+    }
+  }
+
+  // How much. All four are printed whether or not their impairment is enabled:
+  // the line above says which of them the tile applies, and a sigma left over
+  // from an earlier run is worth seeing before it is switched back on.
+  out.push_back(cont + "noise: thermal " + q8(a.thermalSigmaQ8) + " LSB, shot k " +
+                q8(a.shotCoefficientQ8) + ", programming " +
+                q8(a.programmingSigmaQ8) + " LSB, crosstalk " + q8(a.crosstalkQ8));
+  if (a.impairments & GRX_ANALOG_DRIFT) {
+    std::snprintf(buf, sizeof(buf),
+                  "drift: %s LSB a step, a step every 2^%d shots, clamp %s LSB",
+                  q8(a.driftSigmaQ8).c_str(), a.driftLog2Shots,
+                  q8(a.driftClampQ8).c_str());
+    out.push_back(cont + buf);
+    out.push_back(cont +
+        "drift is device state: the answer depends on every shot since MODEL_RST");
+  }
+  if (a.tileRows > 0) {
+    std::snprintf(buf, sizeof(buf), "tile %d x %d, %d-bit operands, %d-bit sums",
+                  a.tileRows, a.tileCols, a.operandBits, a.accumulatorBits);
+    out.push_back(cont + buf);
+  }
+
+  // The two states in which the reference model is the wrong model for this
+  // device, even with every number above.
+  if (a.loopModes > 0) {
+    std::snprintf(buf, sizeof(buf),
+                  "PTA_CTRL loop modes 0x%x are set: not the order the reference "
+                  "model walks", a.loopModes);
+    out.push_back(cont + buf);
+  }
+  if (a.calibrationValid > 0)
+    out.push_back(cont +
+        "a calibration's trims are in force, which the reference model does not hold");
 
   // A bit that is off and a bit that cannot be on look the same in the mask
   // above, and a START asking for the second kind is refused outright. If one

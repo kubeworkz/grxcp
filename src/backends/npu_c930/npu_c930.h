@@ -74,9 +74,23 @@ extern "C" {
 #define NPU_C930_PTA_CAPS1    0x108u   // R:  [6:0] impairments this build implements
 #define NPU_C930_PTA_CAPS2    0x10Cu   // R:  [19:18] tile kind, [31] it is an emulation
 #define NPU_C930_PTA_CTRL     0x140u   // RW: [0] EN -- the CALIBRATION ENGINE's, see below
+#define NPU_C930_PTA_STATUS   0x144u   // R:  [1] CAL_VALID
 #define NPU_C930_PTA_IMPAIR   0x148u   // RW: [6:0] one bit per impairment
 #define NPU_C930_PTA_BITS     0x14Cu   // RW: [3:0] B_a [7:4] B_w [11:8] B_adc [17:12] S
 #define NPU_C930_PTA_SEED     0x150u   // RW: every per-GEMM noise stream
+#define NPU_C930_PTA_SIGMA_TH 0x154u   // RW: [15:0] thermal sigma, Q8.8 in ADC LSB
+#define NPU_C930_PTA_SIGMA_SH 0x158u   // RW: [15:0] shot coefficient k, Q8.8
+#define NPU_C930_PTA_SIGMA_PR 0x15Cu   // RW: [15:0] programming sigma, Q8.8 in weight LSB
+#define NPU_C930_PTA_DRIFT_CFG 0x160u  // RW: [15:0] step sigma Q8.8, [20:16] log2 shots a step
+#define NPU_C930_PTA_XTALK_CHI 0x164u  // RW: [7:0] chi, Q0.8
+#define NPU_C930_PTA_DRIFT_MAX 0x1D0u  // RW: [15:0] drift clamp, Q8.8 in weight LSB
+
+#define NPU_C930_PTA_CTRL_MODEL_RST 0x08u   // write 1: drift to zero, generator from PTA_SEED
+// PTA_CTRL[9:7], which change the order the tile's noise is drawn in.
+#define NPU_C930_PTA_CTRL_RESIDENT  0x080u
+#define NPU_C930_PTA_CTRL_WSKIP     0x100u
+#define NPU_C930_PTA_CTRL_MORDER    0x200u
+#define NPU_C930_PTA_STATUS_CAL_VALID 0x02u
 
 #define NPU_C930_PTA_MAGIC    0x50544100u   // "PTA" in PTA_ID[31:8]
 
@@ -263,6 +277,34 @@ typedef struct {
     // on a build with no tile it describes nothing that runs -- but it is what
     // explains a refused START, and that is the only thing it is used for.
     int64_t impairments_requested;   // -1 when unidentified
+
+    // THE REST OF THE MODEL. The fields above say that a GEMM is impaired and
+    // by what kind of thing; they do not say by how much, and a seed with no
+    // sigmas reproduces nothing. With these, the tile below and the operands,
+    // pta_gemm() gives this device's C bit for bit -- that is the claim, and
+    // tests/libs/test_grxblas_pta.cpp holds it. All -1 unless analog.
+    int     sigma_thermal_q8;        // PTA_SIGMA_TH: Q8.8 in ADC LSB
+    int     shot_k_q8;               // PTA_SIGMA_SH: sigma = k * sqrt|y|, k in Q8.8
+    int     sigma_prog_q8;           // PTA_SIGMA_PR: Q8.8 in weight LSB
+    int     drift_sigma_q8;          // PTA_DRIFT[15:0]: one step's sigma, Q8.8 weight LSB
+    int     drift_log2_shots;        // PTA_DRIFT[20:16]: a step every 2^this shots
+    int     drift_clamp_q8;          // PTA_DRIFT_MAX: Q8.8 in weight LSB
+    int     crosstalk_q8;            // PTA_XTALK: chi, Q0.8
+
+    // The two things that stop the model reproducing a device even with every
+    // number above: a loop order it does not walk, and trims it does not hold.
+    int     loop_modes;              // PTA_CTRL[9:7] as a 3-bit value; 0 is the shipped order
+    int     calibration_valid;       // PTA_STATUS.CAL_VALID: a calibration's trims are in force
+
+    // THE TILE, from PTA_CAPS0. A build fact, so it is reported whenever a tile
+    // is present, impaired or not. The bit counts above are counts OF
+    // operand_bits: the quantiser keeps the top of the word, so six bits of a
+    // sixteen-bit operand rounds every INT8 value to zero, and the same six on
+    // an eight-bit tile is a six-bit quantiser. -1 unless tile_present == 1.
+    int     tile_rows;               // inputs a shot sums; a K tile
+    int     tile_cols;               // outputs a shot yields; an N tile
+    int     operand_bits;            // DIN_W
+    int     accumulator_bits;        // ACC_W
 } npu_c930_analog_t;
 
 // Read the block and decide. Returns 0 when a determination was made -- and

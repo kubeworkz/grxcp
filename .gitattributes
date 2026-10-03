@@ -1,0 +1,16 @@
+# Files whose bytes are the point.
+#
+# third_party/grx930 is vendored byte for byte from another repository, and its
+# README records sizes and commits a re-import is checked against. Two of the
+# files are data that a C program parses a line at a time. With core.autocrlf
+# on, a Windows checkout rewrites every one of them to CRLF, and "byte for
+# byte" is then true of the repository and false of the tree somebody builds.
+#
+# The golden data is the same kind of object: generated, compared exactly, and
+# never edited.
+#
+# So: no line-ending conversion for these, on any host.
+third_party/grx930/*.c          -text
+third_party/grx930/*.h          -text
+third_party/grx930/*.txt        -text
+tests/libs/pta_gemm_golden.txt  -text

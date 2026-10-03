@@ -1,0 +1,139 @@
+# grxblasGemmEx on the photonic tile: golden results.
+#
+# Emitted by tests/libs/test_grxblas_pta --regenerate from
+# third_party/grx930/pta_tile_model.c. tests/libs/test_grxblas_pta holds
+# grxblasGemmEx on the tile to every number below, bit for bit.
+#
+# GOLDEN DATA. Do not edit by hand. A number here moves only when the
+# vendored error model moves, and then this file is regenerated and its
+# diff goes in the same change, so the move is seen (AGENTS.md section 4).
+#
+# Operands are int8, from the model's xorshift32 seeded with
+# op_seed ^ 0x2545f491: A first (m*k values, column-major), then B
+# (k*n), each the low byte of the state. The tile is reset to the
+# case's seed before its first GEMM. C is column-major, m*n int32.
+# A is the weight set; each column of B is one shot.
+version 1
+tile rows=4 cols=4 operand_bits=16 accumulator_bits=48
+cases 8
+
+case v1
+why the board plan's version 1 allowances, every impairment but drift, at the largest shape the engine takes
+shape m=12 n=8 k=16 op_seed=1 gemms=1
+reg impair=0x57 bits=0x097ee seed=0x0000002a sigma_th=0x0040 sigma_sh=0x002f sigma_pr=0x0100 drift=0x000000 xtalk=0x05 drift_max=0x0000
+c 0
+ ffff9000 00004000 0000b000 00004000 ffffd000 00001600 00000000 00003400
+ fffff000 00001a00 ffffa400 ffff4a00 fffff800 00007400 fffff200 00001c00
+ ffffd400 ffffb000 00006e00 ffffba00 ffffae00 00004000 00004000 00000e00
+ 00001400 00007400 00001e00 00009000 ffff6800 ffffb000 00001e00 00007600
+ ffff9200 ffffc800 ffffde00 00004200 00006400 00002400 00005800 00005400
+ ffff7800 00001e00 ffff9a00 00001000 00003600 ffffd200 ffffda00 ffffee00
+ ffff7e00 ffffc200 ffffc800 ffff8c00 ffffd800 00008600 00002c00 00004a00
+ fffff600 00001e00 0000b800 00001600 00000c00 ffff6600 ffffaa00 ffff9800
+ 00005e00 00000a00 ffffd800 ffffe200 00007400 00004c00 00003600 00002a00
+ ffffbc00 00000a00 ffffb600 00001800 00005000 00004a00 00003600 00001c00
+ 0000e600 ffff9e00 00002400 00005a00 00002000 00003600 ffff6000 00000c00
+ 00003800 ffff5e00 0000fc00 ffffa600 00003000 ffffe600 ffffe000 ffffd600
+
+case v0
+why version 0's: a coarser DAC and ADC and four times the noise
+shape m=12 n=8 k=16 op_seed=2 gemms=1
+reg impair=0x57 bits=0x0a6ed seed=0x0000002b sigma_th=0x0100 sigma_sh=0x0094 sigma_pr=0x0400 drift=0x000000 xtalk=0x1a drift_max=0x0000
+c 0
+ 00006c00 ffff8800 ffff9c00 00003000 ffff4800 00003400 00007400 00006800
+ fffff400 00003000 ffff8400 00006400 ffff8400 fffff800 00002400 ffffbc00
+ fffff400 00002000 ffff6000 00007c00 00008400 ffff7c00 ffff0000 fffff000
+ ffffa800 00002000 ffffc400 ffffdc00 ffffbc00 ffff8400 ffffbc00 00007800
+ 00005800 ffff4400 ffff0000 fffffc00 00006c00 00000400 ffffd800 00006800
+ 00001c00 ffff8c00 00001c00 ffffd800 00001800 ffffec00 00000c00 ffffec00
+ ffff9c00 00005c00 00008000 ffffd400 ffffec00 ffff7800 ffffd800 00004000
+ ffffc400 00001000 ffff7400 00004000 00004400 ffff7800 00000c00 00004800
+ ffffbc00 ffffbc00 00001800 ffffd800 00001000 00002000 fffff800 fffffc00
+ 00003800 ffff9800 ffffc400 00003400 ffffe000 ffffc400 00000000 00002800
+ 00000400 ffffec00 00000c00 00004400 00002c00 00000000 ffff3c00 00003000
+ 00002c00 ffffac00 00008800 00007000 ffffd400 ffffac00 0000e800 00002800
+
+case quant
+why quantisation alone, on a shape that leaves a ragged tile in every direction
+shape m=5 n=3 k=7 op_seed=3 gemms=1
+reg impair=0x01 bits=0x0a6ed seed=0x0000002c sigma_th=0x0000 sigma_sh=0x0000 sigma_pr=0x0000 drift=0x000000 xtalk=0x00 drift_max=0x0000
+c 0
+ 00000c00 00001400 ffffb000 ffffa000 00007400 ffffb800 00003400 ffffb000
+ 00002c00 00005400 fffff400 ffffec00 fffff400 00004000 00001000
+
+case weights
+why only the weight side is impaired: four-bit weights and programming error, activations untouched. Which operand that lands on is what the roles check below turns on
+shape m=4 n=4 k=8 op_seed=4 gemms=1
+reg impair=0x41 bits=0x000c0 seed=0x0000002d sigma_th=0x0000 sigma_sh=0x0000 sigma_pr=0x0200 drift=0x000000 xtalk=0x00 drift_max=0x0000
+c 0
+ ffffe6e6 000010a3 ffffc9d4 00000c79 fffffd52 ffff772b ffffea4d 000034f9
+ 000001c6 fffff474 ffffe75d ffffe6ad ffffd27d 00004bcc ffffe99e fffff02c
+
+case xtalk-short-k
+why crosstalk with K shorter than the tile, where a row holds no weight to couple from
+shape m=6 n=2 k=3 op_seed=5 gemms=1
+reg impair=0x10 bits=0x00000 seed=0x0000002e sigma_th=0x0000 sigma_sh=0x0000 sigma_pr=0x0000 drift=0x000000 xtalk=0x40 drift_max=0x0000
+c 0
+ fffff625 ffffe0d1 00001cd2 00000163 00002c5d ffffd1c8 00002cfd 00002747
+ 000008e1 fffff2c2 00000133 ffffe566
+
+case unit
+why one element, one shot, one weight
+shape m=1 n=1 k=1 op_seed=6 gemms=1
+reg impair=0x03 bits=0x04700 seed=0x0000002f sigma_th=0x0200 sigma_sh=0x0000 sigma_pr=0x0000 drift=0x000000 xtalk=0x00 drift_max=0x0000
+c 0
+ 00000160
+
+case drift
+why drift is device state: the second GEMM is the one a tile that forgot its history gets wrong
+shape m=8 n=8 k=16 op_seed=7 gemms=2
+reg impair=0x49 bits=0x000ee seed=0x00000030 sigma_th=0x0000 sigma_sh=0x0000 sigma_pr=0x0100 drift=0x000100 xtalk=0x00 drift_max=0x0c00
+c 0
+ ffffef1e fffff9a6 00006af4 ffffb3b6 000037d9 0000301a 00001056 000022c4
+ ffffcaa7 00002b92 00004a4d 000018dc ffffe0be ffffdd51 fffff083 fffff517
+ fffffe90 ffffd689 0000c384 ffffa88f ffff780a ffff7f7e ffff08a2 00001111
+ 000002d8 00000152 000023d8 000099bc 00001ebc 00005dd4 00000789 00000a5e
+ ffff99da ffff9091 00002f6d ffffee25 00008472 000042b0 fffff2cb 0000971e
+ ffff6670 ffffb1c0 ffff87b2 ffffd17d ffffccae ffff66e8 00001e11 ffffcfdc
+ ffff59b1 00000bd8 00006e21 00000656 ffffc28d ffff8701 0000247d 00004abd
+ ffffc11f ffffa269 fffff679 00002f8e ffff9da4 ffffacfb ffff525f ffffe8fa
+c 1
+ fffffab3 ffffeb2f 00006c5e ffffc844 00003e0e 000030d8 00000435 00002127
+ ffffd3ce 0000224d 00004ffe 00001d61 ffffecef ffffcf79 ffffe8b3 ffffeae2
+ 00000e8a ffffca2b 0000c369 ffffb348 ffff82d5 ffff759b ffff01a1 00000638
+ fffff38f 0000068d 000021d7 0000a3c5 0000138a 00006551 00000de8 00001367
+ ffff91ea ffff8d4f 0000238a fffffe45 0000822e 00004d2f fffff101 000095ee
+ ffff597b ffffabbe ffff84ea ffffe722 ffffca03 ffff7553 00001b3a ffffd347
+ ffff5fe3 000002cc 0000743c 000019c6 ffffc3f8 ffff88a5 000013bc 000045b2
+ ffffcfc6 ffff94bd fffff58c 00004723 ffff9e80 ffffaed9 ffff3c8b ffffe7a1
+
+case v1-drift
+why everything at once, twice
+shape m=12 n=8 k=16 op_seed=8 gemms=2
+reg impair=0x5f bits=0x097ee seed=0x00000031 sigma_th=0x0040 sigma_sh=0x002f sigma_pr=0x0100 drift=0x010080 xtalk=0x05 drift_max=0x0c00
+c 0
+ ffffba00 00008a00 00001600 ffffee00 00001c00 00000800 fffff200 00005200
+ 00002400 ffffda00 00001c00 ffffee00 00003600 00002a00 00006200 00009800
+ 00005400 00000800 ffff9e00 00005400 00004800 ffffda00 00007800 00000000
+ 00004800 ffff8600 00001e00 00004200 ffffc400 ffffc600 00005e00 ffffec00
+ ffffe800 fffff200 00003800 00001000 00008000 ffffe600 ffff9a00 ffffd600
+ ffffce00 00005c00 00002400 ffff5000 00002e00 00003600 ffff2600 00006e00
+ fffffe00 00003800 0000be00 00001600 ffff6e00 00007e00 00004c00 ffffd600
+ ffffe200 0000a400 ffffac00 00000000 00004600 00001600 ffff8a00 00001a00
+ 00004a00 00006400 00002a00 ffffec00 00000a00 00003e00 ffffd800 00000400
+ ffffe600 ffff8a00 00002800 00000000 ffffd600 ffff2a00 ffffc000 ffffac00
+ ffffc600 ffff6600 ffffd400 00005e00 fffff200 00001e00 ffff8e00 ffff9600
+ 00003200 ffffa600 00000400 ffffdc00 fffffa00 00001e00 ffffc800 ffffa600
+c 1
+ ffffc000 00008e00 00001600 ffffee00 00002200 00000c00 fffff000 00005200
+ 00002600 ffffde00 00002000 ffffee00 00003e00 00002a00 00006400 00009800
+ 00005e00 00000800 ffffa200 00005400 00004c00 ffffde00 00007400 fffffe00
+ 00004200 ffff8400 00001e00 00003e00 ffffbc00 ffffca00 00006200 ffffe800
+ ffffea00 fffff200 00003e00 00001200 00008600 ffffe600 ffff9e00 ffffda00
+ ffffd200 00005c00 00002800 ffff5000 00002c00 00003400 ffff2000 00007000
+ 00000800 00003e00 0000c200 00001600 ffff7200 00008000 00004c00 ffffd200
+ ffffe400 0000a600 ffffaa00 fffffc00 00004400 00001400 ffff8c00 00001a00
+ 00004e00 00006400 00002e00 fffff000 00000e00 00004800 ffffdc00 00000600
+ ffffda00 ffff8800 00002800 fffffc00 ffffcc00 ffff2a00 ffffbe00 ffffa600
+ ffffc800 ffff6200 ffffd000 00005e00 ffffea00 00002000 ffff9200 ffff9400
+ 00003200 ffffaa00 00000600 ffffd800 fffff800 00002400 ffffc800 ffffa600

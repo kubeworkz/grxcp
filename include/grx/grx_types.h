@@ -221,6 +221,38 @@ typedef struct {
   // impairments & ~impairmentsImplemented is exactly the set that refuses.
   // Known whenever tileIsPresent is known, and zero where there is no tile.
   int64_t impairmentsImplemented;
+
+  // THE REST OF THE MODEL. Everything above says a GEMM is impaired and by
+  // what kind of thing; a seed and a mask do not say by how much, and they
+  // reproduce nothing. With the fields below, the vendored reference model
+  // (third_party/grx930/pta_tile_model.c) and the operands, the device's
+  // answer can be recomputed bit for bit -- which is the gate
+  // tests/libs/test_grxblas_pta.cpp holds, from this struct and nothing else.
+  // All -1 unless gemmIsAnalogEmulated is 1.
+  int     thermalSigmaQ8;         // PTA_SIGMA_TH: Q8.8 in ADC LSB
+  int     shotCoefficientQ8;      // PTA_SIGMA_SH: sigma = k * sqrt|y|, k in Q8.8
+  int     programmingSigmaQ8;     // PTA_SIGMA_PR: Q8.8 in weight LSB
+  int     driftSigmaQ8;           // PTA_DRIFT[15:0]: one step's sigma, Q8.8 weight LSB
+  int     driftLog2Shots;         // PTA_DRIFT[20:16]: a step every 2^this shots
+  int     driftClampQ8;           // PTA_DRIFT_MAX: Q8.8 in weight LSB
+  int     crosstalkQ8;            // PTA_XTALK: chi, Q0.8
+
+  // WHAT THE NUMBERS ABOVE DO NOT COVER, said rather than left to be found.
+  // Drift is device state: with DRIFT enabled the answer also depends on every
+  // shot since the last model reset, and no struct can carry that. And two
+  // things make the reference model the wrong model for a device:
+  int     loopModes;              // PTA_CTRL[9:7]; non-zero is an order the model does not walk
+  int     calibrationValid;       // 1: a calibration's trims are in force, which it does not hold
+
+  // THE TILE. A fact about the build, so it is reported wherever a tile is
+  // present, impaired or not. The bit counts above are counts OF operandBits:
+  // the quantiser keeps the top of the operand word, so activationBits 6 on a
+  // 16-bit tile rounds every int8 operand to zero, and the same 6 on an 8-bit
+  // tile is a six-bit quantiser. -1 unless tileIsPresent is 1.
+  int     tileRows;               // inputs a shot sums
+  int     tileCols;               // outputs a shot yields
+  int     operandBits;            // DIN_W
+  int     accumulatorBits;        // ACC_W
 } grxAnalogGemm_t;
 
 #define GRX_ANALOG_QUANT     0x01
