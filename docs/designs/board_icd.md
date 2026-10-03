@@ -54,7 +54,7 @@ Four parties own the board between them:
 | 1 | GRX930 ↔ GRX-G100 | CXL 2.0 (CXL.io, .cache, .mem) on the PCIe 5.0 PHY | x16, 32 GT/s a lane, about 64 GB/s a direction before overhead | grx930: root port, home agent, HDM decoders | grxgpu: Type-2 device | B1, B3; rate from X2 |
 | 2 | GRX-G100 ↔ PTA chiplet | UCIe-S, a streaming protocol in a FLIT format, with the adapter's CRC and retry | One x16 module at 32 GT/s is 57.6 GB/s a direction at X2's assumed 0.9 efficiency. **Module count follows the chiplet's geometry** (§7) | grxgpu: UCIe port, fed by a copy engine | Chiplet team: EIC | B4; rates and counts from X2 |
 | 3 | EIC ↔ PIC | Analog: DAC drive to the modulators, photocurrent back from the detectors | One drive line a weight cell, one detector a column. Counts follow the geometry (§7) | Chiplet team | Chiplet team | B4, B5; resolutions from X1 |
-| 4 | Laser module → PIC | Light, on polarization-maintaining fiber | Wavelength and power **open**; X1's budget asks for at least 30 photons an ADC LSB, and B5's sizing put a 64-channel tile at 0.16–1.6 W on stated assumptions | Board team | Chiplet team | B5, X1 |
+| 4 | Laser module → PIC | Light, on polarization-maintaining fiber | Power, wavelength, noise and **kind** all **open** (board plan §8, question 8). For scale: a 64-column tile at 1 GS/s wants 0.66–6.6 W behind 10–20 dB of loss, set by the receiver's noise and not by X1's 30 photons an ADC LSB, and intensity noise within about −150 dB/Hz. This row used to say 0.16–1.6 W, which was sized from X1's version 0 | Board team | Chiplet team | B5, X1; figures from [`pta_shot_rate.py`](pta_shot_rate.py) §3 and §6 |
 | 5 | Board controller ↔ all | SMBus or I3C: rails, temperatures, the laser and its interlock | Rate **open**, with the controller (§7) | Board team | Each die's management pins | B7 |
 | 6 | GRX930 ↔ DDR5 | DDR5 (or LPDDR5) | Channels, width and speed grade **open**, with part selection | grx930 team | Board team | B2 |
 | 7 | GRX-G100 ↔ GDDR6 | GDDR6 | Channels, width and speed grade **open**, with part selection | grxgpu team | Board team | B2 |
@@ -88,6 +88,29 @@ electrical one.
 **Link 4.** The laser sits off the package (B5). The board owns the module, its
 driver, its temperature control and the interlock; the chiplet owns the fiber
 attach and the polarization the modulators need.
+
+That was decided for one laser on one fiber, and what the tile asks of its source
+has since been written down ([`pta_shot_rate.py`](pta_shot_rate.py) §6). Four
+things, of which this document held one:
+
+- **Power.** The same light whichever way it is made: one laser of 0.66–6.6 W at
+  1 GS/s for a 256 × 64 tile, or an emitter an input row at 2.6–25.6 mW each. An
+  emitter of 10 mW a row stands 15.9 dB of loss, where the largest single laser
+  B5 planned on stands 13.9.
+- **Noise.** The error model has no term for the source. Held to the receiver's
+  own allowance its intensity noise is about −150 dB/Hz at 1 GS/s, ten tighter
+  for each decade of rate, and independent of power and loss. An emitter a row
+  relaxes that by up to 24 dB if the emitters are independent.
+- **Wavelength.** B5's arithmetic is at 1550 nm; the same detector at 1310 nm
+  needs 18% more light. The all-optical branch would pin it to 1550 nm within
+  2.4 nm, and ring weights would pin it by a figure nobody has.
+- **Kind**, which decides the rest. The error model is written for a ring bank,
+  which sums powers and needs a line an input — so under the model as it stands
+  this link carries many lines, not one, and a single-line laser is not a source
+  for it. The CPU document calls that topology a hypothesis.
+
+None of this picks a laser. No part's output power or noise is held here, and
+the comparison with one belongs to whoever has its datasheet.
 
 ---
 
@@ -172,6 +195,8 @@ board plan's §8 holds the ones that are questions rather than gaps.
 2. **The chiplet's geometry and shot rate** — inputs, outputs, GS/s — which set
    link 2's module count, link 3's line count, link 4's laser power and the
    shot clock. Board plan §8, question 1.
+   **And the kind of source link 4 carries** — one line or one an input — which
+   follows from how a column sums. Board plan §8, question 8.
 3. **Part selection** for DDR5, GDDR6, the controller, the laser module and the
    clock sources, with everything that follows from it.
 4. **Currents** on every rail in §3.
@@ -195,4 +220,5 @@ P0 asks that every link have an owner on each side and every number a source.
   and the telemetry each party reads.
 
 What this document cannot close is §7. P1 and part selection close most of it;
-the chiplet's geometry closes the rest.
+the chiplet's geometry and its topology close the rest — the topology because it
+decides what link 4 carries.

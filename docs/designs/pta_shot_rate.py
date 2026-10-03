@@ -43,9 +43,23 @@ how many cells a beat have to be written for the tile to spend its time shooting
 That is section 2.1's Tw at the chiplet's scale.  The write parallelism is swept
 rather than assumed, and a write beat is taken as one shot period.
 
-Not priced: the converters' power.  The ADC array is stated as a conversion rate
-and no further, because turning that into watts needs a device figure this
-program does not hold.
+Section 6 is the light source, as requirements and not as a choice of laser:
+the same total light delivered by one laser or by one emitter per input row, the
+intensity noise the source may have, and what the wavelength costs.  It assumes
+flat intensity noise over a noise bandwidth equal to the shot rate, and it holds
+that noise to the RECEIVER's allowance -- an assumption about a budget section 4.3
+does not have, because the error model has no term for the source at all.
+
+Not priced: the converters' power, and any laser.  The ADC array is stated as a
+conversion rate, and the source as what it is asked for, because turning either
+into a device needs a figure this program does not hold.
+
+What KIND of source the tile needs turns on how a column sums, and the documents
+answer that only by implication.  The error model's crosstalk is written for a
+ring bank (pta_cpu_integration.md 4.3), where inputs are told apart by wavelength
+and a column sums powers; that document's section 8 calls the topology a
+hypothesis with no ground truth.  Section 6 says what follows from each reading
+and claims neither.
 
 A3's photon counts are deliberately not used.  They are photons at the all-optical
 activation's knee -- the nonlinear element's budget on a branch the mainline does
@@ -60,6 +74,7 @@ from fractions import Fraction
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import pta_chiplet_link as link
+import pta_tpaqcn_measured as tpaqcn
 import pta_tw_sweep as sweep
 
 # ---- section 4.3: what the interface chip is held to ----------------------
@@ -97,6 +112,18 @@ NOISE_LAWS = (("white", 0.5), ("redesigned", 1.5))
 LASERS_W = (0.16, 0.5, 1.6)
 
 H_PLANCK, C_LIGHT = 6.62607015e-34, 2.99792458e8
+Q_ELECTRON = 1.602176634e-19
+
+# ---- the source ------------------------------------------------------------
+# Emitter powers swept in decades.  NOT devices: this program holds no laser's
+# output power, so the table says what loss each decade could stand and leaves
+# the comparison with a real part to whoever has its datasheet.
+EMITTERS_W = (1e-3, 10e-3, 100e-3)
+O_BAND_M = 1310e-9          # the other telecom window, for the comparison only
+# The all-optical activation's phase matching: FWHM in pump wavelength, read off
+# the TPA-QCN paper's Fig. 3C (pta_tpaqcn_measured.py), about its 1550 nm pump.
+PM_FWHM_NM = tpaqcn.FWHM_NM
+PM_HALF_ARG = 1.3915574     # sinc^2(x) = 1/2 at this x; its FWHM is 2.783
 
 # ---- X2's working point ---------------------------------------------------
 X2_TILE = (256, 64)
@@ -202,6 +229,76 @@ def per_beat_two_banks(k, n, mb):
     duty is 1 as long as a set programs within one batch: k*n cells in mb beats.
     """
     return math.ceil(k * n / mb)
+
+
+# ---- 6. the source ---------------------------------------------------------
+def per_emitter_power(req, fs, k, n, loss_db, exponent):
+    """Light each emitter supplies when the source is one emitter per input row.
+
+    The total is laser_power()'s: every detector still needs its full scale, so
+    an array changes how the light is made and not how much of it there is.
+    """
+    return laser_power(req, fs, n, loss_db, exponent) / k
+
+
+def emitter_loss_ceiling_db(req, emitter_w, k, n, fs, exponent):
+    """The most loss an array of k emitters of this power can stand at fs."""
+    return loss_ceiling_db(req, k * emitter_w, n, fs, exponent)
+
+
+def rin_limit_db_hz(req, fs):
+    """The intensity noise that puts the source at the receiver's allowance.
+
+    Intensity noise is a fraction of the signal, so it is largest at full scale:
+    rms / full scale = sqrt(RIN * B).  Held to the receiver's allowance there,
+    with RIN flat and the noise bandwidth B equal to the shot rate -- both
+    assumed.  Halving B moves this 3 dB.
+    """
+    rel = req["rx_noise_lsb"] / 2 ** NOISE_LSB_BITS
+    return 10 * math.log10(rel * rel / fs)
+
+
+def participation(contributions):
+    """How many independent emitters' noise averages at one detector.
+
+    With one source every row's light fluctuates together and the sum carries the
+    source's whole relative noise.  With an independent emitter a row the noises
+    add in power while the signals add in amplitude, so the sum's relative noise
+    falls by the square root of this count: 1 when one row carries the sum, the
+    number of rows when they all carry it equally.
+    """
+    total = sum(contributions)
+    return total * total / sum(c * c for c in contributions)
+
+
+def quantum_efficiency(responsivity_a_w, wavelength_m):
+    return responsivity_a_w * H_PLANCK * C_LIGHT / (Q_ELECTRON * wavelength_m)
+
+
+def responsivity_at(eta, wavelength_m):
+    return eta * Q_ELECTRON * wavelength_m / (H_PLANCK * C_LIGHT)
+
+
+def phase_match_scale(offset_nm):
+    """The all-optical activation's efficiency at a pump offset from its peak.
+
+    sinc^2, with half its peak at half the measured FWHM -- the shape A3's chain
+    mode uses for a detuned unit, here against wavelength.
+    """
+    x = PM_HALF_ARG * abs(offset_nm) / (PM_FWHM_NM / 2)
+    return 1.0 if x == 0 else (math.sin(x) / x) ** 2
+
+
+def phase_match_window_nm(scale):
+    """The pump offset at which the efficiency has fallen to `scale`."""
+    lo, hi = 0.0, PM_FWHM_NM            # monotone on the main lobe out to here
+    for _ in range(60):
+        mid = 0.5 * (lo + hi)
+        if phase_match_scale(mid) > scale:
+            lo = mid
+        else:
+            hi = mid
+    return 0.5 * (lo + hi)
 
 
 def gs(rate_hz):
@@ -372,6 +469,68 @@ def main():
     print(f"  And the converters: {n} ADCs at the shot rate is {n * X2_FS / 1e9:.0f} GS/s of"
           f" {v1['adc_bits']}-bit conversion at 1 GS/s.")
 
+    # ------------------------------------------------------------------ 6
+    section(f"6. The source: what the tile asks of its light ({k}x{n}, v1)")
+    print("  POWER.  The light is reading 3's whichever way it is made.  One laser")
+    print(f"  has to supply all of it; an emitter a row, {k} of them, a share each:")
+    print(f"  {'rate':>9}{'loss':>8}{'one laser':>12}{f'each of {k}':>14}")
+    for d in LOSS_DB:
+        # At 1 GS/s the noise law does not enter, so these need no bracket.
+        tot = laser_power(v1, X2_FS, n, d, 0.5)
+        each = per_emitter_power(v1, X2_FS, k, n, d, 0.5)
+        print(f"  {gs(X2_FS):>4} GS/s{d:>5.0f} dB{tot:>10.2f} W{each * 1e3:>11.1f} mW")
+    print()
+    print("  By geometry, at 1 GS/s:")
+    print(f"  {'tile':<10}{'emitters':>9}{'each at 10 dB':>15}{'each at 20 dB':>15}")
+    for gk, gn in link.GEOMETRIES:
+        a, b = (per_emitter_power(v1, X2_FS, gk, gn, d, 0.5) for d in LOSS_DB)
+        print(f"  {f'{gk}x{gn}':<10}{gk:>9}{a * 1e3:>12.1f} mW{b * 1e3:>12.1f} mW")
+    print()
+    print(f"  The loss an emitter can stand at 1 GS/s, by its power.  A sweep in")
+    print("  decades and not a list of parts: no laser's output is held here.")
+    for w in EMITTERS_W:
+        print(f"    {w * 1e3:>5.0f} mW a row  {emitter_loss_ceiling_db(v1, w, k, n, X2_FS, 0.5):>5.1f} dB")
+    print()
+    print("  NOISE.  The error model has quantisation, thermal, shot, drift, crosstalk")
+    print("  and programming error, and nothing for the source.  Intensity noise is a")
+    print("  fraction of the signal, so it is worst at full scale; held there to the")
+    print("  receiver's own allowance, flat, over a bandwidth equal to the shot rate:")
+    print(f"  {'rate':>9}{'v1':>14}{'v0':>14}")
+    for fs in (0.1e9, 1e9, 10e9):
+        print(f"  {gs(fs):>4} GS/s{rin_limit_db_hz(v1, fs):>8.1f} dB/Hz"
+              f"{rin_limit_db_hz(v0, fs):>8.1f} dB/Hz")
+    print("  It does not depend on the laser's power or on the loss: it is a ratio.")
+    print("  Read the other way it is a fourth bound on the rate, once a source's")
+    print("  figure is known -- every 10 dB of intensity noise is a decade of rate.")
+    relief = 10 * math.log10(k)
+    print(f"  An emitter a row relaxes it, by between 0 dB (one row carries the sum)")
+    print(f"  and {relief:.1f} dB (all {k} carry it equally), if the emitters are independent.")
+    print()
+    print("  WAVELENGTH.  B5's arithmetic is at 1550 nm with 1 A/W, which is a quantum")
+    eta = quantum_efficiency(RESPONSIVITY_A_W, WAVELENGTH_M)
+    r_o = responsivity_at(eta, O_BAND_M)
+    print(f"  efficiency of {eta:.2f}.  The same detector at 1310 nm gives {r_o:.3f} A/W, and")
+    print(f"  the laser is linear in that: {RESPONSIVITY_A_W / r_o:.3f}x the light for the same current.")
+    w90, w50 = phase_match_window_nm(0.9), phase_match_window_nm(0.5)
+    print(f"  Two things would pin it, and only the first can be priced here.  The")
+    print(f"  all-optical branch: its activation is phase-matched at 1550 nm over")
+    print(f"  {PM_FWHM_NM:.0f} nm, so its pump has to sit within {w90:.1f} nm of the peak for 90% of")
+    print(f"  the efficiency and within {w50:.1f} for half.  And the weights, if they are")
+    print("  rings: B5 lists the laser's wavelength among what the tile is sensitive")
+    print("  to and gives no figure for it.")
+    print()
+    print("  KIND.  What sort of source it must be turns on how a column sums, and the")
+    print("  documents answer that only by implication.  The error model's crosstalk")
+    print("  is written for a ring bank -- an input's light passes its neighbours'")
+    print("  rings (CPU document 4.3) -- and in a ring bank the inputs are told apart")
+    print("  by wavelength and a column sums POWERS.  Such a tile does not merely")
+    print(f"  allow a source of many lines, it requires one: a line an input, {k} here.")
+    print("  Whether one bank can tell that many apart is the device's question, and")
+    print("  no figure for it is held.  A mesh sums FIELDS from one coherent source,")
+    print("  and there an array or a comb is no source at all.  The CPU document's")
+    print("  section 8 calls the ring-bank topology a hypothesis with no ground truth,")
+    print("  so this is the model's assumption followed through, not a decision.")
+
     findings(mod_fs)
     checks()
 
@@ -386,7 +545,7 @@ def findings(mod_fs):
     ceil = loss_ceiling_db(v1, LASERS_W[-1], n, X2_FS, 0.5)
 
     print()
-    print("What this says, five readings.")
+    print("What this says, six readings.")
     print()
     print("1. THE MODULATOR IS NOT THE QUESTION.  It allows about"
           f" {mod_fs / 1e9:.0f} GS/s, and at")
@@ -430,6 +589,22 @@ def findings(mod_fs):
     print(f"   needs {two} -- one output's column a shot period -- and never waits, which")
     print("   is the case for two banks that G1 left unpriced.  The batch is the lever")
     print("   here too: every quadrupling of it quarters the write path.")
+    print()
+    e_lo, e_hi = (per_emitter_power(v1, X2_FS, k, n, d, 0.5) for d in LOSS_DB)
+    print("6. A SOURCE IS HELD TO FOUR THINGS, AND THE PLAN HAD ONE OF THEM.  Power:")
+    print(f"   reading 3's light is one laser of {lo1:.2f} to {hi1:.1f} W or {k} emitters of")
+    print(f"   {e_lo * 1e3:.1f} to {e_hi * 1e3:.1f} mW, and a 10 mW emitter a row stands"
+          f" {emitter_loss_ceiling_db(v1, 10e-3, k, n, X2_FS, 0.5):.1f} dB.  Noise: the")
+    print(f"   error model has no term for the source; at the receiver's own allowance")
+    print(f"   it is {rin_limit_db_hz(v1, X2_FS):.0f} dB/Hz at 1 GS/s, ten tighter per decade of rate.")
+    print("   Wavelength: 18% more light at 1310 nm for the same detector; pinned to")
+    print(f"   1550 within {phase_match_window_nm(0.9):.1f} nm if the all-optical branch reopens; and held against")
+    print("   the weights if they are rings, by a figure nobody has.")
+    print("   And KIND, which is the one that decides the rest: the error model is")
+    print("   written for a ring bank, which sums powers and needs a line per input,")
+    print("   so under the model as it stands an array or a comb is the kind of source")
+    print("   required and a single-line laser is not one.  The CPU document calls that")
+    print("   topology a hypothesis.  It is now a hypothesis with a laser hanging on it.")
     print()
 
 
@@ -543,6 +718,49 @@ def checks():
     # 15. Quadrupling the batch quarters the write path, in both cases.
     assert per_beat_two_banks(k, n, 16) == 4 * per_beat_two_banks(k, n, 64)
     assert per_beat_two_banks(k, n, 64) == 4 * per_beat_two_banks(k, n, 256)
+
+    # 16. An array changes how the light is made, not how much: k emitters'
+    #     shares add back to the one laser, at every geometry and loss.
+    for gk, gn in link.GEOMETRIES:
+        for d in LOSS_DB:
+            each = per_emitter_power(v1, X2_FS, gk, gn, d, 0.5)
+            assert abs(gk * each - laser_power(v1, X2_FS, gn, d, 0.5)) < 1e-12, (gk, gn, d)
+
+    # 17. Ten times the emitter is ten decibels of loss, and a 10 mW emitter a row
+    #     at X2's tile stands 15.9 dB -- past the 13.9 that B5's largest single
+    #     laser could.
+    c1, c10, c100 = (emitter_loss_ceiling_db(v1, w, k, n, X2_FS, 0.5) for w in EMITTERS_W)
+    assert abs((c10 - c1) - 10.0) < 1e-9 and abs((c100 - c10) - 10.0) < 1e-9
+    assert abs(c10 - 15.9) < 0.05, c10
+    assert c10 > ceil
+
+    # 18. The intensity-noise limit: about -150 dB/Hz at 1 GS/s under v1, exactly
+    #     10 dB a decade of rate, and 20 log10(4) looser under v0's allowance.
+    assert abs(rin_limit_db_hz(v1, X2_FS) + 150.2) < 0.05, rin_limit_db_hz(v1, X2_FS)
+    assert abs(rin_limit_db_hz(v1, 1e8) - rin_limit_db_hz(v1, 1e9) - 10.0) < 1e-9
+    assert abs(rin_limit_db_hz(v0, X2_FS) - rin_limit_db_hz(v1, X2_FS)
+               - 20 * math.log10(4)) < 1e-9
+
+    # 19. The participation count runs from 1 to the number of rows, which is
+    #     the whole range of what an array can buy on noise.
+    assert abs(participation([1.0] + [0.0] * (k - 1)) - 1.0) < 1e-12
+    assert abs(participation([1.0] * k) - k) < 1e-9
+    assert 1.0 < participation([float(i + 1) for i in range(k)]) < k
+
+    # 20. B5's 1 A/W at 1550 nm is a quantum efficiency of 0.80, and at the same
+    #     efficiency the O-band costs the ratio of the wavelengths in light.
+    eta = quantum_efficiency(RESPONSIVITY_A_W, WAVELENGTH_M)
+    assert abs(eta - 0.80) < 0.005, eta
+    r_o = responsivity_at(eta, O_BAND_M)
+    assert abs(RESPONSIVITY_A_W / r_o - WAVELENGTH_M / O_BAND_M) < 1e-12
+    assert abs(responsivity_at(eta, WAVELENGTH_M) - RESPONSIVITY_A_W) < 1e-12
+
+    # 21. The phase-matching curve is half its peak at half the measured FWHM,
+    #     which is what FWHM means, and falls monotonically to there.
+    assert abs(phase_match_scale(PM_FWHM_NM / 2) - 0.5) < 1e-6
+    assert abs(phase_match_window_nm(0.5) - PM_FWHM_NM / 2) < 1e-6
+    assert 0 < phase_match_window_nm(0.9) < phase_match_window_nm(0.5)
+    assert abs(phase_match_window_nm(0.9) - 2.4) < 0.05, phase_match_window_nm(0.9)
 
     print("checks: all pass.")
 

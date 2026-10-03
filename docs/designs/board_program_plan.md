@@ -210,7 +210,8 @@ at 1 GS/s. [`pta_shot_rate.py`](pta_shot_rate.py) reproduces the figures above
 from version 0 before it revises them, so the method is this paragraph's and
 only the allowance has moved. Every one of them is linear in the assumed 1 µA,
 which makes a measured receiver noise the first number worth having. What this
-does to the shot rate is §8, question 1.
+does to the shot rate is §8, question 1, and what kind of source supplies it is
+question 8.
 
 **B6 — Silicon nodes, and the board before silicon.** grx930's manufacturing
 plan takes the SoC to SKY130 first, then to TSMC N28, and freezes the RTL now.
@@ -691,6 +692,38 @@ among the bounds that bind.
 7. **Does X1's budget hold on a second workload?** It is one 784-100-10 MLP.
    That error compounds is a property of analog sums, not of this network, but
    the numbers in §4.3 belong to it until something else is run.
+8. **What kind of light source does the tile need?** Asked on 2026-10-03, about a
+   quantum dot laser, and the answer turned out to rest on something this plan
+   never decided. [`pta_shot_rate.py`](pta_shot_rate.py) §6 writes down what any
+   source is held to, as requirements and not as a choice of part:
+
+   | | What the tile asks | Where it comes from |
+   |---|---|---|
+   | Power | 0.66–6.6 W at 1 GS/s for 256 × 64, as one laser or as 2.6–25.6 mW from each of 256 emitters | B5's method at §4.3's version 1 |
+   | Noise | Intensity noise within about −150 dB/Hz at 1 GS/s, ten tighter a decade of rate | The receiver's allowance, applied to the source. **Assumed**: §4.3 has no row for it |
+   | Wavelength | 18% more light at 1310 nm than at 1550; within 2.4 nm of 1550 if the all-optical branch reopens | The detector's quantum efficiency; the TPA-QCN device's 12 nm of phase matching |
+   | Kind | A line an input if a column sums powers; one coherent line if it sums fields | The tile's topology, below |
+
+   **The kind is the open part, and it is open because the topology is.** The
+   error model's crosstalk is written for a ring bank — an input's light passes
+   its neighbours' rings (the CPU document, §4.3) — and in a ring bank the inputs
+   are told apart by wavelength and a column sums powers. Such a tile does not
+   merely allow a source of many lines, it requires one, 256 of them at this
+   geometry, and a single-line laser is not a source for it. A mesh sums fields
+   from one coherent source, and there an array or a comb is none. The CPU
+   document's §8 calls the ring-bank topology a hypothesis with no ground truth,
+   which was harmless while it only shaped a crosstalk term. It now decides what
+   B5's laser is.
+
+   So before a part: **which topology is the tile**, and if it is a ring bank,
+   can one bank tell 256 lines apart — a device question no figure here answers.
+   Three things follow whichever way that goes. The error model has no term for
+   the source's intensity noise, and it is the only impairment that scales with
+   the signal from outside the tile. B5's placement, off the package on one
+   fiber, was decided for one laser. And an emitter an input row is the one
+   arrangement that turns B5's watt-class laser into milliwatt parts, at the same
+   total light: 10 mW a row stands 15.9 dB of loss where 1.6 W in one laser stands
+   13.9.
 
 ---
 
