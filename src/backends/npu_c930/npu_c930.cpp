@@ -311,6 +311,25 @@ int npu_c930_gemm(npu_c930_device_t* dev,
     uint32_t status = reg_read(dev, 0x04);
     if (status & NPU_C930_STATUS_ERROR) {
         fprintf(stderr, "npu_c930: NPU reported error (status=0x%08x)\n", status);
+        // The core refuses a START that asks for an impairment the build does
+        // not implement -- every one of them on a digital array, MZM_NL on the
+        // tile. This does not pre-empt that rule: the refusal is the
+        // hardware's, in one place, and duplicating it here is how two rules
+        // drift apart. It EXPLAINS it, because "error" alone reads as a driver
+        // fault and the cause is a register somebody else may have written.
+        npu_c930_analog_t a;
+        if (npu_c930_read_analog(dev, &a) == 0 && a.identified &&
+            a.impairments_requested > 0 &&
+            (a.impairments_requested & ~a.impairments_implemented) != 0) {
+            fprintf(stderr, "npu_c930: the START was refused. PTA_IMPAIR is 0x%02x "
+                    "and this build implements 0x%02x; 0x%02x cannot be modelled "
+                    "here.%s\n",
+                    (unsigned)a.impairments_requested,
+                    (unsigned)a.impairments_implemented,
+                    (unsigned)(a.impairments_requested & ~a.impairments_implemented),
+                    a.tile_present ? "" : " This build has no PTA tile: clear "
+                                          "PTA_IMPAIR to run an exact GEMM.");
+        }
         return -1;
     }
 
@@ -329,6 +348,68 @@ int npu_c930_gemm(npu_c930_device_t* dev,
         return -1;
     }
 
+    return 0;
+}
+
+int npu_c930_read_analog(npu_c930_device_t* dev, npu_c930_analog_t* out) {
+    if (!out) return -1;
+
+    out->identified              = 0;
+    out->map_version             = -1;
+    out->analog                  = -1;
+    out->tile_present            = -1;
+    out->activation_bits         = -1;
+    out->weight_bits             = -1;
+    out->adc_bits                = -1;
+    out->adc_shift               = -1;
+    out->seed                    = -1;
+    out->impairments             = -1;
+    out->impairments_implemented = -1;
+    out->impairments_requested   = -1;
+
+    if (!reg_ready(dev)) return -1;
+
+    // The magic first, and nothing else until it has matched: on a register
+    // file with no block these addresses alias the NPU's own registers, and
+    // every read below would return somebody else's value.
+    const uint32_t id = reg_read(dev, NPU_C930_PTA_ID);
+    if ((id & 0xFFFFFF00u) != NPU_C930_PTA_MAGIC) return 0;
+
+    out->identified  = 1;
+    out->map_version = (int)(id & 0xFFu);
+
+    const uint32_t built  = reg_read(dev, NPU_C930_PTA_CAPS1) & NPU_C930_PTA_DEFINED;
+    const uint32_t impair = reg_read(dev, NPU_C930_PTA_IMPAIR) & NPU_C930_PTA_DEFINED;
+    out->impairments_implemented = (int64_t)built;
+    out->impairments_requested   = (int64_t)impair;
+
+    // No impairment implemented is what a build without a tile reports, and it
+    // is the same fact the core's refusal tests -- they are one localparam in
+    // the RTL, so this cannot say "tile" about a build that would refuse.
+    if (built == 0) {
+        out->tile_present = 0;
+        out->analog       = 0;
+        return 0;
+    }
+    out->tile_present = 1;
+
+    // A tile with nothing enabled computes the exact product (the plan's C0
+    // gate is that swap being bit-identical). Its configuration registers
+    // still hold whatever was last written, and those values describe a model
+    // that is not running, so they are not reported.
+    if (impair == 0) {
+        out->analog = 0;
+        return 0;
+    }
+
+    const uint32_t bits = reg_read(dev, NPU_C930_PTA_BITS);
+    out->analog          = 1;
+    out->activation_bits = (int)(bits & 0xFu);
+    out->weight_bits     = (int)((bits >> 4) & 0xFu);
+    out->adc_bits        = (int)((bits >> 8) & 0xFu);
+    out->adc_shift       = (int)((bits >> 12) & 0x3Fu);
+    out->seed            = (int64_t)reg_read(dev, NPU_C930_PTA_SEED);
+    out->impairments     = (int64_t)impair;
     return 0;
 }
 

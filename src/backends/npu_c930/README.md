@@ -18,7 +18,7 @@ on bare-metal, Linux, or simulation.
 | File | Purpose |
 |------|---------|
 | `npu_c930.h` | Public header: register map, capability flags, device handle |
-| `npu_c930.cpp` | Implementation: MMIO access, detect, GEMM dispatch, wait |
+| `npu_c930.cpp` | Implementation: MMIO access, detect, GEMM dispatch, wait, and whether a GEMM here is exact |
 | `test_npu_c930.cc` | Unit tests (register layout, validation, data format, numerics) |
 | `CMakeLists.txt` | Build integration |
 
@@ -57,6 +57,26 @@ grxblasGemmEx(handle, ..., Atype=GRX_R_8I, Btype=GRX_R_8I, Ctype=GRX_R_32I)
         ├── npu_c930_gemm(&npu_dev, M, N, K, a_phys, b_phys, c_phys)
         └── memcpy C from DDR buffer
 ```
+
+### Whether a GEMM is the GEMM that was asked for
+
+A c930 can be built with a photonic tensor tile in place of the systolic array.
+The tile is an error model: with any impairment enabled, a GEMM is a noisy
+approximation of the product. `npu_c930_read_analog()` reads the PTA register
+block and says which of four things is true, and the runtime carries the answer
+to `grxDeviceProp_t.analogGemm` on every `grxGetDeviceProperties` call.
+
+| What the registers say | `analog` | `tile_present` |
+|---|---|---|
+| No `PTA_ID` magic — an older register file | −1, unknown | −1 |
+| Identified, `PTA_CAPS1` reports nothing implemented | 0 | 0 |
+| A tile, `PTA_IMPAIR` clear | 0 | 1 |
+| A tile, `PTA_IMPAIR` set | 1 | 1 |
+
+`PTA_CTRL.EN` is not in that table. It enables the calibration engine; it does
+not decide whether a GEMM is analog. The header has the reasoning, and
+`test_npu_c930_model.cc` has a register file for each row and for the two ways
+of getting it wrong.
 
 ### Register map reference
 

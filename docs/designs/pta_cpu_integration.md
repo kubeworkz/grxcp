@@ -4,10 +4,11 @@
 [`pta_gpu_integration.md`](pta_gpu_integration.md).
 **Source analysis:** GRX_PTA_Integration.md in this repository's `docs/`.
 
-**Status: DESIGN, partly built.** The C2 loop interchange is in grx930 (§6), and
+**Status: DESIGN, mostly built.** The C2 loop interchange is in grx930 (§6), and
 so are the S_ACT activation stage, PTM-C, exact at C0, and all six of the
-error model's impairments, with C1 closed on its accuracy sweep (§6); PTM-B and
-the PTA CSRs are not.
+error model's impairments, with C1 closed on its accuracy sweep (§6). PTM-B, the
+PTA CSRs and the calibration engine followed, and grxcp reports an analog GEMM
+through a device property (§7.1).
 [`pta_program_plan.md`](pta_program_plan.md) orders what comes next. This
 document fixes what gets built, in what order, and — more importantly — what
 each stage is allowed to claim.
@@ -499,6 +500,17 @@ gate. A (bank, row, column, value) write needs a pair of registers that no map
 has, and C4(a) did not invent them — the port is tied off at the top, and a
 driver that wants to restore a saved calibration is what would settle the shape.
 
+*Added in S1, 2026-10-03: the block says what it is.* The register file carries
+this block in every build, tile or no tile, and its configuration registers write
+and read back the same either way — so nothing a driver could read told the two
+apart. Four read-only words now sit at the head of the block, where the chiplet's
+map has them ([`pta_chiplet_regmap.md`](pta_chiplet_regmap.md) §2): `PTA_ID` at
+`0x100`, a magic and the map's version, and `PTA_CAPS0`–`PTA_CAPS2` at
+`0x104`–`0x10C`, the tile's geometry and widths, the impairments the build
+implements, and what kind of tile it is. They are driven by the core, from the
+same constant its refusal tests, so the word a driver reads and the starts the
+core accepts cannot come apart; §7.1 is what reads them.
+
 On the development board this block is not a c930 CSR at all: it is MMIO in the
 GPU's BAR, reached over CXL.io
 ([`board_program_plan.md`](board_program_plan.md), B7). The block is the same;
@@ -627,6 +639,12 @@ reported, if you read the right bit. Firmware can search for a value the tile
 accepts, and `pta_test.c` does, because the refusal is observable and `MODEL_RST`
 clears it. It should not have to.
 [`pta_chiplet_regmap.md`](pta_chiplet_regmap.md) §4 records it against the map.
+
+*Closed in S1, 2026-10-03.* `PTA_CAPS0` reports `DIN_W`, so the bounds are
+`DIN_W - B_a` and `DIN_W - 2` by arithmetic. `pta_test.c` still searches, and its
+eighth check holds the answer to the register: the search runs from the top down
+and has to stop exactly at `DIN_W - 2`, which it does, at 14 on the SoC's
+sixteen-bit tile.
 
 ---
 
@@ -1626,6 +1644,96 @@ reported unknown, and `-1` is how this one reports unknown.
 and let the START be refused there. The second is what the hardware does today.
 The first is friendlier and duplicates a rule in two places, which is how the
 two drift apart. Left to S1, where there will be code to look at.
+
+*Built in S1, 2026-10-03, with four differences from the above.* The struct is in
+`include/grx/grx_types.h` as written, and `grxDeviceProp_t` carries it. What moved
+is what its fields are read from, and when.
+
+**`PTA_CTRL.EN` is not what makes a GEMM analog.** The table above keys its three
+cases on that bit, and in the RTL it goes to the calibration engine and nowhere
+else. A build with a tile runs every GEMM on the tile, and the result is inexact
+exactly when `PTA_IMPAIR` is non-zero — grx930's firmware gates run impaired GEMMs
+with `EN` clear as a matter of course. Built as specified, a tile with `EN` clear
+and its impairments on would have been reported native: a noisy GEMM under an
+exact label, which is the one direction this property must never be wrong in. The
+cases are keyed on `PTA_IMPAIR`.
+
+**Nothing a driver could read told a tile from an array.** "Derive
+`impairmentsImplemented` from the build" had nothing to derive it from: the core
+knew which impairments it would accept and published the fact nowhere, and
+grx930's own firmware found out what it was running on by asking for an
+impairment and seeing whether the START was refused. The block now has identity
+words (§3.1), and grx930's bench tries every impairment bit on its own and holds
+`PTA_CAPS1` to which of them ran.
+
+**There is a fourth case, and it is not "no tile".** A register file that predates
+the identity word gives this driver no way to know what is behind it. One that
+predates the block does worse: it decodes sixteen words and aliases everything
+above them, so `PTA_IMPAIR`'s address reads back `DIM_M`, and a GEMM with four
+output rows looks exactly like one with SHOT enabled. So the magic is checked
+before anything else is read, and without it both leading fields are `-1`. That
+is to be read as "may be analog", not as a zero nobody established.
+
+| | `gemmIsAnalogEmulated` | `tileIsPresent` | `impairmentsImplemented` | the rest |
+|---|---|---|---|---|
+| No identity word | −1 | −1 | −1 | −1 |
+| Identified, nothing built | 0 | 0 | 0 | −1 |
+| A tile, `PTA_IMPAIR` clear | 0 | 1 | the mask | −1 |
+| A tile, `PTA_IMPAIR` set | 1 | 1 | the mask | populated |
+
+`impairmentsImplemented` is reported wherever the build is known, zero included.
+It is a fact about the build, not about a model that may not be running, and the
+table above had it at `-1` in both inactive cases. A GPU reports the second row.
+
+**The property has to be read when it is asked for.** Every other field of
+`grxDeviceProp_t` is established once, at the first acquire, and this one was
+about to be populated the same way. But it describes ordinary read-write
+registers, so a tile impaired after the first `grxGetDeviceProperties` would have
+gone on being reported native for the life of the process. It is read from the
+device on every call. `tests/unit/test_npu_analog_property.cpp` walks one register
+model through all four rows in one process, which only works if that is so: with
+the read served from the copy made at probe, every section after the first fails.
+
+**The question S0 left: pass it down, and explain it.** `npu_c930_gemm` already
+fails on `STATUS.ERROR`, so a START the core refuses reaches the caller as a failed
+GEMM with C untouched, and the rule stays in the one place it was. What the driver
+adds is the reason. After an error it reads `PTA_IMPAIR` against `PTA_CAPS1` and
+says which bits this build cannot model, because "error" alone reads as a driver
+fault and the cause is a register somebody else may have written.
+
+The `grx-smi` lines, as built. The two inactive forms name the register that
+decides, the unknown form is as loud as the emulated one, and the
+not-implemented line is derived from `PTA_CAPS1` rather than written for MZM_NL:
+
+```
+    analog GEMM            EMULATED on the PTA tile: a8/w8, ADC 6 bits << 3, seed 0x0000002a
+                           impairments QUANT|THERMAL|SHOT|DRIFT|XTALK|PROG_ERR
+                           MZM_NL is defined but not implemented; a START with it is refused
+                           this device does NOT compute the same function as a digital c930
+
+    analog GEMM            native (no PTA tile in this build)
+    analog GEMM            native (PTA tile present, PTA_IMPAIR clear)
+    analog GEMM            UNKNOWN: this device's register file has no PTA identity word
+                           so whether a GEMM here is exact cannot be read from it
+```
+
+**The shim answers as what it is.** grx930's register model computes an exact
+product in a C loop, so on this block it reports a build with no tile and refuses
+a START with `PTA_IMPAIR` set, as the RTL's digital array does. It does not model
+the tile. A shim that took impairments and returned exact results would be the
+same fabrication the other way round, and one that returns impaired results needs
+the tile model behind it and G0's vector check in this repository's CI. That is
+S2's bitwise gate, and it is the first thing S2 has to build.
+
+**What S1 does not settle.** Three things. *The activation stage is not reported.*
+S_ACT, with `ACT_CTRL.EN` set, puts every output through a table and optionally
+requantises it, so a result returned through `grxblasGemmEx` would not be the
+product then either, and nothing here reads that register (`cuda_mapping.md`
+7.39). *The snapshot is not atomic*: each field is its own register read, so a
+writer racing the reader can produce a mixture. *And the chiplet is a different
+reader*: its per-GEMM seed is a function of `PTA_SEED` and a counter
+([`pta_chiplet_regmap.md`](pta_chiplet_regmap.md) §4), so the board plan's S4
+needs the counter beside the seed.
 
 ---
 

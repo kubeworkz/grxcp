@@ -40,10 +40,10 @@ the device cannot honour.
 
 | Offset | Name | Access | Description |
 |---|---|---|---|
-| 0x000 | `PTA_ID` | R | Magic, then the version of this map |
-| 0x004 | `PTA_CAPS0` | R | The tile: rows `k`, columns `n`, `DIN_W`, `ACC_W` |
-| 0x008 | `PTA_CAPS1` | R | Weight banks; impairments built, in `PTA_IMPAIR`'s bit order; the widest activation, weight and ADC settings the hardware accepts |
-| 0x00C | `PTA_CAPS2` | R | Shot rate as built, in MHz; whether the calibration engine and the activation stage are present; whether this is silicon or the twin |
+| 0x000 | `PTA_ID` | R | [31:8] the magic `0x505441`, "PTA"; [7:0] the version of this map, 1 |
+| 0x004 | `PTA_CAPS0` | R | The tile: [9:0] rows `k`, [19:10] columns `n`, [25:20] `DIN_W`, [31:26] `ACC_W` |
+| 0x008 | `PTA_CAPS1` | R | [6:0] impairments built, in `PTA_IMPAIR`'s bit order; [15:8] weight banks; [19:16], [23:20], [27:24] the widest activation, weight and ADC settings the hardware accepts |
+| 0x00C | `PTA_CAPS2` | R | [15:0] shot rate as built, in MHz; [16] the calibration engine and [17] the activation stage are present; [19:18] the tile, 0 none, 1 word-serial, 2 broadside; [31] this is the twin and not silicon |
 
 A driver reads the geometry rather than assuming it. X2 sized the link against
 candidate geometries precisely because the real one is not settled (the board
@@ -52,6 +52,32 @@ no invented device numbers — applies to a chiplet as much as to a GPU. grxcp's
 device property (the PTA plan's D2, step S4) is filled from these four
 registers, and `PTA_CAPS2`'s emulation bit is what makes the twin honest under
 `AGENTS.md` §3.
+
+*The fields above were given their bits on 2026-10-03, when the c930 built them*
+(the PTA plan's S1). They are at the head of its block, `0x4000_0100`, laid out
+as here, and three things came out of building them that this section did not
+say.
+
+**The magic is what a driver reads first, and it is not decoration.** A register
+file older than the block decodes fewer address bits and aliases the block's
+addresses onto its own registers, so `PTA_IMPAIR` reads back a matrix dimension.
+A driver that finds no magic knows nothing, and has to say so rather than report
+"no tile".
+
+**`PTA_CAPS1`'s mask has to be the refusal's own constant.** On the c930 the core
+drives the word from the same parameter its START refusal tests, and a bench
+tries each of the seven bits alone and holds the word to which of them ran — all
+seven refused on the digital array, MZM_NL alone on a tile. A capability word
+kept in step with the hardware by hand is a second rule, and second rules drift.
+
+**Three fields mean something narrower on an emulated tile than they will on
+silicon.** The widest settings are the widest that *quantise*: the c930's
+quantiser takes a setting at or above `DIN_W` as unquantised rather than refusing
+it, so the field reports `DIN_W - 1`, capped by the four bits `PTA_BITS` has. The
+shot rate reads zero, because an emulated shot is `PTA_TS` core cycles and has no
+rate of its own. And `PTA_CAPS0` reports the systolic array's geometry on a build
+with no tile, where `PTA_CAPS1` says nothing is built; a driver reads `PTA_CAPS1`
+before it believes there is a tile to have a geometry.
 
 ---
 
@@ -148,6 +174,11 @@ capability word should carry, or specify the amplitude *relative* to the width
 (`DIN_W - 2 - n`) and let the tile do the arithmetic. The second costs no
 register and cannot be read wrong; the first is more use to a driver that wants
 to size anything else. Either is better than the search.
+
+*Closed 2026-10-03, by the first.* `PTA_CAPS0` carries `DIN_W` (§2), which is also
+what a driver needs to read the quantiser's limits. grx930's firmware still
+searches, as a check on the register rather than in place of one: the search has
+to stop at `DIN_W - 2`, and does.
 
 ---
 

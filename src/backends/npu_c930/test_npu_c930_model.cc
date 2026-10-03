@@ -34,6 +34,22 @@
 // A MODEL IS NOT HARDWARE. Nothing here says the c930 works, and a green run
 // must never be reported as the NPU working. It says this file's logic is
 // right, which is the half that was not.
+//
+// THE SECOND HALF OF THIS FILE is one more decision: whether a GEMM on the
+// device is the GEMM that was asked for. A c930 can be built with a photonic
+// tile, which is an error model, and npu_c930_read_analog is what says so. Six
+// more register files, each a state the RTL can be in:
+//
+//   ALIASING  sixteen words, no PTA block  -- UNKNOWN, and not "impaired by
+//                                             whatever DIM_M happens to hold"
+//   NO-ID     the block, without its magic -- UNKNOWN, not "no tile"
+//   ARRAY     the block, nothing built     -- exact, whatever PTA_IMPAIR says
+//   TILE/OFF  a tile, PTA_IMPAIR clear     -- exact, and stale config unreported
+//   TILE/ON   a tile, PTA_IMPAIR set       -- ANALOG, with PTA_CTRL.EN CLEAR
+//   REFUSING  PTA_IMPAIR asks for a bit the build lacks -- the GEMM fails
+//
+// TILE/ON with EN clear is the case the specification had wrong. EN is the
+// calibration engine's enable; a report keyed on it calls that GEMM native.
 
 #include "npu_c930.h"
 
@@ -88,6 +104,61 @@ void regs_write(void* ctx, uint32_t off, uint32_t v) {
     return;
   }
   g->r[idx] = v;
+}
+
+// A register file with the PTA block: 256 words, as c930_npu_csr.sv decodes
+// since the block was added. `id` and `built` are what PTA_ID and PTA_CAPS1
+// read -- the two things that differ between builds. The core's refusal is
+// modelled because the backend's handling of it is one of the decisions: a
+// START whose PTA_IMPAIR asks for a bit outside `built` sets ERROR and runs
+// nothing.
+struct PtaRegs {
+  uint32_t r[256] = {0};
+  uint32_t id     = 0x50544101u;
+  uint32_t built  = 0;
+  int      starts = 0;
+  int      refusals = 0;
+};
+
+uint32_t pta_read(void* ctx, uint32_t off) {
+  PtaRegs* g = static_cast<PtaRegs*>(ctx);
+  switch (off) {
+    case NPU_C930_PTA_ID:    return g->id;
+    case NPU_C930_PTA_CAPS1: return g->built;
+    default:                 return g->r[(off >> 2) & 0xFF];
+  }
+}
+
+void pta_write(void* ctx, uint32_t off, uint32_t v) {
+  PtaRegs* g = static_cast<PtaRegs*>(ctx);
+  if (off == NPU_C930_PTA_ID || off == NPU_C930_PTA_CAPS1) return;  // read-only
+  if (off == 0x00 && (v & NPU_C930_CTRL_START)) {
+    ++g->starts;
+    const uint32_t impair = g->r[NPU_C930_PTA_IMPAIR >> 2] & NPU_C930_PTA_DEFINED;
+    if (impair & ~g->built) {
+      ++g->refusals;
+      g->r[1] = NPU_C930_STATUS_ERROR;
+    } else {
+      g->r[1] = NPU_C930_STATUS_DONE;
+    }
+    return;
+  }
+  g->r[(off >> 2) & 0xFF] = v;
+}
+
+const uint32_t kTileBuilt = NPU_C930_PTA_DEFINED & ~NPU_C930_PTA_MZM_NL;  // 0x5F
+
+bool all_unknown(const npu_c930_analog_t& a) {
+  return a.identified == 0 && a.map_version == -1 && a.analog == -1 &&
+         a.tile_present == -1 && a.activation_bits == -1 &&
+         a.weight_bits == -1 && a.adc_bits == -1 && a.adc_shift == -1 &&
+         a.seed == -1 && a.impairments == -1 &&
+         a.impairments_implemented == -1 && a.impairments_requested == -1;
+}
+
+bool config_unreported(const npu_c930_analog_t& a) {
+  return a.activation_bits == -1 && a.weight_bits == -1 && a.adc_bits == -1 &&
+         a.adc_shift == -1 && a.seed == -1 && a.impairments == -1;
 }
 
 // ---------------------------------------------------------------------------
@@ -166,6 +237,187 @@ void case_discrimination() {
         "the same predicate says yes to hardware and no to nothing");
 }
 
+// ---------------------------------------------------------------------------
+// Whether a GEMM here is the GEMM that was asked for
+// ---------------------------------------------------------------------------
+
+void case_analog_aliasing() {
+  std::printf("a register file with no PTA block, which aliases above 0x3C:\n");
+  Regs regs;
+  npu_c930_device_t dev;
+  npu_c930_attach_model(&dev, regs_read, regs_write, &regs);
+  npu_c930_detect(&dev);
+  // The trap, set deliberately: PTA_IMPAIR is 0x148 and this file decodes
+  // four address bits, so that address IS DIM_M. Program M = 4 and a driver
+  // that read the block without checking the magic sees SHOT enabled.
+  npu_c930_gemm(&dev, 4, 4, 4, 0x1000, 0x2000, 0x3000);
+  check(regs_read(&regs, NPU_C930_PTA_IMPAIR) == 4u,
+        "PTA_IMPAIR's address really does read back DIM_M here (4)");
+  npu_c930_analog_t a;
+  check(npu_c930_read_analog(&dev, &a) == 0, "a determination is made");
+  check(all_unknown(a), "and it is UNKNOWN in every field");
+  check(a.analog != 1 && a.impairments != 4,
+        "in particular not 'analog, impairments 0x04', which is what M = 4 looks like");
+}
+
+void case_analog_no_id() {
+  std::printf("a register file with the block but no identity word:\n");
+  PtaRegs regs;
+  regs.id = 0;                     // what main reads today, before PTA_ID
+  regs.built = kTileBuilt;         // even with a tile behind it
+  npu_c930_device_t dev;
+  npu_c930_attach_model(&dev, pta_read, pta_write, &regs);
+  npu_c930_detect(&dev);
+  pta_write(&regs, NPU_C930_PTA_IMPAIR, NPU_C930_PTA_SHOT);
+  npu_c930_analog_t a;
+  npu_c930_read_analog(&dev, &a);
+  check(all_unknown(a),
+        "UNKNOWN -- not 'no tile', which nothing here could have established");
+  regs.id = 0x50544200u;           // a near miss: "PTB"
+  npu_c930_read_analog(&dev, &a);
+  check(all_unknown(a), "and a magic that is one letter off is not the magic");
+}
+
+void case_analog_array() {
+  std::printf("the block, on a build with no tile:\n");
+  PtaRegs regs;
+  regs.built = 0;
+  npu_c930_device_t dev;
+  npu_c930_attach_model(&dev, pta_read, pta_write, &regs);
+  npu_c930_detect(&dev);
+  npu_c930_analog_t a;
+  npu_c930_read_analog(&dev, &a);
+  check(a.identified == 1 && a.map_version == 1, "identified, map version 1");
+  check(a.tile_present == 0 && a.analog == 0, "no tile, and GEMMs are exact");
+  check(a.impairments_implemented == 0,
+        "nothing implemented is reported as 0 -- it is known, so not -1");
+  check(config_unreported(a), "and no model configuration is reported");
+
+  // The registers still take writes on this build. That changes nothing about
+  // what a GEMM is, because there is nothing here to impair it.
+  pta_write(&regs, NPU_C930_PTA_IMPAIR, NPU_C930_PTA_THERMAL);
+  pta_write(&regs, NPU_C930_PTA_BITS, 0x00003688u);
+  npu_c930_read_analog(&dev, &a);
+  check(a.tile_present == 0 && a.analog == 0 && config_unreported(a),
+        "PTA_IMPAIR set on an array is still not an analog GEMM");
+  check(a.impairments_requested == NPU_C930_PTA_THERMAL,
+        "though what was asked for is kept, to explain the refusal");
+}
+
+void case_analog_tile_off() {
+  std::printf("a tile, with PTA_IMPAIR clear:\n");
+  PtaRegs regs;
+  regs.built = kTileBuilt;
+  npu_c930_device_t dev;
+  npu_c930_attach_model(&dev, pta_read, pta_write, &regs);
+  npu_c930_detect(&dev);
+  // Stale configuration, as a previous user would leave it -- and EN set,
+  // which is the calibration engine's and makes nothing analog.
+  pta_write(&regs, NPU_C930_PTA_BITS, 0x00003688u);
+  pta_write(&regs, NPU_C930_PTA_SEED, 0x2au);
+  pta_write(&regs, NPU_C930_PTA_CTRL, 0x1u);
+  npu_c930_analog_t a;
+  npu_c930_read_analog(&dev, &a);
+  check(a.tile_present == 1, "the tile is reported present");
+  check(a.analog == 0, "GEMMs are exact -- EN set does not make them analog");
+  check(a.impairments_implemented == (int64_t)kTileBuilt,
+        "what the tile could model is reported (0x5f)");
+  check(config_unreported(a),
+        "the stale BITS and SEED are NOT reported: they describe a model that "
+        "is not running");
+}
+
+void case_analog_tile_on() {
+  std::printf("a tile, with PTA_IMPAIR set and PTA_CTRL.EN CLEAR:\n");
+  PtaRegs regs;
+  regs.built = kTileBuilt;
+  npu_c930_device_t dev;
+  npu_c930_attach_model(&dev, pta_read, pta_write, &regs);
+  npu_c930_detect(&dev);
+  pta_write(&regs, NPU_C930_PTA_CTRL, 0x0u);                     // EN clear
+  pta_write(&regs, NPU_C930_PTA_IMPAIR, kTileBuilt);
+  pta_write(&regs, NPU_C930_PTA_BITS, 8u | (8u << 4) | (6u << 8) | (3u << 12));
+  pta_write(&regs, NPU_C930_PTA_SEED, 0x2au);
+  npu_c930_analog_t a;
+  npu_c930_read_analog(&dev, &a);
+  check(a.analog == 1,
+        "ANALOG -- with EN clear, which is the case a report keyed on EN gets wrong");
+  if (a.analog != 1) {
+    std::printf("        This GEMM is noisy and was reported as native. That is\n"
+                "        the one direction this report must never be wrong in.\n");
+  }
+  check(a.tile_present == 1, "tile present");
+  check(a.activation_bits == 8 && a.weight_bits == 8 && a.adc_bits == 6 &&
+        a.adc_shift == 3, "PTA_BITS decodes to a8, w8, ADC 6 bits << 3");
+  check(a.seed == 0x2a, "the seed is PTA_SEED");
+  check(a.impairments == (int64_t)kTileBuilt &&
+        a.impairments_implemented == (int64_t)kTileBuilt,
+        "the enables in force, and the mask of what is implemented");
+
+  // The reasons the fields are -1-or-value and 64-bit, each exercised.
+  pta_write(&regs, NPU_C930_PTA_BITS, 0u);
+  pta_write(&regs, NPU_C930_PTA_SEED, 0xFFFFFFFFu);
+  npu_c930_read_analog(&dev, &a);
+  check(a.activation_bits == 0 && a.weight_bits == 0 && a.adc_bits == 0,
+        "unquantised is reported as 0, which is why 'not applicable' is -1");
+  check(a.seed == 4294967295LL && a.seed != -1,
+        "a seed of 0xffffffff is 4294967295, not the unknown sentinel");
+
+  // One bit is enough.
+  pta_write(&regs, NPU_C930_PTA_IMPAIR, NPU_C930_PTA_QUANT);
+  npu_c930_read_analog(&dev, &a);
+  check(a.analog == 1 && a.impairments == NPU_C930_PTA_QUANT,
+        "a single impairment is an analog GEMM");
+
+  // And it is a live read, not a latched one.
+  pta_write(&regs, NPU_C930_PTA_IMPAIR, 0u);
+  npu_c930_read_analog(&dev, &a);
+  check(a.analog == 0 && config_unreported(a),
+        "clearing PTA_IMPAIR is seen by the next read");
+}
+
+void case_analog_refusing() {
+  std::printf("PTA_IMPAIR asks for an impairment the build does not have:\n");
+  PtaRegs regs;
+  regs.built = kTileBuilt;
+  npu_c930_device_t dev;
+  npu_c930_attach_model(&dev, pta_read, pta_write, &regs);
+  npu_c930_detect(&dev);
+  pta_write(&regs, NPU_C930_PTA_IMPAIR, NPU_C930_PTA_QUANT | NPU_C930_PTA_MZM_NL);
+  npu_c930_analog_t a;
+  npu_c930_read_analog(&dev, &a);
+  check((a.impairments & ~a.impairments_implemented) == NPU_C930_PTA_MZM_NL,
+        "impairments & ~implemented is exactly the bit that will refuse");
+  std::printf("  note  the driver explains each refusal on stderr:\n");
+  const int rc = npu_c930_gemm(&dev, 4, 4, 4, 0x1000, 0x2000, 0x3000);
+  check(rc != 0, "the GEMM is reported as FAILED");
+  check(regs.refusals == 1 && regs.starts == 1,
+        "by the device's refusal, once -- the driver did not pre-empt the START");
+
+  // The same on an array, where every bit refuses.
+  PtaRegs arr;
+  arr.built = 0;
+  npu_c930_device_t adev;
+  npu_c930_attach_model(&adev, pta_read, pta_write, &arr);
+  npu_c930_detect(&adev);
+  pta_write(&arr, NPU_C930_PTA_IMPAIR, NPU_C930_PTA_QUANT);
+  check(npu_c930_gemm(&adev, 4, 4, 4, 0x1000, 0x2000, 0x3000) != 0,
+        "an array asked for QUANT fails too -- no exact result under an analog label");
+  pta_write(&arr, NPU_C930_PTA_IMPAIR, 0u);
+  check(npu_c930_gemm(&adev, 4, 4, 4, 0x1000, 0x2000, 0x3000) == 0,
+        "and runs again once PTA_IMPAIR is cleared");
+}
+
+void case_analog_no_path() {
+  std::printf("a device with no register path at all:\n");
+  npu_c930_device_t dev;
+  std::memset(&dev, 0, sizeof(dev));
+  npu_c930_analog_t a;
+  check(npu_c930_read_analog(&dev, &a) != 0, "the read reports that it could not");
+  check(all_unknown(a), "and leaves every field unknown rather than zero");
+  check(npu_c930_read_analog(&dev, nullptr) != 0, "a null result pointer is refused");
+}
+
 }  // namespace
 
 int main() {
@@ -177,6 +429,14 @@ int main() {
   case_live();
   case_wedged();
   case_discrimination();
+  std::printf("\n--- whether a GEMM here is the GEMM that was asked for ---\n");
+  case_analog_aliasing();
+  case_analog_no_id();
+  case_analog_array();
+  case_analog_tile_off();
+  case_analog_tile_on();
+  case_analog_refusing();
+  case_analog_no_path();
   std::printf("\n%s (%d failure%s)\n", g_failures ? "FAILED" : "PASSED",
               g_failures, g_failures == 1 ? "" : "s");
   return g_failures ? 1 : 0;

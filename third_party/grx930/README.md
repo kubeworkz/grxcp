@@ -10,8 +10,8 @@ that a re-import cannot silently drop a fix.
 |---|---|
 | Source | GRX930 tree, `sim/npu_dpi_shim.{c,h}` |
 | First imported at | `817eb33` — "Address grxcp team feedback: context pointers, shim, doc fixes" |
-| Current import | `e02f460` — "Fix STATUS.DONE latch, wrap-safe bounds checks, allocator bugs (grxcp round 2)" |
-| Sizes | `.c` 11518 B, `.h` 5943 B |
+| Current import | `431cca2` — "npu_dpi_shim: answer on the PTA block, as a build with no tile" |
+| Sizes | `.c` 15264 B, `.h` 8881 B |
 | Builds | clean under `gcc -O1 -Wall -Wextra -Wpedantic` |
 
 ## What it is, and what it is not
@@ -96,7 +96,8 @@ Fixed to `base >= SIZE || size > SIZE - base`, which cannot wrap, plus an
 `addr >= NPU_DDR_SIZE` guard in front of the byte path. Re-measured: the
 `0xFFFFFFFF` write is refused with ERROR and DDR is untouched; the ASAN case
 survives with `STATUS = 0x04`. (The inner `addr + highest` comparison still
-wraps in principle, but the guard in front of it makes that unreachable.)
+wrapped in principle, behind a guard that made it unreachable; upstream replaced
+it with a subtraction at `dd54324`, which this import carries.)
 
 This is `cuda_mapping.md` 7.29 seen from the other side: a truncated 64-bit
 pointer is not an out-of-range address, it is an **arbitrary** one, and a check
@@ -166,3 +167,45 @@ silicon — while the mapping into `grxBackend_t` belongs in our code, next to t
 seam that attaches the model (`cuda_mapping.md` 7.28). Their `SIMULATION` lands
 on the existing `GRX_BACKEND_RTLSIM`; a software register model needs one new
 value, appended.
+
+## Round three: the PTA register block
+
+The c930's register file carries a block for its photonic tile in every build,
+and `grxDeviceProp_t.analogGemm` is read from it
+(`docs/designs/pta_cpu_integration.md` 7.1). The shim did not decode it: every
+address above `0x34` read zero, so the device reached through this model
+reported *unknown* — correctly, and uselessly. At this import it answers.
+
+**It answers as what it is, which is a build with no tile.** The shim computes
+an exact product in a C loop. So `PTA_ID` carries the magic, `PTA_CAPS1` says no
+impairment is implemented, and `PTA_IMPAIR`, `PTA_BITS` and `PTA_SEED` store and
+read back as they do on the RTL's digital array. Measured here, through our
+driver:
+
+| | |
+|---|---|
+| `npu_c930_read_analog` | identified, map version 1, no tile, exact GEMMs, nothing implemented |
+| A GEMM with `PTA_IMPAIR` clear | runs; C is the host's product |
+| A GEMM with `PTA_IMPAIR` = THERMAL | **refused**: `STATUS.ERROR`, no DONE, C left holding the `0x5A` it was poisoned with |
+| The report afterwards | still "no tile" — writing the register did not grow one |
+| `grxblasGemmEx` over the same refusal | not `GRXBLAS_STATUS_SUCCESS`, and C exactly as the caller left it |
+
+The third row is the one that matters. A model that took that START and returned
+its exact answer would give the caller a digital result under an analog
+configuration, and nothing downstream could tell the difference. The RTL's
+digital array refuses for the same reason, and the shim's own test checks all
+seven bits.
+
+**What it does not do is model the tile**, and its header says so. There is no
+error model behind it, no calibration engine, no shot counter. `PTA_CAPS0`
+reports the shim's own 4 × 4 array, which is not the SoC's 8 × 8 — a divergence
+that predates this block and is the reason the word exists: a driver reads the
+geometry rather than assuming one. So through this model a device can be seen
+reporting *no tile*, and never *emulated*. The emulated case is covered by our
+own register files in `test_npu_c930_model.cc` and
+`tests/unit/test_npu_analog_property.cpp`, which were written to produce the
+decision and are evidence about the decision only.
+
+A shim that reports an emulated GEMM honestly needs grx930's tile model linked
+behind it, and that model vendored here with its vector check. That is the PTA
+plan's S2, not a missing feature of this import.

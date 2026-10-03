@@ -319,6 +319,76 @@ static bool run_refusal_tests(grxblasHandle_t h) {
 }
 
 // ---- Main ----
+// ---- What a GEMM on this device is, and what happens when it cannot be ----
+//
+// The device property says whether a GEMM here is the product that was asked
+// for. On this model it is: the model computes exactly and identifies itself
+// as a build with no photonic tile. The check that matters is the other half.
+// PTA_IMPAIR is a register anybody with the device can write, and a build with
+// no tile cannot honour it -- so a GEMM launched with it set has to FAIL all
+// the way up through grxblasGemmEx, with C left alone. Returning the exact
+// product would be a digital answer under an analog configuration.
+#ifdef GRXCP_ENABLE_NPU
+static bool run_analog_tests(grxblasHandle_t h, int npu_device) {
+  bool ok = true;
+  auto expect = [&ok](bool cond, const char* what) {
+    std::printf("  %s  %s\n", cond ? "ok  " : "FAIL", what);
+    if (!cond) ok = false;
+  };
+
+  grxDeviceProp_t prop{};
+  grxGetDeviceProperties(&prop, npu_device);
+  expect(prop.analogGemm.tileIsPresent == 0 &&
+         prop.analogGemm.gemmIsAnalogEmulated == 0,
+         "the device reports no PTA tile and exact GEMMs");
+  expect(prop.analogGemm.impairmentsImplemented == 0,
+         "and no impairment implemented");
+
+  const int m = 4, n = 4, k = 4;
+  std::vector<int8_t> A((size_t)m * k), B((size_t)k * n);
+  for (size_t i = 0; i < A.size(); ++i) A[i] = fill_a(m, k, (int)i);
+  for (size_t i = 0; i < B.size(); ++i) B[i] = fill_b(k, n, (int)i);
+  std::vector<int32_t> sentinel((size_t)m * n, 0x5A5A5A5A);
+
+  void *dA = nullptr, *dB = nullptr, *dC = nullptr;
+  if (grxMalloc(&dA, A.size()) != grxSuccess ||
+      grxMalloc(&dB, B.size()) != grxSuccess ||
+      grxMalloc(&dC, sentinel.size() * sizeof(int32_t)) != grxSuccess) {
+    expect(false, "allocation");
+    return false;
+  }
+  grxMemcpy(dA, A.data(), A.size(), grxMemcpyDefault);
+  grxMemcpy(dB, B.data(), B.size(), grxMemcpyDefault);
+  grxMemcpy(dC, sentinel.data(), sentinel.size() * sizeof(int32_t),
+            grxMemcpyDefault);
+
+  // Written behind the runtime's back, as another user of the device would.
+  npu_dpi_csr_write(NPU_CSR_PTA_IMPAIR, GRX_ANALOG_QUANT);
+
+  const float one = 1.0f, zero = 0.0f;
+  std::printf("  note  the driver explains the refusal on stderr\n");
+  const grxblasStatus_t s = grxblasGemmEx(
+      h, GRXBLAS_OP_N, GRXBLAS_OP_N, m, n, k, &one,
+      dA, GRX_R_8I, m, dB, GRX_R_8I, k, &zero, dC, GRX_R_32I, m);
+  expect(s != GRXBLAS_STATUS_SUCCESS,
+         "with PTA_IMPAIR set, grxblasGemmEx does NOT report success");
+
+  std::vector<int32_t> got(sentinel.size(), 0);
+  grxMemcpy(got.data(), dC, got.size() * sizeof(int32_t), grxMemcpyDefault);
+  expect(got == sentinel, "and C is exactly as the caller left it");
+
+  grxGetDeviceProperties(&prop, npu_device);
+  expect(prop.analogGemm.tileIsPresent == 0 &&
+         prop.analogGemm.gemmIsAnalogEmulated == 0,
+         "the property still says no tile: writing the register grew none");
+
+  npu_dpi_csr_write(NPU_CSR_PTA_IMPAIR, 0);
+  grxFree(dA); grxFree(dB); grxFree(dC);
+  ok = run_int8_case(h, m, n, k, 1, 0, "the exact GEMM is back once it is cleared") && ok;
+  return ok;
+}
+#endif
+
 int main() {
 #ifndef GRXCP_ENABLE_NPU
   // Not a failure and not a pass: this binary contains no NPU backend, so the
@@ -446,6 +516,11 @@ int main() {
   section("refusal tests");
   {
     failures += !run_refusal_tests(h);
+  }
+
+  section("what a GEMM here is, and a GEMM the device cannot do");
+  {
+    failures += !run_analog_tests(h, npu_device);
   }
 
   check(grxblasDestroy(h) == GRXBLAS_STATUS_SUCCESS, "grxblasDestroy");

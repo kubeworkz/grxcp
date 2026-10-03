@@ -506,6 +506,72 @@ void case_counters() {
         "STALL_COUNT is 0 (this model does not stall)");
 }
 
+// The PTA register block, as their model answers on it.
+//
+// The four register files in test_npu_c930_model.cc are ours: written to
+// produce a decision, which makes them evidence about the decision and none
+// about the register map. This is the map as the team that owns the RTL wrote
+// it down. Their model computes an exact product, so it identifies itself as a
+// build with no photonic tile -- and the part that matters is what it does when
+// asked for an impairment anyway. A model that took the START and returned its
+// exact answer would hand the caller a digital result under an analog
+// configuration, and nothing downstream could tell.
+void case_pta_block() {
+  std::printf("the PTA block, on a model that computes exactly:\n");
+  const int M = 4, N = 4, K = 8;
+  const uint32_t A_ADDR = 0x0100, B_ADDR = 0x0200, C_ADDR = 0x0400;
+
+  npu_dpi_init();
+  int8_t A[4 * 8], B[8 * 4];
+  load_operands(A, B, M, N, K, A_ADDR, B_ADDR);
+
+  Shim s;
+  npu_c930_device_t dev;
+  npu_c930_attach_model(&dev, shim_read, shim_write, &s);
+  if (npu_c930_detect(&dev) != 1) { check(false, "detected"); return; }
+
+  npu_c930_analog_t a;
+  check(npu_c930_read_analog(&dev, &a) == 0 && a.identified == 1,
+        "it carries the PTA identity word");
+  check(a.map_version == 1, "map version 1");
+  check(a.tile_present == 0 && a.analog == 0,
+        "and says what it is: no tile, exact GEMMs");
+  check(a.impairments_implemented == 0, "no impairment implemented");
+
+  // A clean GEMM first, so C holds a real answer the refusal must not disturb.
+  check(npu_c930_gemm(&dev, M, N, K, A_ADDR, B_ADDR, C_ADDR) == 0,
+        "with PTA_IMPAIR clear a GEMM runs");
+  const int32_t c00 = ddr_get32(C_ADDR);
+  check(c00 == reference(A, B, N, K, 0, 0), "and C[0][0] is the exact product");
+
+  // Poison C, ask for an impairment, and launch.
+  for (int i = 0; i < 4; ++i) ddr_put8(C_ADDR + i, (int8_t)0x5A);
+  shim_write(&s, NPU_C930_PTA_IMPAIR, NPU_C930_PTA_THERMAL);
+  const int starts_before = s.starts;
+  const int rc = npu_c930_gemm(&dev, M, N, K, A_ADDR, B_ADDR, C_ADDR);
+  check(rc != 0, "with PTA_IMPAIR set the GEMM is reported as FAILED");
+  check(s.starts == starts_before + 1,
+        "the START reached the device, which is what refused it");
+  check(ddr_get32(C_ADDR) == 0x5A5A5A5A,
+        "and C is untouched -- no exact answer under an analog label");
+  if (rc == 0) {
+    std::printf("        The model ran a GEMM it cannot impair and reported\n"
+                "        success. The caller has an exact product and a\n"
+                "        configuration that says it is noisy.\n");
+  }
+
+  npu_c930_read_analog(&dev, &a);
+  check(a.tile_present == 0 && a.analog == 0,
+        "the report is still 'no tile': a register write does not grow one");
+  check(a.impairments_requested == NPU_C930_PTA_THERMAL,
+        "and what was asked for is on record, to explain the failure");
+
+  shim_write(&s, NPU_C930_PTA_IMPAIR, 0);
+  check(npu_c930_gemm(&dev, M, N, K, A_ADDR, B_ADDR, C_ADDR) == 0 &&
+        ddr_get32(C_ADDR) == c00,
+        "clearing PTA_IMPAIR brings the exact GEMM back");
+}
+
 }  // namespace
 
 int main() {
@@ -521,6 +587,7 @@ int main() {
   case_done_is_latched();
   case_out_of_window();
   case_counters();
+  case_pta_block();
   std::printf("\n%s (%d failure%s)\n", g_failures ? "FAILED" : "PASSED",
               g_failures, g_failures == 1 ? "" : "s");
   return g_failures ? 1 : 0;

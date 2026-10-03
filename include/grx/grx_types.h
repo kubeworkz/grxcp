@@ -181,6 +181,57 @@ typedef enum {
 // first (cuda_mapping.md section 7.16).
 #define GRX_CAP_GLOBAL_ATOMICS      (1u << 10)
 
+// What a GEMM on this device is, when the device may be an analog one.
+//
+// A GRX930 can be built with a photonic tensor tile in place of its systolic
+// array, and the tile is an error model: with any impairment enabled a GEMM is
+// not the product the caller asked for, it is a noisy approximation of it.
+// That is the class of thing an honesty flag exists for, and a flag is not
+// enough -- it would say the device is analog and not HOW analog, so this
+// carries enough of the model to reproduce the answer rather than merely be
+// warned about it (docs/designs/pta_cpu_integration.md section 7.1).
+//
+// THE TWO LEADING FIELDS ARE THREE-VALUED: 1, 0, or -1 for "this device cannot
+// say". A register file that predates the tile's identity word gives a driver
+// no way to tell a tile from an array, and reporting 0 there would be a claim
+// of exactness nobody checked. Treat -1 as "may be analog".
+//
+// Every other field is -1 when it does not apply, never zero -- zero
+// activation bits is a real setting (unquantised) and a plausible wrong one.
+// The 64-bit fields are signed so that a full 32-bit register value and -1 can
+// both be told apart.
+//
+// THIS IS READ FROM THE DEVICE ON EVERY grxGetDeviceProperties CALL, unlike the
+// rest of grxDeviceProp_t, which is established once. The registers it comes
+// from are ordinary read-write state that anything with access to the device
+// can change between two GEMMs, so a cached copy would go on describing a
+// model that had since been switched on -- or off.
+typedef struct {
+  int     gemmIsAnalogEmulated;   // 1: GEMMs here are impaired. 0: exact. -1: unknown
+  int     tileIsPresent;          // 1: this build has the tile. 0: it does not. -1: unknown
+  int     activationBits;         // PTA_BITS[3:0]; 0 is unquantised
+  int     weightBits;             // PTA_BITS[7:4]; 0 is unquantised
+  int     adcBits;                // PTA_BITS[11:8]; 0 is no ADC quantisation
+  int     adcShift;               // PTA_BITS[17:12]; LSB_adc = 2^adcShift
+  int64_t seed;                   // PTA_SEED, which is what makes the result reproducible
+  int64_t impairments;            // PTA_IMPAIR[6:0], the enables in force
+  // Which of those bits this build can model at all. A START asking for one it
+  // cannot is REFUSED by the hardware, not ignored, so without this a caller
+  // cannot tell a bit that is off from a bit that cannot be on.
+  // impairments & ~impairmentsImplemented is exactly the set that refuses.
+  // Known whenever tileIsPresent is known, and zero where there is no tile.
+  int64_t impairmentsImplemented;
+} grxAnalogGemm_t;
+
+#define GRX_ANALOG_QUANT     0x01
+#define GRX_ANALOG_THERMAL   0x02
+#define GRX_ANALOG_SHOT      0x04
+#define GRX_ANALOG_DRIFT     0x08
+#define GRX_ANALOG_XTALK     0x10
+#define GRX_ANALOG_MZM_NL    0x20
+#define GRX_ANALOG_PROG_ERR  0x40
+#define GRX_ANALOG_DEFINED   0x7F   // every impairment the register defines
+
 typedef struct {
   char            name[128];
   grxDeviceType_t deviceType;
@@ -227,6 +278,9 @@ typedef struct {
   // fetch is four global loads and the arithmetic between them, issued by your
   // own warp -- not a texture-cache hit and a hardware interpolation.
   int    textureIsEmulated;
+  // Whether a GEMM on this device is the GEMM that was asked for. Nested
+  // because its fields only mean anything together, and live -- see the type.
+  grxAnalogGemm_t analogGemm;
 } grxDeviceProp_t;
 
 // Attributes of a compiled kernel. Fields the toolchain cannot yet supply

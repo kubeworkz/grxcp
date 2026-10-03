@@ -323,6 +323,18 @@ echo
 echo "==> grx-smi (default config)"
 "${RUN[@]}" "$BUILD/grx-smi"
 
+# The analog GEMM line is in the stand-ins section on every device, and on a
+# GPU it has to say native: a G100 has no photonic tile. Checked for the text
+# and for the JSON, which says the same thing to a consumer that does not read
+# prose -- and says it with false, not null, because this much is known.
+"${RUN[@]}" "$BUILD/grx-smi" 2>/dev/null |
+  grep -qx '    analog GEMM            native (no PTA tile in this build)' || {
+    echo "FAILED: grx-smi does not report the GPU's GEMMs as native."; exit 1; }
+"${RUN[@]}" "$BUILD/grx-smi" --json 2>/dev/null | tr -d '[:space:]' |
+  grep -q '"analogGemm":{"emulated":false,"tilePresent":false,' || {
+    echo "FAILED: grx-smi --json does not carry analogGemm as known-native."; exit 1; }
+echo "  ok    analog GEMM is reported native on the GPU, in text and in JSON"
+
 echo "==> grx-smi (flagship G100 preset)"
 VORTEX_DRIVER=rtlsim \
 GRXMOCK_NUM_THREADS=32 GRXMOCK_NUM_WARPS=64 \
