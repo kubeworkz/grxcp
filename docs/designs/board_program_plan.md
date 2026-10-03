@@ -469,6 +469,36 @@ hid three quarters of that in stalls the tile was waiting through anyway — so 
 interval this table wants is affordable, and the recalibration row is a schedule
 rather than a tax.
 
+*What the shot rate asks of the weight path, 2026-10-03.* Neither table says how
+fast weights have to be written, and it decides whether a shot rate is a
+throughput. A weight set — 16,384 cells at 256 × 64 — is shot for one batch and
+then replaced, so the tile alternates between programming and shooting.
+[`pta_shot_rate.py`](pta_shot_rate.py) §5 prices the split, taking a write beat as
+one shot period and sweeping the write's width rather than assuming one:
+
+| Cells written a beat | Batch 16 | Batch 64 | Batch 256 |
+|---|---|---|---|
+| 1, as the c930's scan does | 0.1% | 0.4% | 1.5% |
+| 64, one input's row | 5.9% | 20% | 50% |
+| 256, one output's column | 20% | 50% | 80% |
+| 16,384, the whole set | 94.1% | 98.5% | 99.6% |
+
+That is the share of its time a **one-bank** tile spends shooting. The c930's
+serial scan does not carry over: it would leave this tile shooting 0.4% of the
+time at batch 64. With one bank, 90% takes 2,341 cells a beat at batch 64, and at
+batch 16 the whole set in a single beat. **A second bank changes the requirement
+rather than relaxing it**: the next set loads behind the current set's shots, so
+the tile never waits as long as a set programs within one batch, which is
+`k×n / batch` cells a beat — 1,024, 256 and 64 at batches of 16, 64 and 256. So
+the interface chip is held to two weight banks and a write path one output's
+column wide at batch 64, each DAC rewritten at the shot rate over the batch,
+15.6 MHz at 1 GS/s. The batch is the lever here as it was on the link: every
+quadrupling of it quarters the write path.
+
+The converters are stated as a rate and no further: 64 ADCs at the shot rate is
+64 GS/s of 7-bit conversion at 1 GS/s. Turning that into watts needs a device
+figure this program does not hold.
+
 ### 4.4 To the PTA program
 
 - ~~C3, the calibration engine, continues, and becomes X3.~~ **Done**, both
@@ -625,7 +655,7 @@ among the bounds that bind.
    |---|---|---|
    | The modulator, settling to half an LSB | 51 GS/s at the 45 GHz TFLN anchor | Never. The receiver allows under an eighth of it at any laser B5 planned on |
    | The feed, weights re-sent with each batch | 0.22 GS/s a module: 1.1 at X2's five, 6.6 at the thirty where B8 reopens | Only with loss near 10 dB and the laser at the top of B5's range |
-   | The feed, weights resident on the interface chip | 3.6 GS/s a module, and it is the outbound direction that limits | No — if the chip has the 16.8 MB a layer like this one needs, which nothing has sized |
+   | The feed, weights resident on the interface chip | 3.6 GS/s a module, and it is the outbound direction that limits | No — if the chip has the 16.8 MB a layer like this one needs. That is a digital store, not the DAC-held residency B4 lists, and nothing has sized it |
    | The receiver | 1 GS/s needs 0.66 W of laser behind 10 dB of loss and 6.6 W behind 20 | Yes, in every case except weights re-sent with the loss near 10 dB and the laser at the top of B5's range |
 
    So the question has changed shape. It is no longer how fast the tile is but
@@ -642,10 +672,12 @@ among the bounds that bind.
    A modulator's line rate does not enter. A table of NRZ benchmarks was offered
    as the tile's shot rate — 56 Gbaud in production, 100 to 180 Gb/s in
    research — and it is B8's confusion again: those rates are recovered by an
-   equaliser and protected by FEC, and an analog level has neither. Not priced
-   by the model, and the interface chip's to settle: the ADC array, one
-   converter a column at the shot rate, and the duty lost to programming weights
-   between shots.
+   equaliser and protected by FEC, and an analog level has neither.
+
+   A shot rate is only a throughput if the weights keep up, and that is now a
+   requirement on the interface chip rather than an unknown: two weight banks
+   and a write path `k×n / batch` cells wide (§4.3). Still not priced is the
+   converters' power, which needs a device figure.
 2. **What does the development kit cost, and how many are built?** That settles
    B1 and B2 more than any technical argument does.
 3. **Does the GRX930's NPU keep a PTA of its own?** The c930 PTM work is built

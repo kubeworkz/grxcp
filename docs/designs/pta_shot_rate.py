@@ -38,9 +38,14 @@ Assumed here, and marked again where each is used:
       receiver, so two laws bracket it rather than one being claimed
     - one detector per tile column
 
-Not priced, and they are the interface chip's: the ADC array (one converter per
-column, at the shot rate) and the duty lost to programming weights between shots,
-which is section 2.1's Tw and not a rate.
+Section 5 turns the rate into what it asks of the interface chip's weight path:
+how many cells a beat have to be written for the tile to spend its time shooting.
+That is section 2.1's Tw at the chiplet's scale.  The write parallelism is swept
+rather than assumed, and a write beat is taken as one shot period.
+
+Not priced: the converters' power.  The ADC array is stated as a conversion rate
+and no further, because turning that into watts needs a device figure this
+program does not hold.
 
 A3's photon counts are deliberately not used.  They are photons at the all-optical
 activation's knee -- the nonlinear element's budget on a branch the mainline does
@@ -51,6 +56,7 @@ Standard library only.  Run:  python3 docs/designs/pta_shot_rate.py
 import math
 import os
 import sys
+from fractions import Fraction
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import pta_chiplet_link as link
@@ -155,6 +161,47 @@ def receiver_rate(req, laser_w, channels, loss_db, exponent):
 def loss_ceiling_db(req, laser_w, channels, fs, exponent):
     """The most loss a laser can stand and still light every detector at fs."""
     return 10 * math.log10(laser_w / (channels * detector_power(req, fs, exponent)))
+
+
+NINE_TENTHS = Fraction(9, 10)
+
+# ---- 5. the weight path ---------------------------------------------------
+def weight_updates_per_s(k, n, mb, fs):
+    """Cells written a second: a set of k*n is replaced once per batch of shots."""
+    return k * n * fs / mb
+
+
+def duty_one_bank(k, n, mb, per_beat):
+    """The share of its time a one-bank tile spends shooting.
+
+    A set of k*n cells goes in `per_beat` at a time, a beat being one shot
+    period, and is then shot mb times.  Nothing overlaps: the bank being written
+    is the bank being read.
+    """
+    return mb / (mb + math.ceil(k * n / per_beat))
+
+
+def per_beat_one_bank(k, n, mb, want):
+    """Cells a beat for a one-bank tile to reach a duty of `want`, a Fraction.
+
+    A set takes a whole number of beats, so this is not mb / (mb + k*n/p) solved
+    for p: it is the most beats a set may take, then the width that fits in them.
+    The first version solved the continuous form and returned widths that fell a
+    beat short -- 9,217 at batch 16, which takes two beats and reaches 88.9%.
+    """
+    beats = int(Fraction(mb) * (1 - want) / want)        # floor: the most allowed
+    if beats < 1:
+        return None                                      # not reachable at all
+    return -(-(k * n) // beats)
+
+
+def per_beat_two_banks(k, n, mb):
+    """Cells a beat for a two-bank tile never to wait.
+
+    With a second bank the next set loads behind the current set's shots, so the
+    duty is 1 as long as a set programs within one batch: k*n cells in mb beats.
+    """
+    return math.ceil(k * n / mb)
 
 
 def gs(rate_hz):
@@ -292,6 +339,39 @@ def main():
                 print(f"  {'resident' if resident else 're-sent':<10}{w:>6.2f} W"
                       f"{d:>5.0f} dB{gs(ff):>9}{gs(lo):>9} to {gs(hi):<8}   {who}")
 
+    # ------------------------------------------------------------------ 5
+    section(f"5. The weight path: what a shot rate asks of the interface chip"
+            f" ({k}x{n})")
+    print(f"  A weight set is {k * n:,} cells, shot for one batch and then replaced."
+          f"  At 1 GS/s:")
+    print(f"  {'batch':>7}{'sets a second':>16}{'cells a second':>17}"
+          f"{'each DAC rewritten at':>24}")
+    for mb in (16, 64, 256):
+        upd = weight_updates_per_s(k, n, mb, X2_FS)
+        print(f"  {mb:>7}{X2_FS / mb / 1e6:>13.1f} M{upd / 1e9:>15.0f} G"
+              f"{X2_FS / mb / 1e6:>20.1f} MHz")
+    print("  Cells a second is X2's inbound seen from the tile: at a byte a weight it")
+    print("  is the link's weight traffic, to the byte.")
+    print()
+    print("  ONE BANK.  The share of its time the tile spends shooting, by how many")
+    print("  cells are written a beat (a beat is one shot period):")
+    modes = ((1, "1, the c930's own scan"), (n, f"{n}, one input's row"),
+             (k, f"{k}, one output's column"), (k * n, f"{k * n:,}, all at once"))
+    print(f"  {'cells a beat':<28}" + "".join(f"{f'batch {mb}':>12}" for mb in (16, 64, 256)))
+    for per, label in modes:
+        print(f"  {label:<28}" + "".join(
+            f"{duty_one_bank(k, n, mb, per):>11.1%} " for mb in (16, 64, 256)))
+    print()
+    print("  What it takes to stop waiting, in cells a beat:")
+    print(f"  {'batch':>7}{'one bank, 90% duty':>21}{'two banks, no wait':>21}")
+    for mb in (16, 64, 256):
+        print(f"  {mb:>7}{per_beat_one_bank(k, n, mb, NINE_TENTHS):>21,}"
+              f"{per_beat_two_banks(k, n, mb):>21,}")
+    print(f"  At batch 16 one bank has to write the whole set in a single beat: two")
+    print("  beats of programming against sixteen of shooting is already under 90%.")
+    print(f"  And the converters: {n} ADCs at the shot rate is {n * X2_FS / 1e9:.0f} GS/s of"
+          f" {v1['adc_bits']}-bit conversion at 1 GS/s.")
+
     findings(mod_fs)
     checks()
 
@@ -306,7 +386,7 @@ def findings(mod_fs):
     ceil = loss_ceiling_db(v1, LASERS_W[-1], n, X2_FS, 0.5)
 
     print()
-    print("What this says, four readings.")
+    print("What this says, five readings.")
     print()
     print("1. THE MODULATOR IS NOT THE QUESTION.  It allows about"
           f" {mod_fs / 1e9:.0f} GS/s, and at")
@@ -319,11 +399,11 @@ def findings(mod_fs):
     print("2. THE FEED DEPENDS ON WHERE THE WEIGHTS LIVE, by a factor of sixteen.")
     print(f"   Re-sent with every batch, X2's {X2_MODULES} modules carry {gs(f5)} GS/s."
           f"  Resident on")
-    print(f"   the interface chip, one module carries {gs(fr1)}.  B4 gives that chip the")
-    print("   resident weights and step MB measured residency on the c930, so the")
-    print("   feed need not be what holds the tile to 1 GS/s -- provided the chip has")
-    print(f"   the memory for a layer's weights, {wbytes / 1e6:.1f} MB for this one, which")
-    print("   nothing has sized.")
+    print(f"   the interface chip, one module carries {gs(fr1)}.  So the feed need not be")
+    print("   what holds the tile to 1 GS/s -- but that is not the residency B4 lists.")
+    print(f"   B4's is a DAC-held voltage per weight ON THE TILE, {k * n:,} of them at")
+    print(f"   this geometry (X2).  Holding a layer is a digital store of {wbytes / 1e6:.1f} MB")
+    print("   for this one, which B4 does not list and nothing has sized.")
     print()
     print("3. THE RECEIVER IS, AND B5's LASER IS FOUR TIMES TOO SMALL for the")
     print("   receiver it assumed.  B5 sized it from v0's allowance of one LSB of")
@@ -339,6 +419,17 @@ def findings(mod_fs):
     print("   costs between a factor of 1.6 and a factor of 4 in rate, depending on a")
     print("   receiver nobody has designed.  The question to put to a foundry is the")
     print("   loss budget; the shot rate follows from it.")
+    print()
+    serial = duty_one_bank(k, n, big['mb'], 1)
+    one90 = per_beat_one_bank(k, n, big['mb'], NINE_TENTHS)
+    two = per_beat_two_banks(k, n, big['mb'])
+    print("5. AND A SHOT RATE IS ONLY A THROUGHPUT IF THE WEIGHTS KEEP UP.  The c930")
+    print(f"   scans one weight a cycle; at that rate this tile would shoot {serial:.1%} of")
+    print(f"   the time at batch {big['mb']}, so the emulation's weight path does not carry")
+    print(f"   over.  One bank needs {one90:,} cells a beat for 90% duty.  A second bank")
+    print(f"   needs {two} -- one output's column a shot period -- and never waits, which")
+    print("   is the case for two banks that G1 left unpriced.  The batch is the lever")
+    print("   here too: every quadrupling of it quarters the write path.")
     print()
 
 
@@ -416,6 +507,42 @@ def checks():
         for fs in (1e8, 1e9, 1e10):
             w = laser_power(v1, fs, n, 15.0, e)
             assert abs(receiver_rate(v1, w, n, 15.0, e) / fs - 1.0) < 1e-9, (e, fs)
+
+    # 11. The weight path's rate IS X2's inbound weight traffic: cells a second
+    #     at a byte a weight equals the link's inbound less its activations.
+    for mb in (16, 64, 256):
+        b2 = dict(big, mb=mb)
+        t = link.layer_traffic(k=k, n=n, **b2)
+        into, _ = link.rates(k=k, n=n, fs=X2_FS, **b2)
+        acts_gbs = t["acts"] / (t["shots"] / X2_FS) / 1e9
+        upd = weight_updates_per_s(k, n, mb, X2_FS) * link.W_BYTES / 1e9
+        assert abs(upd - (into - acts_gbs)) < 1e-6 * into, (mb, upd, into, acts_gbs)
+
+    # 12. A serial scan leaves the tile shooting under half a percent of the time
+    #     at batch 64, and writing everything at once leaves one beat a batch.
+    assert duty_one_bank(k, n, 64, 1) < 0.005
+    assert abs(duty_one_bank(k, n, 64, k * n) - 64 / 65) < 1e-12
+
+    # 13. per_beat_one_bank() meets the duty it was asked for, and one cell fewer
+    #     does not: the requirement is tight, not padded.  The first version of
+    #     that function failed exactly this, which is how its error was found.
+    for mb in (16, 64, 256):
+        p = per_beat_one_bank(k, n, mb, NINE_TENTHS)
+        assert Fraction(mb, mb + -(-(k * n) // p)) >= NINE_TENTHS, (mb, p)
+        assert Fraction(mb, mb + -(-(k * n) // (p - 1))) < NINE_TENTHS, (mb, p)
+    # At batch 16 that is the whole set in one beat.
+    assert per_beat_one_bank(k, n, 16, NINE_TENTHS) == k * n
+
+    # 14. Two banks need at most a ninth of what one bank needs for 90%, and at
+    #     batch 64 that is exactly one column of the tile a beat.
+    assert per_beat_two_banks(k, n, 64) == k, per_beat_two_banks(k, n, 64)
+    for mb in (16, 64, 256):
+        assert (per_beat_one_bank(k, n, mb, NINE_TENTHS)
+                >= 9 * per_beat_two_banks(k, n, mb)), mb
+
+    # 15. Quadrupling the batch quarters the write path, in both cases.
+    assert per_beat_two_banks(k, n, 16) == 4 * per_beat_two_banks(k, n, 64)
+    assert per_beat_two_banks(k, n, 64) == 4 * per_beat_two_banks(k, n, 256)
 
     print("checks: all pass.")
 
