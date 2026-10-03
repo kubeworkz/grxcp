@@ -218,11 +218,27 @@ tiles report the same residual (`ERR_FOUND` 2,688, `ERR_MAX` 5,056). The probe p
 is eight times shorter; the zeroing and the estimator do not shrink, which is the
 rest of the difference.
 
+*Re-read 2026-10-03.* PTM-B's 3,780 and both residuals reproduce exactly. PTM-C's
+figure reads **14,978** now, not 14,980, and it was not the PTM-B closure that
+moved it: the commit before the closure reads 14,978 too, with the same 50,729-cycle
+run. PTM-C still has the hop, so its totals sit a cycle or two either side of what
+is recorded as the firmware's timing shifts under them; PTM-B has no hop and no
+such wobble.
+
 The agreement is about the device, not the dither. A broadside shot draws once per
 column where the skewed one drew once per shot, so the noise realisations differ by
 construction (E1 ties every draw to the loop order); at eight repeats that averages
 out and what is left is drift and programming error, which the probe does not
 perturb. That is the sense in which CPU document §4.2 says the two tiles must agree.
+
+*Qualified 2026-10-03.* For a GEMM's shots the premise turned out to be untrue.
+The two tiles were meant to draw the same values in the same order, the RTL's own
+comment says so, and after the closure (below) they do: `thermal` and `shot` pass
+on both tiles against one C reference. What made them differ was two bugs, not the
+construction. For the *probe* nothing has been shown either way — no calibration
+gate, on the core bench or the SoC, runs with thermal or shot noise on — so the
+agreement of the residuals above still rests on what this paragraph says and not
+on a gate.
 
 **One knock-on, and it is a test's and not the guard's.** `pta_test.c`'s T5 checks
 that a START arriving during a calibration queues rather than dispatching into a busy
@@ -299,6 +315,23 @@ PROG_ERR with no DRIFT at all. A gate that varies its configuration per shape ne
 the configuration read before the shape.
 
 PTM-C's twelve modes are unchanged throughout.
+
+**Re-gated past the core bench, 2026-10-03.** The closure was gated on the
+Verilator core bench and changed the tile, so the iverilog benches and the SoC
+firmware gates were owed. All pass: `make npu` on the array and both tiles, the
+PTM-C lockstep with zero mismatches, and on the SoC `pta_fw` on both tiles,
+`pta_sweep` on both and `pta_feed` on PTM-B. PTM-B reproduces every recorded number
+to the cycle — the sweep's 400,704, 4,704, 576 and 388, its `PTA_TS` line, and the
+calibration's 3,780 — so moving when its drift steps and how far its noise streams
+advance changed no residual and no cycle count there.
+
+It found one thing. The port the closure added, `i_pta_shot_cols`, was documented
+as "zero means all columns, so an instance that does not drive it behaves as
+before". That holds under Verilator, where an unconnected input reads 0, and not
+under a four-state simulator, where it floats: the comparison with zero is `x` and
+nothing is counted. The lockstep bench left it unconnected and passed regardless,
+because it runs with the error model off and never reads the count — right by
+accident. It drives the port now.
 
 **What SoC-B found.** Two things, neither of them the RTL's.
 
