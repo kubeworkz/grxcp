@@ -201,6 +201,17 @@ noise, sets the laser power, by three orders of magnitude: 64 channels behind
 assumption until the chiplet is sized (§8), but a laser of that order is a
 board-level thermal and safety item. *Needed by:* P1 and X1.
 
+*Revisited 2026-10-03: for the same receiver it is four times that.* The
+arithmetic above uses C1's allowance of one LSB of receiver noise, which is
+§4.3's version 0, and §4.3 has since said version 0 was never a budget. Version 1
+holds the interface chip to a quarter of an LSB. A detector's full scale is then
+1.02 mW rather than 0.26, and 64 channels behind 10–20 dB need **0.66–6.6 W**
+at 1 GS/s. [`pta_shot_rate.py`](pta_shot_rate.py) reproduces the figures above
+from version 0 before it revises them, so the method is this paragraph's and
+only the allowance has moved. Every one of them is linear in the assumed 1 µA,
+which makes a measured receiver noise the first number worth having. What this
+does to the shot rate is §8, question 1.
+
 **B6 — Silicon nodes, and the board before silicon.** grx930's manufacturing
 plan takes the SoC to SKY130 first, then to TSMC N28, and freezes the RTL now.
 SKY130 has no SerDes, by that plan's own list of its limits. The PCIe
@@ -590,7 +601,9 @@ tile fires one MAC, `M·Nt·Kt` of them a GEMM, with `PTA_TS` its duration.
 X2 quotes shots in GS/s and the link in GB/s separately for that reason. The two
 share the phrase "shot rate" and share nothing else, and a source that defines
 it as "the per-lane modulation rate of your photonic transceivers" is answering
-the link's question, not the tile's.
+the link's question, not the tile's. Question 1 has since been bounded
+([`pta_shot_rate.py`](pta_shot_rate.py)), and the modulator turns out not to be
+among the bounds that bind.
 
 ---
 
@@ -602,6 +615,37 @@ the link's question, not the tile's.
    because of it. The *link's* signalling is no longer part of this question:
    B8 settles that as NRZ. Geometry and batch are what decide the module count,
    and the module count is what could reopen B8.
+
+   **The shot rate is bounded, 2026-10-03**
+   ([`pta_shot_rate.py`](pta_shot_rate.py)). Three things cap it, and only one
+   of them is still open. For X2's 256 × 64 tile at batch 64, under §4.3's
+   version 1:
+
+   | Bound | What it allows | Does it bind |
+   |---|---|---|
+   | The modulator, settling to half an LSB | 51 GS/s at the 45 GHz TFLN anchor | Never. The receiver allows under an eighth of it at any laser B5 planned on |
+   | The feed, weights re-sent with each batch | 0.22 GS/s a module: 1.1 at X2's five, 6.6 at the thirty where B8 reopens | Only with loss near 10 dB and the laser at the top of B5's range |
+   | The feed, weights resident on the interface chip | 3.6 GS/s a module, and it is the outbound direction that limits | No — if the chip has the 16.8 MB a layer like this one needs, which nothing has sized |
+   | The receiver | 1 GS/s needs 0.66 W of laser behind 10 dB of loss and 6.6 W behind 20 | Yes, in every case except weights re-sent with the loss near 10 dB and the laser at the top of B5's range |
+
+   So the question has changed shape. It is no longer how fast the tile is but
+   **how much light reaches each detector**. With the largest laser B5 planned
+   on, 1.6 W, X2's 1 GS/s holds only if laser-to-detector loss stays under
+   **13.9 dB**, and B5's own range runs to 20. Past that each 3 dB costs between
+   1.6× and 4× in rate, depending on a receiver nobody has designed: at 20 dB
+   the same laser gives 0.06 to 0.4 GS/s. The number to ask a foundry for is the
+   loss budget, and the number to measure is the receiver's noise, which B5
+   assumed at 1 µA and every figure here is linear in. Geometry is still open
+   and moves this directly — a 256 × 128 tile has twice the detectors and wants
+   twice the laser.
+
+   A modulator's line rate does not enter. A table of NRZ benchmarks was offered
+   as the tile's shot rate — 56 Gbaud in production, 100 to 180 Gb/s in
+   research — and it is B8's confusion again: those rates are recovered by an
+   equaliser and protected by FEC, and an analog level has neither. Not priced
+   by the model, and the interface chip's to settle: the ADC array, one
+   converter a column at the shot rate, and the duty lost to programming weights
+   between shots.
 2. **What does the development kit cost, and how many are built?** That settles
    B1 and B2 more than any technical argument does.
 3. **Does the GRX930's NPU keep a PTA of its own?** The c930 PTM work is built
