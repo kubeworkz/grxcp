@@ -2192,6 +2192,31 @@ the stream table locks, and `launch.cpp` — which has no mutex at all — was n
 implicated, because its per-call state is `thread_local`. That is evidence, not
 proof; TSan sees only the interleavings that happened.
 
+### 7.39 The c930's activation stage can change a GEMM's result, and nothing reports it — **OURS, open**
+
+`grxDeviceProp_t.analogGemm` reports whether a GEMM on the c930 is the product
+that was asked for or the photonic tile's approximation of it
+(`pta_cpu_integration.md` 7.1). It reads the tile's registers and no others.
+
+The c930 has a second thing that stands between the product and the caller. Its
+activation stage, S_ACT, is in every build of the NPU core; with `ACT_CTRL.EN`
+set it puts each output through a breakpoint table, and with `REQUANT` it
+requantises the result. With the identity table loaded the output is unchanged,
+which is how grx930 gates it. With any other table `grxblasGemmEx` would return
+activated values under the name of a GEMM.
+
+grxcp never sets that bit, so this needs somebody else to have. That is exactly
+the situation `analogGemm` was made live for: the registers are read-write state
+that outlives a process, and the driver has no way to know who was there before
+it.
+
+**What would close it.** `PTA_CAPS2` bit 17 already says the stage is present.
+The honest forms are either a second property beside `analogGemm`, or
+`grxblasGemmEx` refusing on a device whose `ACT_CTRL.EN` reads set. The second is
+the smaller change and the one that cannot be ignored by a caller who does not
+look. Not built: it wants a decision about whether grxcp is ever going to *ask*
+for the stage, and that is `grxdnn`'s question rather than this register's.
+
 ## 8. Where GRX-G100 is *ahead* of the reference
 
 Worth recording, because the platform should expose these rather than

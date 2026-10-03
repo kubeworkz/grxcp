@@ -45,7 +45,16 @@ These are the rules most likely to be violated by a well-meaning change.
   and cannot measure.
 - **Every sanctioned emulation is reported through a device property.** The
   warp-shuffle fallback sets `warpShuffleIsEmulated`; the host-clock event
-  timing clears `eventTimingIsDeviceSide`. If you add a third, add its flag.
+  timing clears `eventTimingIsDeviceSide`; a GEMM on a c930's photonic tile is
+  reported by `analogGemm`. If you add another, add its flag.
+- **A property that describes writable device state is read when it is asked
+  for.** `grxDeviceProp_t` is populated once, at the first acquire, and that is
+  right for what a device *is*. `analogGemm` is what a device is currently *set
+  to*, in registers anything holding the device can write, so
+  `grxGetDeviceProperties` re-reads it on every call. Cached, it reported a tile
+  as native for the life of the process after somebody had switched its
+  impairments on. And "cannot tell" is `-1`, not `0`: a register file that does
+  not identify itself is not a device with no tile.
 - **No invented device numbers.** Everything in `grxDeviceProp_t` comes from
   `vx_device_query` or from a formula documented in an upstream design doc.
   If you cannot source a field, report the "unknown" sentinel (-1), the way

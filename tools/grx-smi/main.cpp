@@ -11,6 +11,8 @@
 
 #include <grx/grx.h>
 
+#include "../common/analog_gemm_text.h"
+
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -54,6 +56,13 @@ std::string caps_list(unsigned c) {
 // than as a number, so nobody reads a sentinel as data.
 std::string int_or_unknown(int v) {
   return (v < 0) ? std::string("unknown") : std::to_string(v);
+}
+
+// The analog GEMM lines live in tools/common so a unit test can hold each form
+// to its text; three of the four cannot be produced on a machine with no tile.
+void print_analog(const grxAnalogGemm_t& a) {
+  for (const std::string& line : grxtools::analog_gemm_lines(a))
+    std::printf("%s\n", line.c_str());
 }
 
 void print_human(int index, const grxDeviceProp_t& p) {
@@ -109,6 +118,7 @@ void print_human(int index, const grxDeviceProp_t& p) {
   std::printf("    __constant__           %s\n",
               p.constantMemoryIsGlobal ? "read-only global (no broadcast path)"
                                        : "constant cache");
+  print_analog(p.analogGemm);
   // Not a stand-in -- the opposite. There is nothing standing in, and a kernel
   // that emits an AMO on a build without the A extension aborts the simulator
   // outright (cuda_mapping.md 7.16). Said here because the device toolchain
@@ -158,6 +168,14 @@ static const char* backend_json(grxBackend_t b) {
   return "unknown";
 }
 
+static const char* json_tri(int v) {
+  return v < 0 ? "null" : (v ? "true" : "false");
+}
+
+static std::string json_num(int64_t v) {
+  return v < 0 ? std::string("null") : std::to_string((long long)v);
+}
+
 void print_json(int index, const grxDeviceProp_t& p, bool last) {
   std::printf("  {\n");
   std::printf("    \"index\": %d,\n", index);
@@ -182,7 +200,22 @@ void print_json(int index, const grxDeviceProp_t& p, bool last) {
   std::printf("    \"capabilities\": \"%s\",\n", caps_list(p.capabilities).c_str());
   std::printf("    \"warpShuffleIsEmulated\": %s,\n", p.warpShuffleIsEmulated ? "true" : "false");
   std::printf("    \"eventTimingIsDeviceSide\": %s,\n", p.eventTimingIsDeviceSide ? "true" : "false");
-  std::printf("    \"constantMemoryIsGlobal\": %s\n", p.constantMemoryIsGlobal ? "true" : "false");
+  std::printf("    \"constantMemoryIsGlobal\": %s,\n", p.constantMemoryIsGlobal ? "true" : "false");
+  // null, not false and not 0, for what is unknown or does not apply: a
+  // consumer that tests `emulated == false` must not take "cannot say" for it.
+  const grxAnalogGemm_t& a = p.analogGemm;
+  std::printf("    \"analogGemm\": {\n");
+  std::printf("      \"emulated\": %s,\n", json_tri(a.gemmIsAnalogEmulated));
+  std::printf("      \"tilePresent\": %s,\n", json_tri(a.tileIsPresent));
+  std::printf("      \"activationBits\": %s,\n", json_num(a.activationBits).c_str());
+  std::printf("      \"weightBits\": %s,\n", json_num(a.weightBits).c_str());
+  std::printf("      \"adcBits\": %s,\n", json_num(a.adcBits).c_str());
+  std::printf("      \"adcShift\": %s,\n", json_num(a.adcShift).c_str());
+  std::printf("      \"seed\": %s,\n", json_num(a.seed).c_str());
+  std::printf("      \"impairments\": %s,\n", json_num(a.impairments).c_str());
+  std::printf("      \"impairmentsImplemented\": %s\n",
+              json_num(a.impairmentsImplemented).c_str());
+  std::printf("    }\n");
   std::printf("  }%s\n", last ? "" : ",");
 }
 

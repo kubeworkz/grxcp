@@ -53,6 +53,22 @@ bool backend_has_vm(grxBackend_t b) {
   return b == GRX_BACKEND_SIMX || b == GRX_BACKEND_RTLSIM || b == GRX_BACKEND_GEM5;
 }
 
+// A device known to have no analog tile: both leading fields 0, and -1 in
+// every field that would describe a model, because there is not one.
+grxAnalogGemm_t analog_gemm_none() {
+  grxAnalogGemm_t a;
+  a.gemmIsAnalogEmulated   = 0;
+  a.tileIsPresent          = 0;
+  a.activationBits         = -1;
+  a.weightBits             = -1;
+  a.adcBits                = -1;
+  a.adcShift               = -1;
+  a.seed                   = -1;
+  a.impairments            = -1;
+  a.impairmentsImplemented = 0;
+  return a;
+}
+
 void populate_properties(Device& d) {
   grxDeviceProp_t& p = d.prop;
   std::memset(&p, 0, sizeof(p));
@@ -165,6 +181,12 @@ void populate_properties(Device& d) {
   // memory (cuda_mapping.md section 7.2).
   p.constantMemoryIsGlobal  = 1;
   p.textureIsEmulated       = 1;   // software sampling; cuda_mapping.md 7.8
+  // A G100's GEMM is the TCU's, or a kernel's, and both are digital: nothing
+  // in the Vortex driver's capability set describes a photonic tile, and the
+  // board plan's PTA chiplet behind the GPU's BAR has no driver here to ask.
+  // So this is "no tile", sourced from the absence of anything to source it
+  // from, and it says so with -1 in every field that would describe one.
+  p.analogGemm = analog_gemm_none();
 
   std::snprintf(p.name, sizeof(p.name), "GRX-G100 (%s)", backend_name(backend));
 }
@@ -219,6 +241,28 @@ struct PendingNpuModel {
 };
 static PendingNpuModel g_npu_model;
 static bool            g_npu_enumerated = false;
+
+// What the NPU's registers say a GEMM is, right now. The decision is the
+// backend's (npu_c930_read_analog, and its header for why PTA_CTRL.EN is not
+// the bit that decides it); this only carries it into the public struct.
+//
+// A device with no register path at all comes back unknown in every field,
+// which is the one answer that claims nothing.
+static grxAnalogGemm_t read_npu_analog(npu_c930_device_t* dev) {
+  npu_c930_analog_t n;
+  (void)npu_c930_read_analog(dev, &n);
+  grxAnalogGemm_t a;
+  a.gemmIsAnalogEmulated   = n.analog;
+  a.tileIsPresent          = n.tile_present;
+  a.activationBits         = n.activation_bits;
+  a.weightBits             = n.weight_bits;
+  a.adcBits                = n.adc_bits;
+  a.adcShift               = n.adc_shift;
+  a.seed                   = n.seed;
+  a.impairments            = n.impairments;
+  a.impairmentsImplemented = n.impairments_implemented;
+  return a;
+}
 
 // Fill grxDeviceProp_t for the GRX930 NPU from hardware constants.
 // The NPU has no vx_device_h and no vx_device_query — every field comes
@@ -275,6 +319,9 @@ static void populate_npu_properties(Device& d) {
   p.eventTimingIsDeviceSide = 0;  // no device-side timestamp counter
   p.constantMemoryIsGlobal  = 1;  // no __constant__ path
   p.textureIsEmulated       = 1;  // and no TEX unit either
+  // The first reading. grxGetDeviceProperties takes another on every call --
+  // these are live registers, and this copy is only what was true at probe.
+  p.analogGemm = read_npu_analog(d.npu_dev);
 
   // WHAT THIS DEVICE IS, DERIVED RATHER THAN ASSERTED.
   //
@@ -435,6 +482,23 @@ grxError_t acquire_device(int index, Device** out) {
 int  current_device_index()          { return g_current_device; }
 void set_current_device_index(int i) { g_current_device = i; }
 
+// A device's properties as they are NOW.
+//
+// Everything in grxDeviceProp_t was established once, at the first acquire,
+// and that was right for all of it until analogGemm arrived: geometry, memory
+// and capabilities are what the device IS. Whether its GEMMs are analog is
+// what the device is currently SET to, in registers any holder of the device
+// can write, and a property cached at probe would have gone on reporting
+// "native" over a tile somebody had since impaired. So that one field is read
+// again here, under the same lock the cached copy is made under.
+void snapshot_properties(Device& d, grxDeviceProp_t* out) {
+  std::lock_guard<std::mutex> lock(g_devices_mutex);
+#ifdef GRXCP_ENABLE_NPU
+  if (d.type == DeviceType::NPU) d.prop.analogGemm = read_npu_analog(d.npu_dev);
+#endif
+  *out = d.prop;
+}
+
 }  // namespace grxcp
 
 // ---------------------------------------------------------------------------
@@ -523,7 +587,7 @@ grxError_t grxGetDeviceProperties(grxDeviceProp_t* prop, int device) {
   grxcp::Device* d = nullptr;
   grxError_t e = grxcp::acquire_device(device, &d);
   if (e != grxSuccess) return grxcp::set_error(e);
-  *prop = d->prop;
+  grxcp::snapshot_properties(*d, prop);
   return grxSuccess;
 }
 

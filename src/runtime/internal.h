@@ -51,6 +51,9 @@ grxError_t set_error(grxError_t e);
 
 grxError_t ensure_initialized();
 grxError_t acquire_device(int index, Device** out);
+// Copy a device's properties out, re-reading the ones that are live state
+// rather than identity (context.cpp says which, and why).
+void snapshot_properties(Device& d, grxDeviceProp_t* out);
 
 int  current_device_index();
 void set_current_device_index(int index);

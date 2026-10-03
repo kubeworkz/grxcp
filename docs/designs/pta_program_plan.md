@@ -223,7 +223,8 @@ figure reads **14,978** now, not 14,980, and it was not the PTM-B closure that
 moved it: the commit before the closure reads 14,978 too, with the same 50,729-cycle
 run. PTM-C still has the hop, so its totals sit a cycle or two either side of what
 is recorded as the firmware's timing shifts under them; PTM-B has no hop and no
-such wobble.
+such wobble. *Not so, as S1 found (§3.5): PTM-B's total read 3,779 under the next
+firmware.*
 
 The agreement is about the device, not the dither. A broadside shot draws once per
 column where the skewed one drew once per shot, so the noise realisations differ by
@@ -886,7 +887,7 @@ held to once there is one.
 | Step | What | Gate | Needs |
 |---|---|---|---|
 | S0 | **Done, below.** The D2 property specified: its fields, what an NPU without a tile reports, and the `grx-smi` line | Review; no code. CPU document §7.1, which also states what S1 must do to satisfy it, so the specification is testable rather than agreeable | D2 |
-| S1 | The property populated from the PTA CSRs, and the vendored DPI shim extended to answer on them | `AGENTS.md` §3: every field sourced or reported unknown (−1); the NPU BACKEND GATE in `ci/build_mock.sh` green | S0, C4's CSR map |
+| S1 | **Done, below.** The property populated from the PTA CSRs, and the vendored DPI shim extended to answer on them | `AGENTS.md` §3: every field sourced or reported unknown (−1); the NPU BACKEND GATE in `ci/build_mock.sh` green. Sourcing them took four read-only words the c930 did not have, and S0's own table was keyed on the wrong bit | S0, C4's CSR map |
 | S2 | The two gates: bitwise against the model, its golden data regenerated only as a reviewed step, and the distributional report | CPU document §7 | S1 |
 
 **S0, specified.** CPU document §7.1. D2 had settled that the property is a
@@ -923,6 +924,63 @@ places, and that is how two rules drift apart. And the wording of the
 distributional report, which is S2's and depends on numbers C1 has not finished
 moving.
 
+**S1, built.** `grxDeviceProp_t.analogGemm`, read from the c930's registers and
+printed by `grx-smi`; CPU document §7.1 has what was built against what was
+specified. Four things S0 could not have known without the RTL in front of it,
+and one the RTL did not know about itself.
+
+**S0 keyed "analog" on the wrong bit.** Its table turns on `PTA_CTRL.EN`. That bit
+enables the calibration engine and nothing else; what makes a GEMM inexact is
+`PTA_IMPAIR` being non-zero, with `EN` set or clear. Implemented as written, the
+property would have reported a tile with its impairments on and `EN` clear as
+native. The honesty flag would have been wrong in the direction it exists to
+prevent, and every test written from the same table would have agreed with it.
+
+**No register said whether a build has a tile.** The block is in every build and
+reads back the same. grx930 gained `PTA_ID` and `PTA_CAPS0`–`2`, and the gate that
+makes the capability word worth reading is not the readback: it is a bench that
+tries each impairment bit alone and holds the word to which of them the core ran.
+
+**"Unknown" is a state, and it is the state today's hardware is in.** A register
+file without the magic reports `-1`, not "no tile". The reason is concrete: on a
+file that predates the block, `PTA_IMPAIR`'s address aliases `DIM_M`, so M = 4
+reads as SHOT enabled.
+
+**A property that describes registers has to be read when it is asked for.** The
+runtime established every device property once and cached it. This one is live.
+
+**And the gate that was supposed to tell a tile build from an array never ran.**
+grx930's firmware harness decided which build it had from a macro nothing
+defined, so `make pta_fw PTM_C=1` printed "a modelled tile" for any build and
+would have passed on a digital array. The Makefile tells it now, and it holds the
+identity words to the answer.
+
+**It also found a bug in the CPU, which is why one of the numbers below moved.**
+On PTM-B the firmware recorded `PTA_ERR_FOUND` as zero where the plan has 2,688.
+The register was right — 2,688 on the bus, traced. The load completed while an
+I-cache fill was holding the pipeline, and the D-cache waits for such a load with
+its request deasserted, trusting the response to stay on the bus. On the four-core
+SoC that bus is shared: the parked cores poll their release registers through the
+same bridge every few hundred cycles, and when one of those polls falls inside the
+wait the load takes its zero to the register. Which load is hit depends only on
+where the code falls against a cache-line boundary and against those polls, so
+adding a line of C after the read made it disappear. The D-cache latches the response now,
+as it already did for an atomic's old value; a unit bench fails without the latch
+(`make dcache_mmio_hold` in grx930), and the firmware run that recorded zero
+records 2,688 at the same cycle count. Every earlier firmware gate on this SoC
+read its registers through the same path.
+
+*Corrected with it.* §3.1's re-read note says PTM-B "has no hop and no such
+wobble". Its calibration total reads 3,779 with this firmware, not 3,780, on
+every run, so PTM-B's totals move by a cycle with the firmware's timing as PTM-C's do.
+The hop is half-rate on both tiles, which is the likely reason and was not
+checked.
+
+**What S1 leaves for S2.** The shim answers as a build with no tile, because that
+is what it computes. A mock that reports an *emulated* GEMM needs the tile model
+behind the shim and G0's vector check in grxcp's CI, and that is S2's bitwise
+gate.
+
 ---
 
 ## 4. Order
@@ -932,7 +990,7 @@ moving.
 | Now | Immediately, in parallel | A3; G1 (D1–D4 settled; F0 and C0 done). S0 and A-synth are done |
 | Next | C0 green, as it now is | C1 and C3 are green; G0's vendoring half has reported (below) and what it still owes, like G1, is SimX (F1 done) |
 | Then | C1, C2 tile, MB, C4, SoC-B, F2 and F3 now green | G2: G1's model has reported, and what it still owes G2 is the SimX confirmation rather than the answer. Track F is complete: F3's handoff is in the board plan's X2 §1, with the host's ~1,090 cycles labelled there as this SoC's MMIO path rather than a fabric rate |
-| Last | C2 tile, MB, C3 and A-synth green | C4; then S1 and S2 on its CSR map, F3 on its numbers, and G3 |
+| Last | C2 tile, MB, C3 and A-synth green | C4; then S1 and S2 on its CSR map, F3 on its numbers, and G3. S1 is done; S2 starts with the tile model behind the shim |
 
 The critical path is C0 → C1 → C2 tile → MB → C4. Everything else runs beside
 it or hangs off one of its gates, and nothing on it waits for the GPU.

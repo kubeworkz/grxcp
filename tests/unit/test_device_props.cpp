@@ -95,6 +95,20 @@ int main() {
           "event timing still reports host clock (CP profiling writeback pending)");
     check(p.constantMemoryIsGlobal == 1,
           "__constant__ still reports read-only global lowering");
+
+    // A G100 has no photonic tile and no way to have one, so its GEMMs are
+    // the ones asked for. Both leading fields are 0 -- KNOWN, not -1 -- and
+    // every field that would describe an error model is -1 rather than a
+    // zero that reads like a setting.
+    const grxAnalogGemm_t& a = p.analogGemm;
+    check(a.gemmIsAnalogEmulated == 0 && a.tileIsPresent == 0,
+          "analog GEMM: native, and known to be -- no tile on a GPU");
+    check(a.activationBits == -1 && a.weightBits == -1 && a.adcBits == -1 &&
+          a.adcShift == -1 && a.seed == -1 && a.impairments == -1,
+          "and no error-model field carries a value that could be mistaken "
+          "for a setting");
+    check(a.impairmentsImplemented == 0,
+          "nothing implemented is 0, because that much is known");
   }
 
   // --- error surface ---
