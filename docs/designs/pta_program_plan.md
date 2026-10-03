@@ -264,13 +264,41 @@ all four failed, so the broadside tile has core-bench coverage for the first tim
 — including `sched`, which is the second tile this note wanted for §5.1's
 schedulers.
 
-**What is still divergent, and it is the C reference's rather than the RTL's.**
-`thermal` and `shot`, because a broadside shot draws once per column where the
-skewed one drew once per shot, so the noise realisations differ by construction
-(above); `drift`, whose clock keys off the shot under BROADSIDE and off the hop
-under PTM-C; `xtalk`; and the three modes that include them. Teaching
-`pta_tile_model.c` the broadside draw order is what closes those, and it is a model
-change rather than a fix. PTM-C's twelve modes are unchanged.
+**Closed: all twelve modes pass on PTM-B.** directed, quant, thermal, shot, prog,
+drift, xtalk, all, refuse, trim, engine and sched. So the calibration engine and
+§5.1's schedulers now run against the tile the Pockels-class numbers come from, and
+the speed story and the accuracy story are on the same tile at last.
+
+It took two more fixes, and **both were the RTL's**. The expectation recorded here
+first — that `pta_tile_model.c` needed teaching the broadside draw order — was
+wrong: the model is unchanged and did not need to change.
+
+*The noise streams advanced by `NUM_COLS` where skewed advances by `nc`.* The draw
+sequence is meant to be identical either way, and is, for a full N tile. Skewed,
+`i_pta_shot` is masked by `nc` in the core, so a shot steps the THERMAL and SHOT
+streams once per **valid** column; broadside took `NUM_COLS` steps whatever `nc`
+was, so from the first partial N tile onwards the two streams sat at different
+points and every later draw differed. Every `thermal` failure was a shape whose N is
+not a multiple of `NUM_COLS` — 5, 12, 11, 9 — and every N = 8 shape passed.
+`i_pta_shot_cols`, added for the saturation counter, already carried what was needed.
+
+*And the drift clock stepped on the same edge as the capture.* PTM-B drove both
+`i_pta_shot_start` and `i_pta_shot` from `shot_now`, and inside, BROADSIDE makes
+`drift_tick` the former and `cap_tick` the latter — so the step and the capture
+landed on one clock edge, both non-blocking, and **the capture read the drift from
+before the step**. Every shot saw the previous shot's. Skewed there is no collision:
+`drift_tick` fires at `t` = 0 of S_RUN and the captures start at `t` = 2R, and the
+model matches that by stepping before it computes the shot. The tick moves to
+`i_shot_start`, the core's request, which is the cycle before S_SHOT.
+
+**The two hid each other, which is worth recording.** `xtalk` appeared to diverge
+and never did: its gate alternates two configurations and the failing one is `0x19`,
+which includes DRIFT — every pure-crosstalk case passed throughout. Likewise the
+only drift-enabled shape that passed was the one whose `impair` is `0x41`, QUANT and
+PROG_ERR with no DRIFT at all. A gate that varies its configuration per shape needs
+the configuration read before the shape.
+
+PTM-C's twelve modes are unchanged throughout.
 
 **What SoC-B found.** Two things, neither of them the RTL's.
 
