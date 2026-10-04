@@ -379,6 +379,41 @@ else
 fi
 
 echo
+echo "==> PTA MODEL GATE: the vendored error model is the one grx930 gates"
+# third_party/grx930/pta_tile_model.c is the photonic tile's error model, and
+# the analog GEMM gate further down holds grxblasGemmEx to it bit for bit. That
+# is worth exactly as much as this copy being the model grx930 holds its RTL to
+# -- a vendored copy that quietly dropped an impairment would build, run, and
+# be agreed with by everything here. pta_vectors.txt is grx930's answer to
+# that: sixteen cases the model must reproduce exactly, checked with a C
+# compiler and nothing else.
+#
+# And then the same check against a model that is deliberately wrong, because a
+# gate nobody has watched fail is not a gate. PTA_MODEL_ABLATE_QROUND is the
+# model's own ablation switch: it drops the quantiser's rounding term. The
+# check has to notice.
+PTA_DIR="$ROOT/third_party/grx930"
+CC_BIN="${CC:-${CXX%g++}gcc}"
+if ! command -v "$CC_BIN" >/dev/null 2>&1; then
+  echo "SKIPPED: no C compiler ($CC_BIN) beside $CXX."
+else
+  $CC_BIN -std=c99 -Wall -Wextra -O2 -I"$PTA_DIR" \
+    "$PTA_DIR/pta_vectors_check.c" "$PTA_DIR/pta_tile_model.c" \
+    -o "$BUILD/pta_vectors_check"
+  "${RUN[@]}" "$BUILD/pta_vectors_check" "$PTA_DIR/pta_vectors.txt" | tail -4
+  $CC_BIN -std=c99 -O2 -DPTA_MODEL_ABLATE_QROUND -I"$PTA_DIR" \
+    "$PTA_DIR/pta_vectors_check.c" "$PTA_DIR/pta_tile_model.c" \
+    -o "$BUILD/pta_vectors_check_ablated"
+  if "${RUN[@]}" "$BUILD/pta_vectors_check_ablated" "$PTA_DIR/pta_vectors.txt" \
+       > "$BUILD/pta_vectors_ablated.log" 2>&1; then
+    echo "  FAIL  a model with its quantiser's rounding removed still passed"
+    echo "        the vector check. The check is not checking the model."
+    exit 1
+  fi
+  echo "  ok    and a model with the quantiser's rounding removed fails it"
+fi
+
+echo
 echo "==> NPU GROUNDWORK: a device with no pipeline refuses launches"
 # Phase 7 begins here, before there is an NPU to talk to. The c930 NPU is a
 # systolic array with no SIMT pipeline, and grxcp_architecture.md section 6
@@ -509,6 +544,28 @@ else
   printf "        %s skipped -- each needs a device or a compiled kernel\n" \
     "$(grep -cE '^[[:space:]]+[0-9]+ - .* \(Skipped\)' \
         "$BUILD/ctest-npu.log" || echo 0)"
+
+  # THE ANALOG GEMM GATE, BY NAME. It ran inside the ctest above; it is run
+  # again here, on its own, for two reasons. A skip is honoured by ctest and
+  # must not be honoured for this one in this configuration -- an NPU build has
+  # the tile model, so exit 77 here would mean the gate did not run and nothing
+  # said so. And the result is the thing a reader of this log is looking for:
+  # grxblasGemmEx on the photonic tile, held bit for bit to the vendored model
+  # and to tests/libs/pta_gemm_golden.txt.
+  #
+  # To move the golden data: tests/libs/test_grxblas_pta --regenerate, from
+  # tests/libs, and the diff goes in the same change as whatever moved it.
+  echo
+  echo "==> ANALOG GEMM GATE: grxblasGemmEx on the tile, bitwise against the model"
+  if ( cd "$ROOT/tests/libs" && "$BUILD/cmake-npu/tests/test_grxblas_pta" ) \
+       > "$BUILD/analog-gemm-gate.log" 2>&1; then rc=0; else rc=$?; fi
+  grep -E '^  (ok|FAIL|note) ' "$BUILD/analog-gemm-gate.log" | sed 's/^/  /'
+  if [[ $rc -ne 0 ]]; then
+    [[ $rc -eq 77 ]] && echo "  FAIL  the gate SKIPPED. An NPU build has the tile model; it must run."
+    echo "FAILED: analog GEMM gate (exit $rc)"
+    exit 1
+  fi
+  tail -1 "$BUILD/analog-gemm-gate.log"
 fi
 
 echo "all mock checks passed"

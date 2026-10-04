@@ -148,17 +148,34 @@ void pta_write(void* ctx, uint32_t off, uint32_t v) {
 
 const uint32_t kTileBuilt = NPU_C930_PTA_DEFINED & ~NPU_C930_PTA_MZM_NL;  // 0x5F
 
-bool all_unknown(const npu_c930_analog_t& a) {
-  return a.identified == 0 && a.map_version == -1 && a.analog == -1 &&
-         a.tile_present == -1 && a.activation_bits == -1 &&
-         a.weight_bits == -1 && a.adc_bits == -1 && a.adc_shift == -1 &&
-         a.seed == -1 && a.impairments == -1 &&
-         a.impairments_implemented == -1 && a.impairments_requested == -1;
-}
-
+// The model's configuration: everything that describes an error model which
+// is running, and must not be reported for one that is not.
 bool config_unreported(const npu_c930_analog_t& a) {
   return a.activation_bits == -1 && a.weight_bits == -1 && a.adc_bits == -1 &&
-         a.adc_shift == -1 && a.seed == -1 && a.impairments == -1;
+         a.adc_shift == -1 && a.seed == -1 && a.impairments == -1 &&
+         a.sigma_thermal_q8 == -1 && a.shot_k_q8 == -1 &&
+         a.sigma_prog_q8 == -1 && a.drift_sigma_q8 == -1 &&
+         a.drift_log2_shots == -1 && a.drift_clamp_q8 == -1 &&
+         a.crosstalk_q8 == -1 && a.loop_modes == -1 &&
+         a.calibration_valid == -1;
+}
+
+// The tile's geometry, which is a fact about the build.
+bool geometry_unreported(const npu_c930_analog_t& a) {
+  return a.tile_rows == -1 && a.tile_cols == -1 && a.operand_bits == -1 &&
+         a.accumulator_bits == -1;
+}
+
+bool all_unknown(const npu_c930_analog_t& a) {
+  return a.identified == 0 && a.map_version == -1 && a.analog == -1 &&
+         a.tile_present == -1 && a.impairments_implemented == -1 &&
+         a.impairments_requested == -1 && config_unreported(a) &&
+         geometry_unreported(a);
+}
+
+// PTA_CAPS0 for a tile of the given shape, as c930_npu_core packs it.
+uint32_t caps0(uint32_t rows, uint32_t cols, uint32_t din_w, uint32_t acc_w) {
+  return rows | (cols << 10) | (din_w << 20) | (acc_w << 26);
 }
 
 // ---------------------------------------------------------------------------
@@ -292,6 +309,12 @@ void case_analog_array() {
   check(a.impairments_implemented == 0,
         "nothing implemented is reported as 0 -- it is known, so not -1");
   check(config_unreported(a), "and no model configuration is reported");
+  // PTA_CAPS0 answers on this build too, with the systolic array's shape. It
+  // is not a tile's, so it is not reported as one.
+  regs.r[NPU_C930_PTA_CAPS0 >> 2] = caps0(8, 8, 16, 48);
+  npu_c930_read_analog(&dev, &a);
+  check(geometry_unreported(a),
+        "the array's geometry in PTA_CAPS0 is not reported as a tile's");
 
   // The registers still take writes on this build. That changes nothing about
   // what a GEMM is, because there is nothing here to impair it.
@@ -311,14 +334,19 @@ void case_analog_tile_off() {
   npu_c930_device_t dev;
   npu_c930_attach_model(&dev, pta_read, pta_write, &regs);
   npu_c930_detect(&dev);
+  regs.r[NPU_C930_PTA_CAPS0 >> 2] = caps0(8, 8, 16, 48);
   // Stale configuration, as a previous user would leave it -- and EN set,
   // which is the calibration engine's and makes nothing analog.
   pta_write(&regs, NPU_C930_PTA_BITS, 0x00003688u);
   pta_write(&regs, NPU_C930_PTA_SEED, 0x2au);
+  pta_write(&regs, NPU_C930_PTA_SIGMA_TH, 0x100u);
   pta_write(&regs, NPU_C930_PTA_CTRL, 0x1u);
   npu_c930_analog_t a;
   npu_c930_read_analog(&dev, &a);
   check(a.tile_present == 1, "the tile is reported present");
+  check(a.tile_rows == 8 && a.tile_cols == 8 && a.operand_bits == 16 &&
+        a.accumulator_bits == 48,
+        "and its geometry with it: 8 x 8, 16-bit operands, 48-bit sums");
   check(a.analog == 0, "GEMMs are exact -- EN set does not make them analog");
   check(a.impairments_implemented == (int64_t)kTileBuilt,
         "what the tile could model is reported (0x5f)");
@@ -334,10 +362,17 @@ void case_analog_tile_on() {
   npu_c930_device_t dev;
   npu_c930_attach_model(&dev, pta_read, pta_write, &regs);
   npu_c930_detect(&dev);
+  regs.r[NPU_C930_PTA_CAPS0 >> 2] = caps0(4, 4, 16, 48);
   pta_write(&regs, NPU_C930_PTA_CTRL, 0x0u);                     // EN clear
   pta_write(&regs, NPU_C930_PTA_IMPAIR, kTileBuilt);
   pta_write(&regs, NPU_C930_PTA_BITS, 8u | (8u << 4) | (6u << 8) | (3u << 12));
   pta_write(&regs, NPU_C930_PTA_SEED, 0x2au);
+  pta_write(&regs, NPU_C930_PTA_SIGMA_TH, 256u);
+  pta_write(&regs, NPU_C930_PTA_SIGMA_SH, 148u);
+  pta_write(&regs, NPU_C930_PTA_SIGMA_PR, 1024u);
+  pta_write(&regs, NPU_C930_PTA_DRIFT_CFG, 55u | (31u << 16));
+  pta_write(&regs, NPU_C930_PTA_XTALK_CHI, 26u);
+  pta_write(&regs, NPU_C930_PTA_DRIFT_MAX, 8643u);
   npu_c930_analog_t a;
   npu_c930_read_analog(&dev, &a);
   check(a.analog == 1,
@@ -353,6 +388,27 @@ void case_analog_tile_on() {
   check(a.impairments == (int64_t)kTileBuilt &&
         a.impairments_implemented == (int64_t)kTileBuilt,
         "the enables in force, and the mask of what is implemented");
+  // How much, which a seed and a mask do not say.
+  check(a.sigma_thermal_q8 == 256 && a.shot_k_q8 == 148 &&
+        a.sigma_prog_q8 == 1024 && a.crosstalk_q8 == 26,
+        "the four sigmas, as the registers hold them");
+  check(a.drift_sigma_q8 == 55 && a.drift_log2_shots == 31 &&
+        a.drift_clamp_q8 == 8643,
+        "PTA_DRIFT splits into its sigma and its log2, with the clamp beside");
+  check(a.tile_rows == 4 && a.tile_cols == 4 && a.operand_bits == 16 &&
+        a.accumulator_bits == 48, "the tile it all runs on");
+  check(a.loop_modes == 0 && a.calibration_valid == 0,
+        "the shipped loop order and no trims: the model covers this device");
+
+  // And the two states in which it does not.
+  pta_write(&regs, NPU_C930_PTA_CTRL, NPU_C930_PTA_CTRL_MORDER);
+  regs.r[NPU_C930_PTA_STATUS >> 2] = NPU_C930_PTA_STATUS_CAL_VALID;
+  npu_c930_read_analog(&dev, &a);
+  check(a.loop_modes == 0x4, "MORDER is reported: an order the model does not walk");
+  check(a.calibration_valid == 1,
+        "CAL_VALID is reported: trims the model does not hold");
+  pta_write(&regs, NPU_C930_PTA_CTRL, 0x0u);
+  regs.r[NPU_C930_PTA_STATUS >> 2] = 0;
 
   // The reasons the fields are -1-or-value and 64-bit, each exercised.
   pta_write(&regs, NPU_C930_PTA_BITS, 0u);

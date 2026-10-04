@@ -366,6 +366,19 @@ int npu_c930_read_analog(npu_c930_device_t* dev, npu_c930_analog_t* out) {
     out->impairments             = -1;
     out->impairments_implemented = -1;
     out->impairments_requested   = -1;
+    out->sigma_thermal_q8        = -1;
+    out->shot_k_q8               = -1;
+    out->sigma_prog_q8           = -1;
+    out->drift_sigma_q8          = -1;
+    out->drift_log2_shots        = -1;
+    out->drift_clamp_q8          = -1;
+    out->crosstalk_q8            = -1;
+    out->loop_modes              = -1;
+    out->calibration_valid       = -1;
+    out->tile_rows               = -1;
+    out->tile_cols               = -1;
+    out->operand_bits            = -1;
+    out->accumulator_bits        = -1;
 
     if (!reg_ready(dev)) return -1;
 
@@ -393,6 +406,15 @@ int npu_c930_read_analog(npu_c930_device_t* dev, npu_c930_analog_t* out) {
     }
     out->tile_present = 1;
 
+    // The tile's geometry. PTA_CAPS0 answers on a build with no tile too --
+    // with the systolic array's numbers -- which is why it is read only here,
+    // after PTA_CAPS1 has said there is a tile for it to describe.
+    const uint32_t caps0 = reg_read(dev, NPU_C930_PTA_CAPS0);
+    out->tile_rows        = (int)(caps0 & 0x3FFu);
+    out->tile_cols        = (int)((caps0 >> 10) & 0x3FFu);
+    out->operand_bits     = (int)((caps0 >> 20) & 0x3Fu);
+    out->accumulator_bits = (int)((caps0 >> 26) & 0x3Fu);
+
     // A tile with nothing enabled computes the exact product (the plan's C0
     // gate is that swap being bit-identical). Its configuration registers
     // still hold whatever was last written, and those values describe a model
@@ -410,6 +432,21 @@ int npu_c930_read_analog(npu_c930_device_t* dev, npu_c930_analog_t* out) {
     out->adc_shift       = (int)((bits >> 12) & 0x3Fu);
     out->seed            = (int64_t)reg_read(dev, NPU_C930_PTA_SEED);
     out->impairments     = (int64_t)impair;
+
+    // Every sigma is reported whether or not its impairment is enabled: the
+    // mask says which of them the tile applies, and reading the two together is
+    // how a zero that was meant differs from a zero that was left.
+    const uint32_t drift = reg_read(dev, NPU_C930_PTA_DRIFT_CFG);
+    out->sigma_thermal_q8 = (int)(reg_read(dev, NPU_C930_PTA_SIGMA_TH) & 0xFFFFu);
+    out->shot_k_q8        = (int)(reg_read(dev, NPU_C930_PTA_SIGMA_SH) & 0xFFFFu);
+    out->sigma_prog_q8    = (int)(reg_read(dev, NPU_C930_PTA_SIGMA_PR) & 0xFFFFu);
+    out->drift_sigma_q8   = (int)(drift & 0xFFFFu);
+    out->drift_log2_shots = (int)((drift >> 16) & 0x1Fu);
+    out->drift_clamp_q8   = (int)(reg_read(dev, NPU_C930_PTA_DRIFT_MAX) & 0xFFFFu);
+    out->crosstalk_q8     = (int)(reg_read(dev, NPU_C930_PTA_XTALK_CHI) & 0xFFu);
+    out->loop_modes       = (int)((reg_read(dev, NPU_C930_PTA_CTRL) >> 7) & 0x7u);
+    out->calibration_valid =
+        (reg_read(dev, NPU_C930_PTA_STATUS) & NPU_C930_PTA_STATUS_CAL_VALID) ? 1 : 0;
     return 0;
 }
 

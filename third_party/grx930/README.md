@@ -1,17 +1,21 @@
-# `npu_dpi_shim` — vendored from the GRX930 team
+# `npu_dpi_shim` and the PTA error model — vendored from the GRX930 team
 
-`npu_dpi_shim.c` / `.h` are **not ours**. They arrive from the GRX930 team's
-tree and are vendored here byte-for-byte so that updating them is a drop-in
-copy. Every workaround lives in our adapter
+Nothing in this directory is ours. `npu_dpi_shim.c` / `.h` arrive from the
+GRX930 team's tree and are vendored here byte-for-byte so that updating them is
+a drop-in copy. Every workaround lives in our adapter
 (`src/backends/npu_c930/test_npu_c930_shim.cc`), never in these two files, so
 that a re-import cannot silently drop a fix.
+
+The photonic tile's error model came with them at the last import, and it has a
+table and a section of its own below: `pta_tile_model.c` / `.h`, and the vectors
+that say this copy is the right one.
 
 | | |
 |---|---|
 | Source | GRX930 tree, `sim/npu_dpi_shim.{c,h}` |
 | First imported at | `817eb33` — "Address grxcp team feedback: context pointers, shim, doc fixes" |
-| Current import | `431cca2` — "npu_dpi_shim: answer on the PTA block, as a build with no tile" |
-| Sizes | `.c` 15264 B, `.h` 8881 B |
+| Current import | `5ad8426` — "npu_dpi_shim: an optional build with the tile, pta_tile_model.c behind it" |
+| Sizes | `.c` 24026 B, `.h` 12105 B |
 | Builds | clean under `gcc -O1 -Wall -Wextra -Wpedantic` |
 
 ## What it is, and what it is not
@@ -209,3 +213,57 @@ decision and are evidence about the decision only.
 A shim that reports an emulated GEMM honestly needs grx930's tile model linked
 behind it, and that model vendored here with its vector check. That is the PTA
 plan's S2, not a missing feature of this import.
+
+## Round four: the tile build, and the model behind it
+
+That is what this import is. The shim can now be compiled as a build that has
+the tile, and the tile's arithmetic came with it.
+
+| File | Vendored at | Size | What it is |
+|---|---|---|---|
+| `pta_tile_model.c` | `70aae63` | 17776 B | The error model: C99, `<stdint.h>` and `<stdlib.h>` and nothing else |
+| `pta_tile_model.h` | `70aae63` | 9502 B | Its interface |
+| `pta_vectors.txt` | `f95100f` | 11297 B | Sixteen cases the model must reproduce bit for bit |
+| `pta_vectors_check.c` | `f95100f` | 10123 B | The program that holds a copy to them |
+
+The commit beside each file is the last one in grx930 to touch it; all four are
+as they stand at `5ad8426`.
+
+**Why a model is vendored with a contract, and not just a header.** A copy that
+quietly dropped an impairment would compile, run, and be agreed with by every
+test here, because every test here would be using the copy. grx930's answer is
+`pta_vectors.txt`: the model's own answers, frozen, for one case per impairment
+and the combinations that interact, with a check that is deliberately not a
+diff — the clear case has to equal an integer GEMM computed without the model,
+no case may equal the clear one, and the drift cases have to move between their
+two GEMMs. Their RTL is held to the model by their gates; the file holds us to
+the same model with a C compiler. `ci/build_mock.sh` runs it on every build, and
+then runs it against a model with its quantiser's rounding removed and requires
+that to fail.
+
+**What the tile build of the shim is.** Compiled with `NPU_DPI_WITH_PTA` and
+linked with the model, `npu_dpi_set_tile()` makes the shim a build with a tile:
+`PTA_CAPS1` reports every impairment but MZM_NL, and a START with `PTA_IMPAIR`
+set runs through `pta_gemm()`. Measured here, through the runtime:
+
+| | |
+|---|---|
+| The device property | tile present, implements `0x5f`, 4 × 4 with 16-bit operands and 48-bit sums |
+| A GEMM with `PTA_IMPAIR` clear | the exact product, 96 of 96 elements |
+| Eight impaired cases, 556 results | each equal to the model called directly, and to `tests/libs/pta_gemm_golden.txt` |
+| The two drift cases | the second GEMM differs from the first: the tile kept its state |
+
+`tests/common/npu_tile_adapter.h` is how a test asks for it, and
+`tests/CMakeLists.txt` compiles the shim with the model for any test that
+includes that header. Every other test still gets the build with no tile.
+
+**What it is not.** It has no calibration engine, none of `PTA_CTRL`'s loop-order
+modes and no timing; its tile kind reads 3, "the model on its own", which no RTL
+build reports. Its geometry is its own 4 × 4, not the SoC's 8 × 8. And it is a
+model: a result through it is a statement about the error model's arithmetic
+and about our host's path to it, and never about a c930.
+
+**One thing to know before configuring it.** The quantiser keeps the top of the
+operand word, and this tile's word is 16 bits. A setting of 6 is a six-bit
+quantiser on grx930's 8-bit bench tile and rounds every int8 operand to zero
+here. Five and six bits of an int8 are 13 and 14.

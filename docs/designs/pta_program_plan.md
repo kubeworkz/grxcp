@@ -888,7 +888,7 @@ held to once there is one.
 |---|---|---|---|
 | S0 | **Done, below.** The D2 property specified: its fields, what an NPU without a tile reports, and the `grx-smi` line | Review; no code. CPU document §7.1, which also states what S1 must do to satisfy it, so the specification is testable rather than agreeable | D2 |
 | S1 | **Done, below.** The property populated from the PTA CSRs, and the vendored DPI shim extended to answer on them | `AGENTS.md` §3: every field sourced or reported unknown (−1); the NPU BACKEND GATE in `ci/build_mock.sh` green. Sourcing them took four read-only words the c930 did not have, and S0's own table was keyed on the wrong bit | S0, C4's CSR map |
-| S2 | The two gates: bitwise against the model, its golden data regenerated only as a reviewed step, and the distributional report | CPU document §7 | S1 |
+| S2 | **The bitwise gate done, below; the distributional report is next.** The two gates: bitwise against the model, its golden data regenerated only as a reviewed step, and the distributional report | CPU document §7. Gate 1 is `tests/libs/test_grxblas_pta.cpp`: 556 results in eight cases, each held to the device, to the model rebuilt from the device property alone, and to committed golden data | S1 |
 
 **S0, specified.** CPU document §7.1. D2 had settled that the property is a
 struct rather than a flag; S0 is its shape, and three things came out of writing
@@ -981,6 +981,45 @@ is what it computes. A mock that reports an *emulated* GEMM needs the tile model
 behind the shim and G0's vector check in grxcp's CI, and that is S2's bitwise
 gate.
 
+**S2, the bitwise gate.** Built as S1 left it: grx930's shim can now be a build
+with the tile, `pta_tile_model.c` behind its registers, and grxcp vendors that
+model with the vectors G0 froze for it. This is the first use of G0's contract by
+a second repository, and it is what the contract was for — `ci/build_mock.sh`
+holds the vendored copy to grx930's sixteen cases with a C compiler, and then
+checks that a deliberately wrong model fails them. CPU document §7 has the gate.
+Three things came out of building it.
+
+**The property could not reproduce an answer.** D2 settled on a struct "carrying
+the effective bits and the seed", S0 specified it as enough to reproduce a
+result, and S1 built it. It carried no sigma, no crosstalk and no drift, so it
+described the model's shape and not its size. That only showed when the gate was
+written to rebuild each result *from the property alone* rather than from the
+test's own knowledge of what it had programmed — at which point there was
+nothing to rebuild from. The struct carries the rest now, and the gate is what
+keeps it sufficient: drop one field and the cases that depend on it go red.
+
+**"Effective bits" are not effective without the width.** `PTA_BITS` counts bits
+of the operand *word*, and the quantiser keeps the top of it. On the 8-bit bench
+tile, six activation bits is a six-bit DAC. On the SoC's 16-bit tile it rounds
+every int8 operand to zero. So the board plan's version 0 and version 1
+allowances — five and six bits, measured on the bench tile — are 13 and 14 on the
+SoC tile for int8 data. The property reports the width, and `grx-smi` says when a
+setting zeroes the operands. Anyone taking §4.3's bit counts to the SoC tile
+unconverted gets a C of zeros, exactly as configured.
+
+**The operand roles were set by a transpose.** For `C = A · B` through
+`grxblasGemmEx`, A is the weight set and each column of B is a shot. Nobody
+chose that: it fell out of handing a column-major call to a row-major engine. It
+happens to be the natural reading of `Y = W · X`, and it is now pinned by a case
+that impairs only the weight side.
+
+**What is still S2's.** Gate 2, the distributional report: how far the model's
+answer is from the product, at the operating points §4.3 of the board plan names.
+Those points are now expressible on this tile, which is what gate 1 had to settle
+first. And grxcp reports the tile without being able to configure it
+(`cuda_mapping.md` 7.40), which the report will have to work around the same way
+the gate did.
+
 ---
 
 ## 4. Order
@@ -990,7 +1029,7 @@ gate.
 | Now | Immediately, in parallel | A3; G1 (D1–D4 settled; F0 and C0 done). S0 and A-synth are done |
 | Next | C0 green, as it now is | C1 and C3 are green; G0's vendoring half has reported (below) and what it still owes, like G1, is SimX (F1 done) |
 | Then | C1, C2 tile, MB, C4, SoC-B, F2 and F3 now green | G2: G1's model has reported, and what it still owes G2 is the SimX confirmation rather than the answer. Track F is complete: F3's handoff is in the board plan's X2 §1, with the host's ~1,090 cycles labelled there as this SoC's MMIO path rather than a fabric rate |
-| Last | C2 tile, MB, C3 and A-synth green | C4; then S1 and S2 on its CSR map, F3 on its numbers, and G3. S1 is done; S2 starts with the tile model behind the shim |
+| Last | C2 tile, MB, C3 and A-synth green | C4; then S1 and S2 on its CSR map, F3 on its numbers, and G3. S1 is done, and so is S2's bitwise gate; its distributional report is what is left |
 
 The critical path is C0 → C1 → C2 tile → MB → C4. Everything else runs beside
 it or hangs off one of its gates, and nothing on it waits for the GPU.

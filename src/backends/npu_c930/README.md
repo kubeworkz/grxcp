@@ -78,6 +78,15 @@ not decide whether a GEMM is analog. The header has the reasoning, and
 `test_npu_c930_model.cc` has a register file for each row and for the two ways
 of getting it wrong.
 
+In the last row the struct also carries the rest of the model — the sigmas, the
+drift walk, the crosstalk — and, wherever a tile is present, the tile's geometry
+from `PTA_CAPS0`. That is what lets the answer be recomputed and not just
+described: `tests/libs/test_grxblas_pta.cpp` rebuilds every result from the
+device property and the vendored model, and holds `grxblasGemmEx` to it bit for
+bit. Two fields say when that will not work — `loop_modes` and
+`calibration_valid` — and the bit counts are counts of `operand_bits`, not of
+the int8 the caller sent.
+
 ### Register map reference
 
 Base: `0x4000_0000` (from `c930_soc_top.sv`)

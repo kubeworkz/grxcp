@@ -2217,6 +2217,32 @@ the smaller change and the one that cannot be ignored by a caller who does not
 look. Not built: it wants a decision about whether grxcp is ever going to *ask*
 for the stage, and that is `grxdnn`'s question rather than this register's.
 
+### 7.40 The photonic tile can be reported and not configured — **OURS, open**
+
+`grxDeviceProp_t.analogGemm` says what a GEMM on the c930's tile is: which
+impairments are enabled, how large, on what tile. Nothing in GRXCP *sets* any of
+it. The tile's registers — `PTA_IMPAIR`, `PTA_BITS`, `PTA_SEED`, the sigmas, the
+model reset — are written by firmware, by a debugger, or by whoever had the
+device last, and a GRXCP program finds out afterwards by reading the property.
+
+`tests/libs/test_grxblas_pta.cpp` is the evidence. To hold `grxblasGemmEx` to
+the error model it has to configure the model, and it does that by writing the
+register model's CSRs directly, behind the runtime's back. That is honest for a
+test — it is how another user of the device would do it — and it is not an
+answer for a program.
+
+Two consequences worth having in writing. A program cannot make its analog
+result reproducible on its own: the seed is part of the configuration it does
+not own. And it cannot reset drift, which is device state, so with DRIFT enabled
+its answer depends on what ran before it.
+
+**What would close it.** A call that owns the configuration for the current
+device — the fields of `grxAnalogGemm_t` are very nearly its argument — together
+with the model reset. Not built, deliberately: whether an application should be
+able to make its own device inexact is a product question (the board plan's §8
+asks whether the c930 keeps a tile at all), and the configuration call is the
+wrong place to answer it by accident.
+
 ## 8. Where GRX-G100 is *ahead* of the reference
 
 Worth recording, because the platform should expose these rather than
