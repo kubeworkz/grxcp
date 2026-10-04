@@ -54,7 +54,7 @@ Four parties own the board between them:
 | 1 | GRX930 ↔ GRX-G100 | CXL 2.0 (CXL.io, .cache, .mem) on the PCIe 5.0 PHY | x16, 32 GT/s a lane, about 64 GB/s a direction before overhead | grx930: root port, home agent, HDM decoders | grxgpu: Type-2 device | B1, B3; rate from X2 |
 | 2 | GRX-G100 ↔ PTA chiplet | UCIe-S, a streaming protocol in a FLIT format, with the adapter's CRC and retry | One x16 module at 32 GT/s is 57.6 GB/s a direction at X2's assumed 0.9 efficiency. **Module count follows the chiplet's geometry** (§7) | grxgpu: UCIe port, fed by a copy engine | Chiplet team: EIC | B4; rates and counts from X2 |
 | 3 | EIC ↔ PIC | Analog: DAC drive to the modulators, photocurrent back from the detectors | One drive line a weight cell and one an input modulator, one detector a column: `k·n + k + n` lines, 16,704 at 256 × 64. The geometry is still §7's | Chiplet team | Chiplet team | B4, B5; resolutions from X1 |
-| 4 | Laser module → PIC | Light, on polarization-maintaining fiber | Power, wavelength, noise and **kind** all **open** (board plan §8, question 8). For scale: a 64-column tile at 1 GS/s wants 0.33–3.3 W behind 10–20 dB of loss, set by the receiver's noise and not by X1's photon row, and intensity noise within about −144 dB/Hz. This row has said 0.16–1.6 W, sized from X1's version 0, and then 0.66–6.6 W and −150, from version 1's receiver noise read in the wrong ADC's LSB (board plan §4.3) | Board team | Chiplet team | B5, X1; figures from [`pta_shot_rate.py`](pta_shot_rate.py) §3 and §6 |
+| 4 | Laser module → PIC | Light, on polarization-maintaining fiber | Power, wavelength, noise and **kind** all **open** (board plan §8, question 8). For scale: a 64-column tile at 1 GS/s wants 0.33–3.3 W behind 10–20 dB of loss at the receiver B5 assumed, and 0.09–0.88 W at one that has been measured (board plan B5). It is set by the receiver's noise and not by X1's photon row, and intensity noise within about −144 dB/Hz. This row has said 0.16–1.6 W, sized from X1's version 0, and then 0.66–6.6 W and −150, from version 1's receiver noise read in the wrong ADC's LSB (board plan §4.3) | Board team | Chiplet team | B5, X1; figures from [`pta_shot_rate.py`](pta_shot_rate.py) §3 and §6 |
 | 5 | Board controller ↔ all | SMBus or I3C: rails, temperatures, the laser and its interlock | Rate **open**, with the controller (§7) | Board team | Each die's management pins | B7 |
 | 6 | GRX930 ↔ DDR5 | DDR5 (or LPDDR5) | Channels, width and speed grade **open**, with part selection | grx930 team | Board team | B2 |
 | 7 | GRX-G100 ↔ GDDR6 | GDDR6 | Channels, width and speed grade **open**, with part selection | grxgpu team | Board team | B2 |
@@ -164,6 +164,14 @@ Sequencing is a dependency list, not a schedule: the controller comes up first
 and brings up the rails; the laser may not emit before the PIC's bias is set
 and the interlock is satisfied (B5); the CXL link trains only after both
 packages are out of reset.
+
+*For scale, 2026-10-04.* [`pta_power.py`](pta_power.py) puts a floor under the
+chiplet's rails from published parts, for a 256 × 64 tile at 1 GS/s. The analog
+rail's receivers and ADCs are 0.5 to 0.9 W. The drive to the modulators and the
+weights is 0.1 to 4 W, depending on a swing and a capacitance that are both
+open. The link is 0.13–0.22 W with the weights resident and 1.8–3.1 W with them
+re-sent, which is both ends of it. None of this is a current. It says which
+rail is large and what makes it so, not what regulator it needs.
 
 ---
 

@@ -226,6 +226,18 @@ corrected the same day). Everything downstream moved with it — the loss ceilin
 from 13.9 dB to 16.9, the emitter powers, the intensity-noise limit — and is
 restated where it stands.
 
+*And at a receiver that has been measured, 2026-10-04, it is a quarter of that
+again.* Every figure above is linear in the 1 µA this paragraph assumed. A
+published 40 nm receiver measures 7.2 pA/√Hz up to 1.5 GHz (M. Atef and H.
+Zimmermann, *IEEE Trans. Circuits Syst. I* 60, 2013), which over the bandwidth
+a 1 GS/s shot needs is 0.27 µA. [`pta_power.py`](pta_power.py) carries B5's
+method to it: **0.09–0.88 W** under version 1, and a 1.6 W laser stands 22.6 dB
+of loss, which is past the whole of the 10–20 dB this decision ranged over. The
+1 µA figures stay beside these as the conservative end. That receiver had its
+photodiode beside it and a limiting amplifier after it, and whether it keeps
+its noise a bond away from the detector, or stays linear over seven bits, its
+paper does not say. That is now the measurement to ask for.
+
 **B6 — Silicon nodes, and the board before silicon.** grx930's manufacturing
 plan takes the SoC to SKY130 first, then to TSMC N28, and freezes the RTL now.
 SKY130 has no SerDes, by that plan's own list of its limits. The PCIe
@@ -575,6 +587,38 @@ The converters are stated as a rate and no further: 64 ADCs at the shot rate is
 64 GS/s of 7-bit conversion at 1 GS/s. Turning that into watts needs a device
 figure this program does not hold.
 
+*Priced, 2026-10-04* ([`pta_power.py`](pta_power.py)), from published parts and
+not from a design. For 256 × 64 at 1 GS/s under version 1:
+
+| On the interface chip | Watts | From |
+|---|---|---|
+| 64 receivers | 0.26 | A measured 40 nm amplifier, 4.1 mW |
+| 64 ADCs at 7 bits | 0.28–0.59 | Three measured converters near 1 GS/s, at 34 to 72 fJ a conversion step |
+| Driving 256 input modulators | 0.08–1.5 at a 2 V swing, 0.21–3.8 at 5 V | TFLT's 1.96 V·cm, and an electrode capacitance that is **assumed** and swept |
+| Rewriting 16,384 weights a batch | 0.002–0.32 | A cell capacitance that is **assumed** and swept |
+| The link, weights re-sent with each batch | 1.8–3.1 | UCIe's own target of 0.75–1.25 pJ a bit, both ends |
+| The link, weights resident | 0.13–0.22 | The same |
+| **In all** | **0.8 to 8** | A floor: no DAC, weight store, clock or ring control is in it |
+
+Four things in it.
+
+- **The converters are half a watt to under one**, and the ADC's seventh bit
+  is as much again as the first six.
+- **Two things can each cost more than all the converters.** The link, if the
+  weights are re-sent with every batch, and the inputs' drive at a high swing.
+  Residency is worth nearly fourteen times the link's power, as it was worth sixteen
+  times the feed (§8, question 1), and the weight store that buys it is still
+  unsized.
+- **The swing buys area with power, one for one.** A Pockels modulator shortens
+  as its swing rises and draws more by the same factor. The floorplan's "a 1 V
+  chip does not fit" has its other half here: a 5 V chip pays five times a 1 V
+  one's drive.
+- **With the laser it comes to 50 to 540 fJ a multiply-accumulate.** For
+  comparison only: a microring design's estimate of itself at four bits is
+  28 fJ, and the same paper puts a 7 nm digital part at 1,140 fJ at eight (T.-C.
+  Hsueh, Y. Fainman and B. Lin, arXiv:2402.08192). Neither is a measurement of
+  a tile like this one, and this figure is a floor.
+
 *What the floorplan asks, 2026-10-03.* Two things neither table has a row for
 ([`pta_floorplan.py`](pta_floorplan.py)). **The swing.** On TFLT a modulator's
 length is 1.96 V·cm over the voltage its DAC swings, so the interface chip's
@@ -594,8 +638,8 @@ rows between them one at a time, from both ends:
 | Row | v0 → v1 | Buys, tightened from v0 | Costs, relaxed from v1 | What it costs to build |
 |---|---|---|---|---|
 | Activation DAC | 5 → 6 bits | 0.10 | 0.10 | A bit on every input's DAC |
-| ADC | 6 → 7 bits | 0.09 | 0.12 | A bit on every column's converter, at the shot rate. Unpriced, and it sits on the tile (§8, question 1) |
-| Receiver noise | 1 → 0.5 LSB of an 8-bit ADC | 0.18 | 0.19 | **Twice the laser**: 0.33–3.3 W in place of 0.16–1.6 (B5) |
+| ADC | 6 → 7 bits | 0.09 | 0.12 | A bit on every column's converter, at the shot rate: **0.14–0.30 W** for the 64, on the tile (priced above, 2026-10-04) |
+| Receiver noise | 1 → 0.5 LSB of an 8-bit ADC | 0.18 | 0.19 | **Twice the laser**: 0.33–3.3 W in place of 0.16–1.6 at the receiver B5 assumed, 0.09–0.88 in place of 0.04–0.44 at a measured one (B5) |
 | Light at each detector | 3 → 15 photons per such LSB | 0.34 | 0.34 | Nothing: see below |
 | Weight programming error | 4 → 1 LSB of an 8-bit weight | 0.42 | 0.33 | The weight DAC's precision, or C3's trim |
 | Crosstalk | 10% → 2% | 0.08 | 0.16 | Layout on the photonic die |
@@ -852,6 +896,15 @@ among the bounds that bind.
    and moves this directly — a 256 × 128 tile has twice the detectors and wants
    twice the laser.
 
+   *At a measured receiver the ceiling is 22.6 dB, 2026-10-04.* All of the above
+   is at the 1 µA B5 assumed. A published receiver's noise is 0.27 µA over the
+   same bandwidth (B5; [`pta_power.py`](pta_power.py)), and the ceiling moves
+   with it, past the top of B5's range: a laser of 0.88 W or more reaches 1 GS/s
+   at any loss in it. So the receiver would bind only for a smaller laser than
+   that, and the feed becomes the bound that matters. The number to measure is
+   still the receiver's noise. It is now one where a published part says the
+   answer may be nearly four times better than this plan assumed.
+
    A modulator's line rate does not enter. A table of NRZ benchmarks was offered
    as the tile's shot rate — 56 Gbaud in production, 100 to 180 Gb/s in
    research — and it is B8's confusion again: those rates are recovered by an
@@ -859,8 +912,10 @@ among the bounds that bind.
 
    A shot rate is only a throughput if the weights keep up, and that is now a
    requirement on the interface chip rather than an unknown: two weight banks
-   and a write path `k×n / batch` cells wide (§4.3). Still not priced is the
-   converters' power, which needs a device figure.
+   and a write path `k×n / batch` cells wide (§4.3). This paragraph ended
+   "still not priced is the converters' power, which needs a device figure"
+   until 2026-10-04. It has been priced from published parts, in §4.3: half a
+   watt to under one, and not the largest thing on the chip.
 
    **A package with millimeters on it, 2026-10-03.** Nothing above has a length
    in it. One published package does: X. Li et al., "1.6 Tbps FOWLP-Based
@@ -1075,7 +1130,9 @@ among the bounds that bind.
    which sit on top of the tile; and behind the resonant reading, a TFLT ring's
    size, its linewidth and the swing that moves it by one. That a modulator's
    lateral pitch can be the bond's, and that a cell is no smaller than its pad,
-   are assumptions the script marks where it uses them.
+   are assumptions the script marks where it uses them. (The first of those was
+   priced the next day, in §4.3: the converters, the drive and the link. The
+   weight store, the DACs and whatever holds a ring on its line were not.)
 2. **What does the development kit cost, and how many are built?** That settles
    B1 and B2 more than any technical argument does.
 3. **Does the GRX930's NPU keep a PTA of its own?** The c930 PTM work is built
