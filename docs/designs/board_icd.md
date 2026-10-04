@@ -94,6 +94,14 @@ says it could not take one, or how a result is matched to what asked for it. The
 board plan's X5 built the chiplet's twin and had to stand a function call here
 ([`pta_chiplet_regmap.md`](pta_chiplet_regmap.md) §6). §7, item 7.
 
+*The host's half was proposed to grxgpu the same day*
+(`grxgpu/docs/proposals/pta_chiplet_host_path.md`, the board plan's §4.2). It
+says what the GPU is asked to do: one command, a GEMM with its operands in the
+GPU's memory, ending done, refused or lost. It does not say how this link frames
+that, so item 7 stands, narrowed. It also asks for the register block as a range
+of the GPU's DCR addresses and not as MMIO in its BAR, which the paragraph above
+and the map's §1 still say. Neither changes until grxgpu answers.
+
 **Link 3.** This is the only interface where the error budget is a wiring
 requirement rather than a protocol: X1's version 1 asks for 6-bit activation
 DACs, a 7-bit ADC, receiver noise within half an 8-bit ADC LSB — a quarter of
@@ -249,7 +257,8 @@ board plan's §8 holds the ones that are questions rather than gaps.
 7. **What a command on link 2 is**: its framing, its flow control against the
    chiplet's queue, and how a refusal and a result come back. Owed by L3 and the
    chiplet team together, and the twin waits on it for a data path that is more
-   than a function call.
+   than a function call. What the GPU is asked to carry has been proposed (§2,
+   link 2's last note); the framing has not.
 
 ---
 
