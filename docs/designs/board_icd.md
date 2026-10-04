@@ -87,6 +87,13 @@ substrate, at the package's pitch and not the PHY's
 ([`pta_floorplan.py`](pta_floorplan.py) §5). That is a tutorial's summary and
 not the specification, so item 5 of §7 stands.
 
+*What it carries has no format, 2026-10-04.* The table says a streaming protocol
+in a FLIT format, and X2 priced the bytes. Nothing says what a command is: how a
+GEMM, or a weight load, or a batch of activations is framed, how the chiplet
+says it could not take one, or how a result is matched to what asked for it. The
+board plan's X5 built the chiplet's twin and had to stand a function call here
+([`pta_chiplet_regmap.md`](pta_chiplet_regmap.md) §6). §7, item 7.
+
 **Link 3.** This is the only interface where the error budget is a wiring
 requirement rather than a protocol: X1's version 1 asks for 6-bit activation
 DACs, a 7-bit ADC, receiver noise within half an 8-bit ADC LSB — a quarter of
@@ -239,6 +246,10 @@ board plan's §8 holds the ones that are questions rather than gaps.
    specification rather than assumed here.
 6. **The FPGA platform for rev 0**, which will have its own, shorter version of
    this document. Board plan §8, question 6.
+7. **What a command on link 2 is**: its framing, its flow control against the
+   chiplet's queue, and how a refusal and a result come back. Owed by L3 and the
+   chiplet team together, and the twin waits on it for a data path that is more
+   than a function call.
 
 ---
 

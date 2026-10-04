@@ -214,6 +214,25 @@ ablating the `DONE` check fails exactly the wedged case.
 is right. It says nothing about the c930, and must never be reported as the NPU
 working — the same rule `tests/mock/` lives under.
 
+The **PTA CHIPLET TWIN GATE** (`src/backends/pta_chiplet/test_pta_chiplet_twin.cc`)
+holds the board plan's X5 twin to two things. To its map,
+`docs/designs/pta_chiplet_regmap.md`: identity, the per-GEMM seed, 64-bit
+counters, the completion contract behind a link, the calibration engine's words.
+And to the vendored error model: every GEMM through the twin is `pta_gemm()`
+called directly, bit for bit, and every calibration is `pta_cal_bank()`, on a
+reference device the twin never sees. It also points this backend's own register
+reader at the twin through a change of base, which is that map's claim that one
+driver addresses a c930 tile and a chiplet. It needs a C and a C++ compiler and
+nothing else, so it runs in tier 1 everywhere.
+
+Then it builds three twins that are each wrong in one way, and has to fail
+against each: `PTA_TWIN_ABLATE_SEED` runs every GEMM on `PTA_SEED` itself,
+`PTA_TWIN_ABLATE_CAL_GUARD` takes a command into a calibrating tile, and
+`PTA_TWIN_ABLATE_RST_GUARD` honours a model reset under a running command.
+
+**A twin is not a chiplet**, and there is no chiplet. A green run says the map
+can be implemented as written and that this implementation is the model.
+
 The **NPU GROUNDWORK** gate is phase 7 work that can be checked before there is
 an NPU. `grxcp_architecture.md` section 6 fixes the c930 NPU's profile as
 `GRX_CAP_GEMM` without `GRX_CAP_KERNEL_LAUNCH`, and fixes what a launch on it

@@ -321,7 +321,7 @@ tree. So L4 is planned alongside L1, not after it.
 | X2 | **Predicted, below.** Link sizing in [`pta_chiplet_link.py`](pta_chiplet_link.py), which adds the die-to-die term to F1's model and carries the PTA plan's F3 handoff | Predictions stated before any RTL, and every number traced, as F1's were | B4, F1 |
 | X3 | **Specified, measured and built:** [`pta_chiplet_calibration.md`](pta_chiplet_calibration.md), with C3(a)'s recovery and C3(b)'s RTL in its §8 — the trim returns a tile at chance to within 0.01 points of the no-drift case, and the engine that writes it agrees with the C reference cell for cell | C3's own gate, at TFLT's and TFLN's drift | Done |
 | X4 | **Drafted:** [`pta_chiplet_regmap.md`](pta_chiplet_regmap.md) — the §3.1 block at its own offsets in the GPU's BAR, with identity, interrupts and 64-bit counters added, and §3.2's contract restated for a device behind a link | Review | B4, B7 |
-| X5 | The digital twin: `pta_tile_model.c` behind X4's map, so that drivers and grxcp can bring the PTA up before silicon | grxcp's backend gates pass against it, bitwise against the model | X4 |
+| X5 | **Built, below:** the digital twin, `pta_tile_model.c` behind X4's map, so that drivers and grxcp can bring the PTA up before silicon | grxcp's backend gates pass against it, bitwise against the model. Bitwise against the model: met. Through grxcp's runtime: not yet, and S4's | X4 |
 
 **X2, predicted.** [`pta_chiplet_link.py`](pta_chiplet_link.py) prices the
 link the way F1 priced the c930's feed, and carries F3's handoff in its first
@@ -396,6 +396,52 @@ output, 0.9 link efficiency, a 100 ns round trip, and candidate geometries
 rather than a settled one (§8) — are listed in the script and marked where they
 are used.
 
+**X5, built 2026-10-04.** `src/backends/pta_chiplet/` holds the twin: X4's map
+as a C register file, the chiplet's own command queue, a clock and the
+calibration contract, in front of grx930's error model and calibration
+reference. None of the tile's arithmetic is in it. Its gate is in tier 1
+(`ci/build_mock.sh`, the PTA CHIPLET TWIN GATE) and
+[`pta_chiplet_regmap.md`](pta_chiplet_regmap.md) §6 has what it holds. Four
+things came out of building it.
+
+- **The model is behind the map, bit for bit.** 156 checks at three
+  geometries: every GEMM through the twin equals `pta_gemm()` called directly
+  and every calibration equals `pta_cal_bank()`, on a reference device the twin
+  never sees. Three twins that are each wrong in one way fail it.
+- **P2's second gate half passes on it now.** grx930's accuracy harness,
+  unedited, with the twin where the model was: all 220 evaluations of §4.3's
+  budget — 44 settings, five networks, 1,865,160 GEMMs — print the line they
+  printed on 2026-10-03, byte for byte. So "the D3 network runs through the
+  emulated PTA bit-identical to `pta_mnist`'s C reference" is true of the twin.
+  Ten of those runs age the tile first, by six minutes of drift or by an hour,
+  and that goes through a call that is the twin's and not the map's: no register
+  ages a device. P2's other half, a CXL host enumerating the device, still needs
+  a board.
+- **One driver does address both maps.** The c930 backend's register reader
+  identifies the twin and reports its tile through a change of base and nothing
+  else, which is X4's §1 as a test and no longer as a claim.
+- **The map cannot issue work.** X4 is the control window, link 2 carries the
+  work, and nothing says what a command on that link is. The twin stands a
+  function call in its place and takes a whole GEMM at once. So it says nothing
+  about the link: what X2 priced is what crosses it each shot, and that is the
+  part the twin does not have. The gap is L3's and the chiplet's
+  ([`board_icd.md`](board_icd.md) §7).
+
+Six smaller things are recorded against the map in its §6 and §7: BUSY has to
+cover the chiplet's queue; the affine has eight words and the tile 64 columns;
+`SAT_THRESHOLD` has no threshold; a calibration's refusal is read in two places
+by one driver; a host cannot restore a saved trim; and a GEMM's seed cannot be
+reported without its index.
+
+What it is not. It is not a device grxcp can see: nothing enumerates it, so
+`grxblasGemmEx` does not reach it and X5's gate is met against the model and not
+yet through the runtime. That is S4. Its calibration scheduler is off, so the
+comparison of schedulers that
+[`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) §7 assigns to this
+twin is still owed. And it is a model: a result through it is a statement about
+the error model's arithmetic and a driver's use of the map, and not about a
+chiplet.
+
 ### 3.4 Track S — grxcp
 
 | Step | What | Gate | Needs |
@@ -403,7 +449,7 @@ are used.
 | S1 | Enumeration over CXL: the GPU, and its PTA, found through configuration space | [`heterogeneous_devices.md`](heterogeneous_devices.md) §4's rule: a device that is not present is not enumerated | L4, X4 |
 | S2 | A coherent shared pool: pointers valid on both the CPU and the GPU, beside the per-device spaces of §4.1 | Each coherent allocation reported through a device property, and no pointer resolved to the wrong device | L1, L2 |
 | S3 | The dispatch cost model: the §2.1 model with X2's link terms and C1's accuracy, placing each GEMM on the PTA, the GPU or the NPU | Its predictions checked on rev 0 | X2, P2 |
-| S4 | The PTA reported through the PTA plan's D2 property — effective bits, seed, impairment mask — from the twin now and from silicon later | `AGENTS.md` §3: every field sourced or reported unknown (−1) | X5 |
+| S4 | The PTA reported through the PTA plan's D2 property — effective bits, seed, impairment mask — from the twin now and from silicon later. X5 is built, and found one thing this step has to add: on the chiplet a GEMM's seed is derived from `PTA_SEED` and the GEMM's index, so the property needs the index or it describes a run and not a result | `AGENTS.md` §3: every field sourced or reported unknown (−1) | X5 |
 
 ---
 
@@ -820,7 +866,8 @@ the fifth-best published, and next to nothing if it is the best.
   Arty A7 SoC's bus.
 - Step F3's requirements for the fabric go to X2.
 - G2's cluster-scope tile gives way to the chiplet attach (B4).
-- The error-model tile becomes the chiplet's digital twin (X5).
+- The error-model tile becomes the chiplet's digital twin (X5). *Built
+  2026-10-04*, §3.3.
 - The scope lines of both integration documents are rewritten (§6).
 
 ---
@@ -832,7 +879,8 @@ the fifth-best published, and next to nothing if it is the best.
    [`board_icd.md`](board_icd.md),
    [`pta_chiplet_regmap.md`](pta_chiplet_regmap.md), §4.3 and §3.3.
 3. C3 continues in the PTA program, building what X3 specifies.
-4. P2, as soon as B6 names the FPGA platform.
+4. P2, as soon as B6 names the FPGA platform. X5's twin is built, and the half
+   of P2's gate that needs no board already passes on it (§3.3).
 5. L1–L4, in grx930's and grxgpu's silicon plans.
 6. P1, before any package is committed.
 7. P3, last.

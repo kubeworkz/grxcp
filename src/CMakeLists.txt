@@ -37,6 +37,12 @@ if(GRXCP_ENABLE_NPU)
   endif()
 endif()
 
+# The PTA chiplet's digital twin and its gate (board plan X5). Not behind the NPU
+# flag and not in the runtime: it is a model, built beside the tests.
+if(GRXCP_BUILD_TESTS)
+  add_subdirectory(backends/pta_chiplet)
+endif()
+
 # VX_types.h lives in the sysroot's KERNEL include directory, not the runtime
 # one, and profile.cpp and tensormap.cpp both need it. Kept PRIVATE: a program
 # using GRXCP should never need the driver's own headers.

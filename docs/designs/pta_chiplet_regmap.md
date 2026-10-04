@@ -13,6 +13,9 @@ how the device is discovered, how wide its counters have to be, how completion
 is observed when two reads can straddle a change, and what happens to a command
 the device cannot honour.
 
+*X5 built the twin of this map on 2026-10-04* (§6). Building it found things the
+map does not say, and §4, §5 and §7 carry them where they belong.
+
 ---
 
 ## 1. Where the window sits
@@ -129,6 +132,25 @@ does in the C1 harness, and publishes the counter so a run stays reproducible:
 |---|---|---|---|
 | 0x018 | `PTA_GEMM_CT` | R | GEMMs started since the last `PTA_SEED` write; the seed of GEMM *i* is a stated function of `PTA_SEED` and *i* |
 
+*The function, as X5 built it.* The seed of GEMM *i* is the upper half of one
+step of SplitMix64 from the state `PTA_SEED · 2³² + i`:
+
+```c
+uint64_t z = (((uint64_t)PTA_SEED << 32) | i) + 0x9E3779B97F4A7C15;
+z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9;
+z = (z ^ (z >> 27)) * 0x94D049BB133111EB;
+seed_i = (uint32_t)((z ^ (z >> 31)) >> 32);
+```
+
+That is `gemm_seed()` of grx930's `c930/sim/pta_mnist.c` to the letter, and the
+twin's gate pins it to three values computed from that source. Two things follow
+that this section did not say. **A refused GEMM takes no index**: the count is of
+GEMMs *started*, so the GEMM behind a refused one is the next in the sequence and
+not the one after. And **`PTA_SEED` alone does not reproduce a result**: GEMM 0
+under seed *s* runs on `seed_0`, not on *s*. A report of what a GEMM ran on needs
+its index as well, which the CPU document's D2 property does not carry — it was
+built for the c930, where the host writes the seed each time. That is S4's to add.
+
 **Counters are 64 bits.** A 32-bit `PTA_SHOT_CT` wraps in 4.3 seconds at one
 shot a nanosecond, which is inside X2's candidate range. The low half keeps its
 §3.1 offset; reading it latches the high half, which is read next:
@@ -139,6 +161,14 @@ shot a nanosecond, which is inside X2's candidate range. The low half keeps its
 | 0x0E4 | `PTA_WLOAD_CT_HI` | R | Latched when `PTA_WLOAD_CT` is read |
 | 0x0E8 | `PTA_SAT_CT_HI` | R | Latched when `PTA_SAT_CT` is read |
 | 0x0EC | `PTA_CAL_CYC_HI` | R | Latched when `PTA_CAL_CYC` is read |
+
+*As X5 built them.* `PTA_SAT_CT` restarts at a GEMM start, as the c930's does, so
+`SAT_STICKY` means "the last GEMM saturated, or a calibration since it" and lasts
+one GEMM. Its upper half is in the map and reads zero until one GEMM saturates
+four billion times. `PTA_SHOT_CT` counts a calibration's probe shots with a
+GEMM's; `PTA_WLOAD_CT` counts a GEMM's programmings and not a calibration's own
+weight writes, which do not pass through the core's weight-load state.
+`PTA_CAL_CT` has no upper half here and needs none.
 
 **`PTA_TW` and `PTA_TS` are the emulation's.** They set the modelled settle and
 shot latency on the twin. What they mean on silicon — a read-back of what the
@@ -213,6 +243,16 @@ for the same reason: while CAL_BUSY is set, commands queue rather than
 dispatching into a tile that is unavailable, and never complete silently. The
 queue's depth is open (§7).
 
+*As X5 built it: BUSY covers the queue.* With a queue on the chiplet a command can
+be waiting there while nothing runs — for the whole of a calibration, at least —
+and a `PTA_STATUS` showing neither bit would then read as finished. The c930
+covers that case with a second register, `QUEUE_STAT`, and this section's first
+rule is that the chiplet's predicate may not span two reads. So on the twin BUSY
+is set while a command is running *or queued*. During a calibration with work
+waiting it shows CAL_BUSY and BUSY together, where the c930 shows CAL_BUSY, BUSY
+clear and an occupancy of 1. A calibration with nothing waiting still does not
+set BUSY.
+
 **Ordering.** Writes over CXL.io are posted and reads are not, so a read of any
 register in the window orders behind the driver's earlier writes to it. That is
 the flush before a launch. Configuration registers take effect at the next GEMM
@@ -228,6 +268,73 @@ drivers, grxcp and the dispatch model can be brought up before silicon (the
 board plan's P2 gate). `PTA_CAPS2` reports it as the twin, and every emulated
 behaviour is visible in a register rather than assumed.
 
+*Built 2026-10-04:* `src/backends/pta_chiplet/pta_chiplet_twin.c`, with its gate
+beside it and in tier 1 of `ci/build_mock.sh`. It is a register file, the
+chiplet's own command queue, a clock and the calibration contract, in front of
+grx930's `pta_gemm()` and `pta_cal_bank()`. None of the tile's arithmetic is
+written there. Its geometry is the caller's to name, because §7's first question
+is still open.
+
+**What the gate holds**, in 156 checks at 4 × 4, 8 × 8 and 256 × 64:
+
+- *The map.* Every section above: identity, the seed and its counter, 64-bit
+  counters with a latched upper half, interrupts, the engine's three words, the
+  completion contract, refusal, reset.
+- *The model.* Every GEMM through the twin is `pta_gemm()` called directly, bit
+  for bit, on a device the twin never sees, and every calibration is
+  `pta_cal_bank()`. The clear case is held to an integer product computed
+  without the model.
+- *§1's claim that one driver addresses both.* The c930 backend's own reader,
+  `npu_c930_read_analog()`, pointed at the twin through a change of base and
+  nothing else, identifies it and reports its tile. Two GEMMs are then
+  reproduced from what that driver read and `PTA_GEMM_CT`, and from nothing more.
+
+Three twins that are each wrong in one way — a GEMM run on `PTA_SEED` itself, a
+command taken into a calibrating tile, a `MODEL_RST` honoured under a running
+command — are built by the same script, and the gate has to fail against each.
+
+**The D3 network, through it.** The board plan's P2 gate asks that the network
+run "bit-identical to `pta_mnist`'s C reference". grx930's harness reaches its
+device through three of the model's functions — a reset, an ageing and
+`pta_gemm()` — and, unedited, was compiled with those three redirected to
+functions that reach the model only through the twin. It was then given every
+evaluation of the accuracy budget of 2026-10-03 again: 44 settings on five
+networks, each network on its own seed, 220 test-set passes, 1,865,160 GEMMs.
+All 220 printed the line the harness had written then, byte for byte. That is
+the 8 × 8 tile the budget was measured on. The reset is `PTA_SEED` and
+`MODEL_RST`, each GEMM's configuration is written through the registers before
+it, and completion is read from `PTA_STATUS`. Two of the 44 settings age the
+tile first, by six minutes of drift and by an hour, which no register does:
+those 10 runs go through `pta_twin_age()`, the model's own fast-forward, which
+is the twin's in the way its clock is. It is not a CI gate: the harness and the
+MNIST files are not in this tree.
+
+**What the twin had to decide, because this map does not.**
+
+| | The map | The twin |
+|---|---|---|
+| How work is issued | Nothing. This is the control window, and no document says what a command on link 2 looks like | A function call. A command is a whole integer GEMM, in `pta_gemm()`'s own terms: a stand-in, not a proposal |
+| The queue's depth | Open (§7) | A build parameter. A full queue does not accept a command, and says so. No register reports the depth |
+| BUSY | Per command | Running or queued (§5) |
+| `PTA_GAIN[j]`, `PTA_OFFS[j]` | Eight words each | The eight. A tile of 64 columns has 56 no word reaches |
+| `SAT_THRESHOLD` | An interrupt with no threshold to cross | Never raised |
+| A calibration's refusal | `PTA_IRQ_STATUS.ERR` here; `PTA_STATUS` bit 5 on the c930, which has no interrupt block | `PTA_IRQ_STATUS.ERR` only. One driver reads it in two places |
+| A host's trim write | No register, on either map (the CPU document's §3.1) | None. A saved calibration cannot be restored |
+| Hours of drift | Nothing: the model clocks drift by shots, and says of its own fast-forward that the RTL has no such port | `pta_twin_age()`, beside the map and not in it. An idle twin does not drift |
+
+**What it does not model**, each reading zero in the register that would say
+otherwise: the calibration scheduler, so only `CAL_NOW` starts one
+(`PTA_CTRL[6:4]`); the loop-order and residency modes (`PTA_CTRL[9:7]`); the
+activation stage (`PTA_CAPS2[17]`); a shot rate (`PTA_CAPS2[15:0]`). A
+calibration does not interrupt a GEMM, because `pta_gemm()` is one call. Its
+timing is two formulas — a GEMM holds the tile for
+`programmings × PTA_TW + shots × PTA_TS` cycles, a calibration for
+`passes × repeats × (PTA_TW + rows × PTA_TS)` — and nothing else.
+
+It is not yet a device grxcp can see. Nothing in the runtime enumerates it, so
+`grxblasGemmEx` does not reach it and the D2 property is not filled from it:
+that is S4, which needed this first.
+
 ---
 
 ## 7. Open
@@ -237,8 +344,19 @@ behaviour is visible in a register rather than assumed.
 2. **Whether `PTA_TW` and `PTA_TS` mean anything on silicon**, or stay the
    twin's.
 3. **The chiplet's command queue depth**, which the GPU's dispatcher has to
-   know.
+   know. The twin takes it as a build parameter and reports it nowhere; the c930
+   has a `QUEUE_MAX` register for the same number.
 4. **How many MSI vectors** the function offers, and whether the PTA shares the
    GPU's or has its own.
-5. **The seed function** — `gemm_seed()`'s exact form is in the C1 harness; it
-   becomes normative here the moment silicon implements it.
+5. **The seed function** — written out in §4 now, and implemented by the twin
+   as well as by the harness it came from. It becomes normative the moment
+   silicon implements it, as this item has always said.
+6. **What a command on link 2 is.** The map has no way to issue work and nothing
+   else specifies one. It decides what the chiplet's queue holds, what BUSY
+   counts, and how a refusal reaches whoever sent the command.
+7. **The affine past eight columns.** `PTA_GAIN[j]` and `PTA_OFFS[j]` have eight
+   words each. An index register and a data register would reach any width; so
+   would a second page.
+8. **`SAT_THRESHOLD`'s threshold**, which no register holds.
+9. **Where a host writes a trim**, if a saved calibration is ever to be
+   restored. Open on the c930's map too.
