@@ -5,9 +5,11 @@
 # holds a C model that presents that map with grx930's error model behind it,
 # and the gate that holds it to the map and to the model.
 #
-# Nothing here goes into libgrxrt. The twin is a model for bring-up and for
-# tests, like tests/mock, and a runtime that linked it could report it as a
-# device. What reports it, and how, is the board plan's S4.
+# The twin does not go into libgrxrt. It is a model for bring-up and for tests,
+# like tests/mock, and a runtime that linked it would be carrying its own
+# device. The chiplet's DRIVER, pta_chiplet.cpp, does go in, under
+# GRXCP_ENABLE_PTA (src/CMakeLists.txt), and a test attaches the twin to it
+# through the seam in pta_chiplet_testing.h.
 #
 # It needs no NPU flag: the gate borrows the c930 backend's register reader to
 # check that one driver addresses both maps, and compiles that file itself.
@@ -30,3 +32,18 @@ target_include_directories(test_pta_chiplet_twin PRIVATE
 target_link_libraries(test_pta_chiplet_twin PRIVATE pta_chiplet_twin)
 
 add_test(NAME pta_chiplet_twin COMMAND test_pta_chiplet_twin)
+
+# The driver, against the twin and against windows and links that misbehave.
+# It compiles the driver itself, so it runs in every configuration: what the
+# driver decides does not depend on whether the runtime was built to use it.
+add_executable(test_pta_chiplet_driver
+    test_pta_chiplet_driver.cc
+    pta_chiplet.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../npu_c930/npu_c930.cpp
+)
+target_include_directories(test_pta_chiplet_driver PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../npu_c930
+)
+target_link_libraries(test_pta_chiplet_driver PRIVATE pta_chiplet_twin)
+
+add_test(NAME pta_chiplet_driver COMMAND test_pta_chiplet_driver)

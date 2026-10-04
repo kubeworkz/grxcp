@@ -50,6 +50,7 @@ grxAnalogGemm_t make(int emulated, int present) {
   a.tileCols               = -1;
   a.operandBits            = -1;
   a.accumulatorBits        = -1;
+  a.gemmIndex              = -1;   // a c930: its GEMMs run on the seed as written
   return a;
 }
 
@@ -266,6 +267,41 @@ int main() {
                          "reference model does not hold"),
           "and so are trims it does not hold");
     check(l.size() == 10, "ten lines, the longest form there is");
+  }
+
+  section("a chiplet, whose seed is the run's and not the GEMM's");
+  {
+    // The board plan's version 1 on a 256 x 64 tile, with twelve GEMMs run.
+    grxAnalogGemm_t a = v0_on_the_bench_tile();
+    a.activationBits = 6; a.weightBits = 6; a.adcBits = 7; a.adcShift = 16;
+    a.impairments = kTile & ~GRX_ANALOG_DRIFT;
+    a.tileRows = 256; a.tileCols = 64;
+    a.gemmIndex = 12;
+    const std::vector<std::string> l = grxtools::analog_gemm_lines(a);
+    show(l);
+    check(l.size() == 7 && l[0] == kLabel +
+          "EMULATED on the PTA tile: a6/w6 of 8, ADC 7 bits << 16, seed 0x0000002a",
+          "the first line is the c930's form");
+    check(l.size() == 7 && l[1] == kCont +
+          "GEMM 12 is next: each runs on a seed derived from that one and its index",
+          "and the line under it says the seed is not the GEMM's, and which GEMM is next");
+    check(l.size() == 7 && l[6] == kCont +
+          "this device does NOT compute the product it is asked for",
+          "the last line does not compare it with a c930: there is none to compare with");
+    // Index 0 is an index. A test for "is there one" that used > 0 would drop
+    // the line for the first GEMM of every run.
+    a.gemmIndex = 0;
+    check(has(grxtools::analog_gemm_lines(a), kCont +
+          "GEMM 0 is next: each runs on a seed derived from that one and its index"),
+          "GEMM 0 is said too");
+    // And a c930 gets neither line.
+    a.gemmIndex = -1;
+    const std::vector<std::string> c = grxtools::analog_gemm_lines(a);
+    bool said = false;
+    for (const std::string& s : c) said = said || s.find("is next") != std::string::npos;
+    check(!said && has(c, kCont +
+          "this device does NOT compute the same function as a digital c930"),
+          "a c930 gets neither: its seed is the GEMM's");
   }
 
   return grxtest::report();

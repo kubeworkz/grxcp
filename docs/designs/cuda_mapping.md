@@ -2243,6 +2243,41 @@ able to make its own device inexact is a product question (the board plan's §8
 asks whether the c930 keeps a tile at all), and the configuration call is the
 wrong place to answer it by accident.
 
+*The same of the PTA chiplet, 2026-10-04.* It is a device grxcp enumerates now
+(the board plan's S4), and its gate, `tests/libs/test_grxblas_pta_chiplet.cpp`,
+programs it the same way: through the twin's registers, behind the runtime. On
+the chiplet the reproducibility half is sharper, because a GEMM's seed is derived
+from `PTA_SEED` and an index only a seed write restarts.
+
+### 7.41 The PTA chiplet has no path from a host — **CROSS-TEAM, open**
+
+grxcp has a driver for the chiplet (`src/backends/pta_chiplet/pta_chiplet.cpp`),
+a device type for it, and a grxBLAS route to it. None of it can reach a chiplet,
+and that is not only because none has been built. Two things are missing that
+are not grxcp's to supply.
+
+**The window.** The chiplet's registers are one page of the GPU's BAR, reached
+over CXL.io (`pta_chiplet_regmap.md` §1), and the GPU's driver owns the BAR. It
+has no call that reads or writes that page, so the driver here reaches its
+registers through a pair of hooks that only a test fills.
+
+**The link.** Work reaches the chiplet over a die-to-die link from the GPU's copy
+engine, and nothing specifies what a command on that link is (`board_icd.md` §7,
+item 7). The driver's path for work is a third hook, a function call, standing
+in for a protocol nobody has written.
+
+**What a caller sees.** With the backend built and nothing attached, no PTA
+device is enumerated. With a window and no link, the device is enumerated and
+reported and `grxblasGemmEx` on it returns `GRXBLAS_STATUS_NOT_SUPPORTED` with C
+untouched. With both, which only the digital twin provides, the operands make a
+host round trip where the copy engine and the link would be, and the device
+reports `GRX_BACKEND_MODEL`. In no configuration does a call succeed over a
+product nobody computed.
+
+**What would close it.** A proposal to grxgpu for the two driver calls that read
+and write the PTA page, and the link's command format from L3 and the chiplet's
+owners together. Then the hooks have something to be replaced by.
+
 ## 8. Where GRX-G100 is *ahead* of the reference
 
 Worth recording, because the platform should expose these rather than

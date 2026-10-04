@@ -1857,6 +1857,30 @@ reader*: its per-GEMM seed is a function of `PTA_SEED` and a counter
 ([`pta_chiplet_regmap.md`](pta_chiplet_regmap.md) §4), so the board plan's S4
 needs the counter beside the seed.
 
+*Extended in S4, 2026-10-04: the counter, and whose memory.* Two fields, for the
+chiplet, which is a device of its own in the table (the board plan's B9).
+
+| Added | From | |
+|---|---|---|
+| `analogGemm.gemmIndex` | `PTA_GEMM_CT` | The index the next GEMM takes. Its seed is derived from `seed` and this, so `seed` alone reproduces nothing. `-1` on a c930. Reported wherever a tile is present, impaired or not: an exact GEMM takes an index too |
+| `parentDevice` | How the chiplet was found | The device whose memory this one's operands are in. `-1` for a GPU and for a c930 |
+
+`grx-smi` says both. Under the device's capabilities:
+
+```
+  operands               device 0's memory; this device has none of its own
+```
+
+and under the seed, on a chiplet only:
+
+```
+    analog GEMM            EMULATED on the PTA tile: a6/w6 of 8, ADC 7 bits << 16, seed 0x0000002a
+                           GEMM 12 is next: each runs on a seed derived from that one and its index
+```
+
+Its last line reads "this device does NOT compute the product it is asked for",
+because a chiplet replaced no digital array to be compared with.
+
 *Extended in S2, 2026-10-03: the property could not do what it was specified to
 do.* S0's struct carries "enough of the error model to reproduce the answer", and
 its fields are the bit counts, the seed and the impairment mask. That is the

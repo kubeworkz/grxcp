@@ -10,6 +10,13 @@ if(GRXCP_ENABLE_NPU)
   list(APPEND GRXRT_SOURCES ${GRXRT_NPU_SOURCES})
 endif()
 
+# The PTA chiplet's driver, and nothing else from that directory: the digital
+# twin beside it is a .c file and a model, and is not part of the runtime.
+if(GRXCP_ENABLE_PTA)
+  list(APPEND GRXRT_SOURCES
+       "${CMAKE_CURRENT_SOURCE_DIR}/backends/pta_chiplet/pta_chiplet.cpp")
+endif()
+
 if(NOT GRXRT_SOURCES)
   message(FATAL_ERROR "grxcp: no runtime sources found under src/runtime/")
 endif()
@@ -37,8 +44,16 @@ if(GRXCP_ENABLE_NPU)
   endif()
 endif()
 
-# The PTA chiplet's digital twin and its gate (board plan X5). Not behind the NPU
-# flag and not in the runtime: it is a model, built beside the tests.
+# The same for the chiplet's flag, for the same reason: without the definition
+# the driver is in the library and nothing in the runtime enumerates it.
+if(GRXCP_ENABLE_PTA)
+  target_include_directories(grxrt PUBLIC
+                             "${CMAKE_CURRENT_SOURCE_DIR}/backends/pta_chiplet")
+  target_compile_definitions(grxrt PUBLIC GRXCP_ENABLE_PTA=1)
+endif()
+
+# The PTA chiplet's digital twin and its gates (board plan X5). The twin is not
+# behind a flag and not in the runtime: it is a model, built beside the tests.
 if(GRXCP_BUILD_TESTS)
   add_subdirectory(backends/pta_chiplet)
 endif()

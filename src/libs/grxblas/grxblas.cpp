@@ -28,6 +28,13 @@
 // and asking it is what keeps this library and the runtime on one device.
 #include "../../runtime/internal.h"
 #endif
+#ifdef GRXCP_ENABLE_PTA
+#include <grx/grx_runtime.h>
+#include "pta_chiplet.h"
+// For pta_device_for and pta_parent_of, on the same rule: one device, owned by
+// the device table, asked for by index.
+#include "../../runtime/internal.h"
+#endif
 
 namespace {
 
@@ -945,6 +952,139 @@ static grxblasStatus_t npu_gemm_path(
 
 #endif  // GRXCP_ENABLE_NPU
 
+// ---------------------------------------------------------------------------
+// PTA chiplet backend (compiled only when GRXCP_ENABLE_PTA is set)
+// ---------------------------------------------------------------------------
+
+#ifdef GRXCP_ENABLE_PTA
+
+// The current device, set to another for a scope and put back. The chiplet has
+// no memory, so the three copies a GEMM on it needs are copies on its PARENT,
+// and grxMemcpy resolves a pointer against the current device. The index is
+// thread-local, so this moves nothing anyone else can see.
+struct ScopedDevice {
+  int saved;
+  explicit ScopedDevice(int device) : saved(grxcp::current_device_index()) {
+    grxcp::set_current_device_index(device);
+  }
+  ~ScopedDevice() { grxcp::set_current_device_index(saved); }
+  ScopedDevice(const ScopedDevice&) = delete;
+  ScopedDevice& operator=(const ScopedDevice&) = delete;
+};
+
+// PTA chiplet GEMM path: INT8 in, INT32 out, on the photonic tile.
+//
+// WHOSE POINTERS THESE ARE. The chiplet is fed from its GPU's memory by that
+// GPU's copy engine (the board plan's B4), so A, B and C are pointers on the
+// chiplet's PARENT device and are resolved against it -- the one place a
+// pointer is not the current device's, and grxDeviceProp_t.parentDevice is
+// where a caller reads which device that is. A pointer that is not live on the
+// parent is refused by name.
+//
+// WHAT STANDS IN FOR THE COPY ENGINE AND THE LINK. Neither exists, so the
+// operands make a host round trip: read out of the parent's memory, handed to
+// the chiplet's driver, and the result written back. That is only reachable
+// with a model attached -- with none there is no PTA device to be the current
+// one -- and the device says it is a model.
+//
+// The operand roles are the c930 path's, deliberately: A is the weight set and
+// each column of B is a shot, by the same identity. One library, two tiles, one
+// answer to "which operand is programmed".
+static grxblasStatus_t pta_gemm_path(
+    int device, int m, int n, int k,
+    const float* alpha, const void* A, int lda,
+    const void* B, int ldb,
+    const float* beta, void* C, int ldc) {
+  pta_chiplet_device_t* dev = grxcp::pta_device_for(device);
+  const int parent = grxcp::pta_parent_of(device);
+  if (!dev || parent < 0) return GRXBLAS_STATUS_NOT_SUPPORTED;
+
+  // The tile computes C = A . B and nothing else.
+  if (*alpha != 1.0f || *beta != 0.0f) {
+    std::fprintf(stderr,
+                 "grxblas: the PTA path requires alpha=1, beta=0."
+                 "  alpha=%.1f beta=%.1f not supported.\n", *alpha, *beta);
+    return GRXBLAS_STATUS_NOT_SUPPORTED;
+  }
+  if (k == 0) return GRXBLAS_STATUS_NOT_SUPPORTED;
+  if (lda != m || ldb != k || ldc != m) {
+    std::fprintf(stderr,
+                 "grxblas: the PTA path requires contiguous operands"
+                 " (lda = m, ldb = k, ldc = m).  lda=%d ldb=%d ldc=%d"
+                 " not supported.\n", lda, ldb, ldc);
+    return GRXBLAS_STATUS_NOT_SUPPORTED;
+  }
+
+  const size_t a_bytes = (size_t)m * (size_t)k;
+  const size_t b_bytes = (size_t)k * (size_t)n;
+  const size_t c_count = (size_t)m * (size_t)n;
+  const void*  bufs[3]  = {A, B, C};
+  const size_t need[3]  = {a_bytes, b_bytes, c_count * sizeof(int32_t)};
+  const char*  names[3] = {"A", "B", "C"};
+  for (int i = 0; i < 3; ++i) {
+    grxcp::Mapping map{};
+    if (!grxcp::lookup_device_pointer_on(parent, bufs[i], &map)) {
+      std::fprintf(stderr,
+                   "grxblas: PTA %s is not a pointer on device %d. The chiplet"
+                   " has no memory of its own: its operands are allocated on"
+                   " its parent GPU (grxDeviceProp_t.parentDevice).\n",
+                   names[i], parent);
+      return GRXBLAS_STATUS_INVALID_VALUE;
+    }
+    if (map.size < need[i]) {
+      std::fprintf(stderr, "grxblas: PTA %s is %llu bytes and the GEMM needs %llu.\n",
+                   names[i], (unsigned long long)map.size,
+                   (unsigned long long)need[i]);
+      return GRXBLAS_STATUS_INVALID_VALUE;
+    }
+  }
+
+  // A column-major matrix read row-major is its transpose, so the bytes go to
+  // the tile in the order they are stored: C^T (n x m) = B^T (n x k) . A^T
+  // (k x m). B is where the tile expects its activations and A where it
+  // expects its weights, with the dimensions swapped -- the c930 path's
+  // identity, with a copy where that path has an address.
+  std::vector<int8_t>  a8(a_bytes), b8(b_bytes);
+  {
+    ScopedDevice on_parent(parent);
+    if (grxMemcpy(a8.data(), A, a_bytes, grxMemcpyDeviceToHost) != grxSuccess ||
+        grxMemcpy(b8.data(), B, b_bytes, grxMemcpyDeviceToHost) != grxSuccess)
+      return GRXBLAS_STATUS_EXECUTION_FAILED;
+  }
+  std::vector<int32_t> act(b_bytes), wgt(a_bytes);
+  for (size_t i = 0; i < b_bytes; ++i) act[i] = b8[i];
+  for (size_t i = 0; i < a_bytes; ++i) wgt[i] = a8[i];
+  std::vector<int64_t> out(c_count);
+
+  if (pta_chiplet_gemm(dev, /*bank=*/0, n, m, k, act.data(), wgt.data(),
+                       out.data()) != 0) {
+    // C is untouched: nothing has been written back. The reason is printed
+    // because "execution failed" alone reads as a fault in this library, and
+    // the usual cause is a register somebody else wrote.
+    std::fprintf(stderr, "grxblas: PTA GEMM failed: %s",
+                 pta_chiplet_error_string(dev->error));
+    if (dev->error == PTA_CHIPLET_ERR_REFUSED && dev->refused_impairments)
+      std::fprintf(stderr, " (PTA_IMPAIR asks for 0x%02x, which this tile does"
+                   " not build)", dev->refused_impairments);
+    std::fprintf(stderr, ".\n");
+    return (dev->error == PTA_CHIPLET_ERR_NO_LINK) ? GRXBLAS_STATUS_NOT_SUPPORTED
+                                                   : GRXBLAS_STATUS_EXECUTION_FAILED;
+  }
+
+  // The low 32 bits of each sum, which is what the c930's DMA writes too.
+  std::vector<int32_t> c32(c_count);
+  for (size_t i = 0; i < c_count; ++i) c32[i] = (int32_t)(uint32_t)(uint64_t)out[i];
+  {
+    ScopedDevice on_parent(parent);
+    if (grxMemcpy(C, c32.data(), c_count * sizeof(int32_t),
+                  grxMemcpyHostToDevice) != grxSuccess)
+      return GRXBLAS_STATUS_EXECUTION_FAILED;
+  }
+  return GRXBLAS_STATUS_SUCCESS;
+}
+
+#endif  // GRXCP_ENABLE_PTA
+
 // THE DISPATCH RULE, in one place, so that asking and doing cannot disagree.
 //
 // The current device decides. Nothing here consults a preference, and nothing
@@ -983,6 +1123,17 @@ grxblasEngine_t decide_gemm_engine(grxDataType_t Atype, grxDataType_t Btype,
 #endif
   }
 
+  if (prop.deviceType == GRX_DEVICE_TYPE_PTA) {
+    // The same rule: one device, one engine, INT8. A PTA chiplet is in a GPU's
+    // package, and that GPU is still not an answer to a question about this
+    // device.
+#ifdef GRXCP_ENABLE_PTA
+    return int8 ? GRXBLAS_ENGINE_PTA_CHIPLET : GRXBLAS_ENGINE_NONE;
+#else
+    return GRXBLAS_ENGINE_NONE;
+#endif
+  }
+
   // Which pairings the tensor unit accepts is a property of the loaded module,
   // not of the routing, so that stays where it is and this reports the engine.
   return GRXBLAS_ENGINE_GPU_TENSOR;
@@ -997,6 +1148,7 @@ const char* grxblasGetEngineString(grxblasEngine_t engine) {
     case GRXBLAS_ENGINE_NONE:       return "none (the call would be refused)";
     case GRXBLAS_ENGINE_GPU_TENSOR: return "GRX-G100 tensor unit";
     case GRXBLAS_ENGINE_NPU_C930:   return "GRX930 c930 NPU";
+    case GRXBLAS_ENGINE_PTA_CHIPLET: return "PTA chiplet";
   }
   return "unknown engine";
 }
@@ -1154,6 +1306,17 @@ grxblasStatus_t grxblasGemmEx(grxblasHandle_t handle,
   if (engine == GRXBLAS_ENGINE_NPU_C930) {
 #ifdef GRXCP_ENABLE_NPU
     return npu_gemm_path(engine_device, m, n, k, alpha, A, lda, B, ldb, beta,
+                         C, ldc);
+#else
+    return GRXBLAS_STATUS_NOT_SUPPORTED;
+#endif
+  }
+  if (engine == GRXBLAS_ENGINE_PTA_CHIPLET) {
+#ifdef GRXCP_ENABLE_PTA
+    // The tile has no transposed form, and a silent untransposed answer is the
+    // wrong answer with a success code.
+    if (ta || tb) return GRXBLAS_STATUS_NOT_SUPPORTED;
+    return pta_gemm_path(engine_device, m, n, k, alpha, A, lda, B, ldb, beta,
                          C, ldc);
 #else
     return GRXBLAS_STATUS_NOT_SUPPORTED;

@@ -14,6 +14,9 @@
 #ifdef GRXCP_ENABLE_NPU
 struct npu_c930_device;  // forward declaration (npu_c930.h)
 #endif
+#ifdef GRXCP_ENABLE_PTA
+struct pta_chiplet_device;  // forward declaration (pta_chiplet.h)
+#endif
 
 namespace grxcp {
 
@@ -21,9 +24,15 @@ namespace grxcp {
 // Devices
 // ---------------------------------------------------------------------------
 
-// Device type tag: GPU (Vortex) or NPU (GRX930 systolic array).
-// The NPU is a memory-mapped accelerator with no Vortex driver dependency.
-enum class DeviceType { GPU, NPU };
+// Device type tag: GPU (Vortex), NPU (GRX930 systolic array) or PTA (the
+// photonic tensor chiplet in a GPU's package).
+// The NPU is a memory-mapped accelerator with no Vortex driver dependency. The
+// PTA has no driver handle either, and no memory: it is GEMM-only, and its
+// operands are its parent GPU's.
+//
+// The tag exists in every build, flag or no flag, so that the refusals a
+// handle-less device needs are not themselves behind a flag.
+enum class DeviceType { GPU, NPU, PTA };
 
 // One entry per device. GPU devices come from vx_device_count and are opened
 // lazily via vx_device_open. NPU devices are detected by MMIO probe and
@@ -31,12 +40,18 @@ enum class DeviceType { GPU, NPU };
 struct Device {
   int             index    = -1;
   DeviceType      type     = DeviceType::GPU;
-  vx_device_h     handle   = nullptr;  // nullptr for NPU devices
+  vx_device_h     handle   = nullptr;  // nullptr for NPU and PTA devices
   bool            opened   = false;
   bool            probed   = false;   // properties populated
   grxDeviceProp_t prop     {};
+  // The device whose memory this one's operands are in: a PTA chiplet's GPU.
+  // -1 for a device with memory of its own.
+  int             parent   = -1;
 #ifdef GRXCP_ENABLE_NPU
   struct npu_c930_device* npu_dev = nullptr;  // owned, only for NPU devices
+#endif
+#ifdef GRXCP_ENABLE_PTA
+  struct pta_chiplet_device* pta_dev = nullptr;  // owned, only for PTA devices
 #endif
 };
 
@@ -78,6 +93,23 @@ void probe_npu_device(std::vector<Device>& devices);
 // rather than detecting its own -- two handles meant two detections, and on a
 // real machine two independent mmaps of the same register block.
 struct npu_c930_device* npu_device_for(int index);
+#endif
+
+// ---------------------------------------------------------------------------
+// PTA chiplet support (GRXCP_ENABLE_PTA)
+// ---------------------------------------------------------------------------
+#ifdef GRXCP_ENABLE_PTA
+// Append the PTA chiplet to the device table if one can be found. Called once
+// during ensure_initialized(), after the GPUs and the NPU. Today one can be
+// found only through the seam in pta_chiplet_testing.h: there is no chiplet,
+// and no call in the GPU's driver that would reach one.
+void probe_pta_device(std::vector<Device>& devices);
+
+// The chiplet's driver handle, or null when `index` is not a PTA device.
+struct pta_chiplet_device* pta_device_for(int index);
+
+// The GPU a PTA device's operands live on, or -1 when `index` is not one.
+int pta_parent_of(int index);
 #endif
 
 // ---------------------------------------------------------------------------

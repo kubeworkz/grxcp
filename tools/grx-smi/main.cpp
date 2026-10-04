@@ -70,6 +70,11 @@ void print_human(int index, const grxDeviceProp_t& p) {
   std::printf("  compute capability     %d.%d\n",
               p.computeCapabilityMajor, p.computeCapabilityMinor);
   std::printf("  capabilities           %s\n", caps_list(p.capabilities).c_str());
+  // A device with no memory of its own says whose it uses, before anything
+  // below prints a row of zeros that would otherwise read as a fault.
+  if (p.parentDevice >= 0)
+    std::printf("  operands               device %d's memory; this device has none"
+                " of its own\n", p.parentDevice);
   std::printf("\n  execution\n");
   std::printf("    SMs (cores x clusters) %d  (%d clusters, socket size %d)\n",
               p.multiProcessorCount, p.clusterCount, p.socketSize);
@@ -181,6 +186,7 @@ void print_json(int index, const grxDeviceProp_t& p, bool last) {
   std::printf("    \"index\": %d,\n", index);
   std::printf("    \"name\": \"%s\",\n", p.name);
   std::printf("    \"backend\": \"%s\",\n", backend_json(p.backend));
+  std::printf("    \"parentDevice\": %s,\n", json_num(p.parentDevice).c_str());
   std::printf("    \"computeCapability\": \"%d.%d\",\n",
               p.computeCapabilityMajor, p.computeCapabilityMinor);
   std::printf("    \"warpSize\": %d,\n", p.warpSize);
@@ -227,7 +233,8 @@ void print_json(int index, const grxDeviceProp_t& p, bool last) {
   std::printf("      \"tileRows\": %s,\n", json_num(a.tileRows).c_str());
   std::printf("      \"tileCols\": %s,\n", json_num(a.tileCols).c_str());
   std::printf("      \"operandBits\": %s,\n", json_num(a.operandBits).c_str());
-  std::printf("      \"accumulatorBits\": %s\n", json_num(a.accumulatorBits).c_str());
+  std::printf("      \"accumulatorBits\": %s,\n", json_num(a.accumulatorBits).c_str());
+  std::printf("      \"gemmIndex\": %s\n", json_num(a.gemmIndex).c_str());
   std::printf("    }\n");
   std::printf("  }%s\n", last ? "" : ",");
 }

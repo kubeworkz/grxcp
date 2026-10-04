@@ -56,6 +56,10 @@ grxError_t make_queue(int device, vx_queue_priority_e priority,
   grxError_t e = acquire_device(device, &d);
   if (e != grxSuccess) return e;
 
+  // No stream capability, no queue: the same refusal the launch path makes on
+  // its own bit, for the same reason.
+  if (!(d->prop.capabilities & GRX_CAP_STREAMS)) return grxErrorNotSupported;
+
   vx_queue_info_t info{};
   info.struct_size = sizeof(info);
   info.next        = nullptr;

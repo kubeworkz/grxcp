@@ -17,6 +17,9 @@
 #ifdef GRXCP_ENABLE_NPU
 #include "npu_c930.h"
 #endif
+#ifdef GRXCP_ENABLE_PTA
+#include "pta_chiplet.h"
+#endif
 
 namespace grxcp {
 
@@ -79,6 +82,7 @@ grxAnalogGemm_t analog_gemm_none() {
   a.tileCols               = -1;
   a.operandBits            = -1;
   a.accumulatorBits        = -1;
+  a.gemmIndex              = -1;
   return a;
 }
 
@@ -200,6 +204,9 @@ void populate_properties(Device& d) {
   // So this is "no tile", sourced from the absence of anything to source it
   // from, and it says so with -1 in every field that would describe one.
   p.analogGemm = analog_gemm_none();
+  // A GPU's memory is its own. A PTA chiplet in its package is a device of its
+  // own in the table, and names this one as its parent.
+  p.parentDevice = -1;
 
   std::snprintf(p.name, sizeof(p.name), "GRX-G100 (%s)", backend_name(backend));
 }
@@ -287,6 +294,8 @@ static grxAnalogGemm_t read_npu_analog(npu_c930_device_t* dev) {
   a.tileCols               = n.tile_cols;
   a.operandBits            = n.operand_bits;
   a.accumulatorBits        = n.accumulator_bits;
+  // A c930's GEMM runs on PTA_SEED as its host wrote it; there is no index.
+  a.gemmIndex              = -1;
   return a;
 }
 
@@ -348,6 +357,7 @@ static void populate_npu_properties(Device& d) {
   // The first reading. grxGetDeviceProperties takes another on every call --
   // these are live registers, and this copy is only what was true at probe.
   p.analogGemm = read_npu_analog(d.npu_dev);
+  p.parentDevice = -1;   // the c930's DDR is its own
 
   // WHAT THIS DEVICE IS, DERIVED RATHER THAN ASSERTED.
   //
@@ -454,6 +464,147 @@ npu_c930_device* npu_device_for(int index) {
 
 #endif  // GRXCP_ENABLE_NPU
 
+// ---------------------------------------------------------------------------
+// PTA chiplet support
+// ---------------------------------------------------------------------------
+#ifdef GRXCP_ENABLE_PTA
+
+// The model installed through pta_chiplet_testing.h, if any. Unlike the NPU's
+// this is not an alternative to a hardware path: it is the only path. Read in
+// two places -- probe_pta_device, to decide whether there is anything to
+// detect, and populate_pta_properties, to say what the device is.
+struct PendingPtaModel {
+  pta_chiplet_read_fn   read32  = nullptr;
+  pta_chiplet_write_fn  write32 = nullptr;
+  void*                 ctx     = nullptr;
+  pta_chiplet_submit_fn submit  = nullptr;
+  void*                 link_ctx = nullptr;
+  int                   parent  = 0;
+};
+static PendingPtaModel g_pta_model;
+static bool            g_pta_enumerated = false;
+
+// What the chiplet's registers say a GEMM is, right now, in the public struct.
+static grxAnalogGemm_t read_pta_analog(pta_chiplet_device_t* dev) {
+  pta_chiplet_analog_t n;
+  (void)pta_chiplet_read_analog(dev, &n);
+  grxAnalogGemm_t a;
+  a.gemmIsAnalogEmulated   = n.analog;
+  a.tileIsPresent          = n.tile_present;
+  a.activationBits         = n.activation_bits;
+  a.weightBits             = n.weight_bits;
+  a.adcBits                = n.adc_bits;
+  a.adcShift               = n.adc_shift;
+  a.seed                   = n.seed;
+  a.impairments            = n.impairments;
+  a.impairmentsImplemented = n.impairments_implemented;
+  a.thermalSigmaQ8         = n.sigma_thermal_q8;
+  a.shotCoefficientQ8      = n.shot_k_q8;
+  a.programmingSigmaQ8     = n.sigma_prog_q8;
+  a.driftSigmaQ8           = n.drift_sigma_q8;
+  a.driftLog2Shots         = n.drift_log2_shots;
+  a.driftClampQ8           = n.drift_clamp_q8;
+  a.crosstalkQ8            = n.crosstalk_q8;
+  a.loopModes              = n.loop_modes;
+  a.calibrationValid       = n.calibration_valid;
+  a.tileRows               = n.tile_rows;
+  a.tileCols               = n.tile_cols;
+  a.operandBits            = n.operand_bits;
+  a.accumulatorBits        = n.accumulator_bits;
+  // The one field the c930 has no use for. Each of the chiplet's GEMMs runs on
+  // a seed derived from `seed` and this, so a report without it describes a
+  // run and not a result.
+  a.gemmIndex              = n.gemm_index;
+  return a;
+}
+
+// Fill grxDeviceProp_t for the PTA chiplet. It has no pipeline, no memory and
+// no clock of its own that anything here can source, so nearly every field is
+// zero and the profile is one bit wide.
+static void populate_pta_properties(Device& d) {
+  grxDeviceProp_t& p = d.prop;
+  std::memset(&p, 0, sizeof(p));
+
+  p.deviceType = GRX_DEVICE_TYPE_PTA;
+  // The only way here is the seam, so the only thing this can be is a model.
+  // Derived from how the device was reached, as the NPU's is: the day a
+  // hardware path exists this line is where it starts to matter.
+  p.backend    = GRX_BACKEND_MODEL;
+
+  p.numBarriers = 0;
+
+  // GEMM, and nothing else. No launch, no streams, no events, and above all no
+  // memcpy: there is nothing on this device to copy to.
+  p.capabilities = GRX_CAP_GEMM;
+
+  p.warpShuffleIsEmulated   = 0;  // no shuffles at all
+  p.eventTimingIsDeviceSide = 0;
+  p.constantMemoryIsGlobal  = 1;  // no __constant__ path
+  p.textureIsEmulated       = 1;  // and no TEX unit either
+  p.analogGemm   = read_pta_analog(d.pta_dev);
+  p.parentDevice = d.parent;
+
+  std::snprintf(p.name, sizeof(p.name),
+                "GRX PTA chiplet (software register model, NOT hardware)");
+}
+
+void probe_pta_device(std::vector<Device>& devices) {
+  static std::once_flag pta_once;
+  std::call_once(pta_once, [&devices] {
+    g_pta_enumerated = true;
+    // NOTHING ATTACHED, NOTHING ENUMERATED. There is no hardware path to try:
+    // the chiplet's window is a page of the GPU's BAR and the GPU's driver has
+    // no call that reads it. A build flag says what code exists, not what is
+    // in the package.
+    if (!g_pta_model.read32 && !g_pta_model.write32) return;
+
+    // A tile with no parent has nothing to compute on, so it is not a device.
+    const int parent = g_pta_model.parent;
+    if (parent < 0 || (size_t)parent >= devices.size() ||
+        devices[parent].type != DeviceType::GPU) {
+      std::fprintf(stderr, "grxcp: a PTA chiplet model was attached behind "
+                   "device %d, which is not a GPU here; not enumerated\n", parent);
+      return;
+    }
+
+    pta_chiplet_device_t* dev = new pta_chiplet_device_t{};
+    pta_chiplet_attach_window(dev, g_pta_model.read32, g_pta_model.write32,
+                              g_pta_model.ctx);
+    // AFTER attach_window, which zeroes the struct.
+    if (g_pta_model.submit)
+      pta_chiplet_attach_link(dev, g_pta_model.submit, g_pta_model.link_ctx);
+    if (!pta_chiplet_detect(dev)) {
+      delete dev;
+      return;
+    }
+    Device d;
+    d.index   = (int)devices.size();
+    d.type    = DeviceType::PTA;
+    d.handle  = nullptr;   // no Vortex handle
+    d.opened  = true;
+    d.probed  = false;
+    d.parent  = parent;
+    d.pta_dev = dev;
+    devices.push_back(d);
+    std::fprintf(stderr, "grxcp: PTA chiplet detected behind device %d (device %d)"
+                 " -- THROUGH A REGISTER MODEL, not hardware\n", parent, d.index);
+  });
+}
+
+pta_chiplet_device* pta_device_for(int index) {
+  if (index < 0 || (size_t)index >= g_devices.size()) return nullptr;
+  const Device& d = g_devices[index];
+  return (d.type == DeviceType::PTA) ? d.pta_dev : nullptr;
+}
+
+int pta_parent_of(int index) {
+  if (index < 0 || (size_t)index >= g_devices.size()) return -1;
+  const Device& d = g_devices[index];
+  return (d.type == DeviceType::PTA) ? d.parent : -1;
+}
+
+#endif  // GRXCP_ENABLE_PTA
+
 grxError_t ensure_initialized() {
   std::call_once(g_init_once, [] {
     // Enumerate Vortex (GPU) devices first
@@ -469,6 +620,11 @@ grxError_t ensure_initialized() {
     // Probe for the GRX930 NPU and append it
 #ifdef GRXCP_ENABLE_NPU
     probe_npu_device(g_devices);
+#endif
+    // And the PTA chiplet, last: it names a GPU as its parent, so the GPUs have
+    // to be in the table before it.
+#ifdef GRXCP_ENABLE_PTA
+    probe_pta_device(g_devices);
 #endif
   });
   return g_init_error;
@@ -493,6 +649,12 @@ grxError_t acquire_device(int index, Device** out) {
     if (d.type == DeviceType::NPU) {
 #ifdef GRXCP_ENABLE_NPU
       populate_npu_properties(d);
+#else
+      return grxErrorNotSupported;
+#endif
+    } else if (d.type == DeviceType::PTA) {
+#ifdef GRXCP_ENABLE_PTA
+      populate_pta_properties(d);
 #else
       return grxErrorNotSupported;
 #endif
@@ -521,6 +683,11 @@ void snapshot_properties(Device& d, grxDeviceProp_t* out) {
   std::lock_guard<std::mutex> lock(g_devices_mutex);
 #ifdef GRXCP_ENABLE_NPU
   if (d.type == DeviceType::NPU) d.prop.analogGemm = read_npu_analog(d.npu_dev);
+#endif
+#ifdef GRXCP_ENABLE_PTA
+  // The chiplet's too, and for one more reason than the NPU's: PTA_GEMM_CT
+  // moves with every GEMM, so a cached copy is wrong after the first one.
+  if (d.type == DeviceType::PTA) d.prop.analogGemm = read_pta_analog(d.pta_dev);
 #endif
   *out = d.prop;
 }
@@ -579,6 +746,45 @@ int grxcp_npu_model_is_attached(void) {
 #endif  // GRXCP_ENABLE_NPU
 
 // ---------------------------------------------------------------------------
+// The test seam (pta_chiplet_testing.h)
+// ---------------------------------------------------------------------------
+#ifdef GRXCP_ENABLE_PTA
+extern "C" {
+
+// Each of these refuses after enumeration, for the reason the NPU's do: the
+// probe runs once, and a model installed after it would be read by nothing.
+
+int grxcp_pta_attach_model_for_testing(pta_chiplet_read_fn read32,
+                                       pta_chiplet_write_fn write32,
+                                       void* ctx) {
+  if (grxcp::g_pta_enumerated) return 0;
+  grxcp::g_pta_model.read32  = read32;
+  grxcp::g_pta_model.write32 = write32;
+  grxcp::g_pta_model.ctx     = ctx;
+  return 1;
+}
+
+int grxcp_pta_attach_link_for_testing(pta_chiplet_submit_fn submit, void* ctx) {
+  if (grxcp::g_pta_enumerated) return 0;
+  grxcp::g_pta_model.submit   = submit;
+  grxcp::g_pta_model.link_ctx = ctx;
+  return 1;
+}
+
+int grxcp_pta_set_parent_for_testing(int gpu_index) {
+  if (grxcp::g_pta_enumerated) return 0;
+  grxcp::g_pta_model.parent = gpu_index;
+  return 1;
+}
+
+int grxcp_pta_model_is_attached(void) {
+  return (grxcp::g_pta_model.read32 || grxcp::g_pta_model.write32) ? 1 : 0;
+}
+
+}  // extern "C"
+#endif  // GRXCP_ENABLE_PTA
+
+// ---------------------------------------------------------------------------
 // Public entry points
 // ---------------------------------------------------------------------------
 
@@ -631,6 +837,12 @@ grxError_t grxMemGetInfo(size_t* freeBytes, size_t* totalBytes) {
     if (totalBytes) *totalBytes = (size_t)d->prop.totalGlobalMem;
     return grxSuccess;
   }
+  // A PTA chiplet has no memory, and that is an answer: none free, of none.
+  if (d->type == grxcp::DeviceType::PTA) {
+    if (freeBytes)  *freeBytes  = 0;
+    if (totalBytes) *totalBytes = 0;
+    return grxSuccess;
+  }
 
   uint64_t f = 0, used = 0;
   vx_result_t r = vx_device_memory_info(d->handle, &f, &used);
@@ -647,6 +859,9 @@ grxError_t grxDeviceSynchronize(void) {
   if (e != grxSuccess) return grxcp::set_error(e);
   // NPU has no Vortex streams — nothing to sync.
   if (d->type == grxcp::DeviceType::NPU) return grxSuccess;
+  // Nor has a PTA chiplet, and a GEMM on it has ended by the time the call
+  // that issued it returns.
+  if (d->type == grxcp::DeviceType::PTA) return grxSuccess;
   // Drains every stream on the device, including the null stream -- CUDA's
   // contract is device-wide, not current-stream.
   e = grxcp::sync_all_streams(device);
