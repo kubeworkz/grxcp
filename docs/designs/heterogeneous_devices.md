@@ -247,7 +247,11 @@ stand-ins in effect" section is the precedent for how that gets said out loud.
 2. **Which engine does `grxblasGemmEx` pick when both can do the work?** §6 says
    explicit control, not automatic magic. The default still has to be written
    down: current-device-only is the honest one, since it makes the choice the
-   caller's and matches `grxSetDevice` semantics.
+   caller's and matches `grxSetDevice` semantics. *What the caller should choose
+   has a model since 2026-10-04*: the board plan's S3,
+   [`pta_dispatch.py`](pta_dispatch.py), prices a GEMM on the PTA chiplet, the
+   GPU and the NPU. It is advice to whoever sets the device. Nothing in grxBLAS
+   reads it.
 3. **Does `grxDNN` follow?** Layer norm on a systolic array is not a GEMM, so
    the answer is probably no, and a transformer layer would then bounce between
    devices through host memory. That may make the NPU the wrong engine for
