@@ -461,6 +461,30 @@ It is still one small network (§8), so the shape of this result — that error
 compounds, and that every allowance tightens about fourfold — travels further
 than its numbers do.
 
+*What the two versions are on a single GEMM, 2026-10-03.* The PTA plan's S2
+measured the error of one GEMM against the exact product, at these two sets of
+allowances, on grxcp's register model of the tile
+([`pta_cpu_integration.md`](pta_cpu_integration.md) §7). As a fraction of the
+product's RMS:
+
+| | v0 | v1 |
+|---|---|---|
+| Quantisers | 6.5% | 3.6% |
+| Receiver noise | 18.6% | 2.3% |
+| Light at the detector | 21.6% | 4.9% |
+| Weight programming | 5.4% | 1.3% |
+| Crosstalk | 12.4% | 2.4% |
+| All together | 32.6%, 9.7 dB | 7.1%, 23.0 dB |
+
+Two things in it bear on this section. **On a GEMM the parts add**, in
+quadrature, to within 1%: the compounding above is in the network's accuracy, not
+in the tile's sums. And **the noise rows are in ADC LSB, which is not a fixed
+quantity**: v1's receiver noise is a quarter of v0's in LSB and an eighth in the
+product's units, because v1's ADC has another bit and so half the LSB. A receiver
+is designed to volts, so the row it is held to has to name the ADC it stands
+beside. The numbers are one 4 × 4 tile, one shape and uniform int8 operands, and
+they move with all three.
+
 *What C3 priced, 2026-09-23.* Both halves. C3(a) measured the interval: a
 calibration holds about a quarter of an hour at TFLT's fit, not the hour this
 table assumed, and the correction itself is complete at every age and both fits
