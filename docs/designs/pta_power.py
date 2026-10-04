@@ -21,15 +21,17 @@ MEASURED, on fabricated chips, each from its paper's abstract:
     receiver   M. Atef and H. Zimmermann, IEEE Trans. Circuits Syst. I 60 (2013):
                40 nm CMOS, 1.5 GHz, 7.2 pA/rtHz input-referred up to 1.5 GHz,
                4.1 mW the amplifier (12 mW the chip)
-    ADCs       L. Kull et al., IEEE JSSC 48 (2013): 8 bit, 1.2 GS/s, 3.1 mW,
-               39.3 dB SNDR, 32 nm SOI
-               H.-Y. Tai et al., A-SSCC 2013: 6 bit, 1.25 GS/s, 5.3 mW, 37.1 dB
-               peak SNDR, 40 nm
-               B. Verbruggen et al., IEEE JSSC 45 (2010): 6 bit, 2.2 GS/s,
-               2.6 mW, 31.1 dB SNDR, 40 nm
-               They are single converters near this operating point, not a
-               survey: B. Murmann's ADC Performance Survey is the place to
-               widen this, and was not read here.
+    ADCs       B. Murmann's ADC Performance Survey, 1997 to 2021, as his ISSCC
+               2022 short course plots it and pta_adc_survey.py reads it: 34
+               published converters within a factor of 2.5 of 1 GS/s and
+               between 30 and 50 dB.  The best is 16.6 fJ a conversion step
+               and the leading quarter reach 40.
+               Three were first taken one at a time from their papers, and
+               are kept as a check on the reading: L. Kull et al., IEEE JSSC
+               48 (2013), 8 bit, 1.2 GS/s, 3.1 mW, 39.3 dB; H.-Y. Tai et al.,
+               A-SSCC 2013, 6 bit, 1.25 GS/s, 5.3 mW, 37.1 dB; B. Verbruggen
+               et al., IEEE JSSC 45 (2010), 6 bit, 2.2 GS/s, 2.6 mW, 31.1 dB.
+               The survey holds the first and the third, at those figures.
 
 A STANDARD'S TARGET, not a part: 0.75 to 1.25 pJ a bit for a UCIe standard-
 package link at 24 and 32 GT/s (the UCIe Consortium's Hot Chips 2023 tutorial,
@@ -59,7 +61,9 @@ ASSUMED, and marked again where each is used:
       of C V^2 a shot on average; a full swing every other shot moves a half
     - that an ADC of B bits costs what the figure of merit says at an effective
       B bits.  The figure of merit is the measured parts' own, P / (2^ENOB fs),
-      and it does not stay put across resolutions; this spans the three
+      from the best published near 1 GS/s to the worst of the leading quarter.
+      Below 50 dB the survey's own trend is twice the energy a bit, which is
+      what holding it fixed says
     - the receiver's noise bandwidth: that of a single pole just fast enough to
       settle to half an LSB within a shot.  And that a receiver measured with a
       photodiode beside it keeps its noise with one a bond away
@@ -76,6 +80,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import pta_adc_survey as adc
 import pta_chiplet_link as link
 import pta_floorplan as fp
 import pta_shot_rate as shot
@@ -147,9 +152,9 @@ def walden_j(watts, fs, sndr_db):
     return watts / (2 ** enob(sndr_db) * fs)
 
 
-def fom_range():
-    f = [walden_j(w, fs, s) for _, _, fs, w, s in ADCS]
-    return min(f), max(f)
+def fom_range(fs=None):
+    """Joules a step near a rate: the best published, and the leading quarter's worst."""
+    return adc.frontier(FS if fs is None else fs)
 
 
 def adc_w(bits, fs, fom_j):
@@ -237,11 +242,16 @@ def main():
     # ------------------------------------------------------------------ 2, 3
     section("2 and 3. The receivers and the ADCs")
     print(f"  {n} receivers at {TIA_W * 1e3:.1f} mW, the measured amplifier alone: {w(n * TIA_W)}.")
-    print("  The measured ADCs, and the figure of merit each one has:")
+    f_lo, f_hi = fom_range()
+    best = adc.near(FS)[0]
+    print(f"  The survey has {len(adc.near(FS))} published ADCs within a factor of {adc.WINDOW} of 1 GS/s and between")
+    print(f"  30 and 50 dB (pta_adc_survey.py).  The best is {f_lo * 1e15:.1f} fJ a conversion step --")
+    print(f"  {best[0]:.2f} GS/s, {best[1]:.1f} dB, {best[2]:.2f} mW, which is version 1's converter as a part and")
+    print(f"  not a projection -- and the leading quarter reach {f_hi * 1e15:.0f}.  The three first")
+    print("  taken from their papers, for the check they give on that reading:")
     for name, b, fs, p, s in ADCS:
         print(f"    {name:<24}{b} bit{fs / 1e9:>6.2f} GS/s{p * 1e3:>5.1f} mW  {enob(s):.2f} effective bits"
               f"{walden_j(p, fs, s) * 1e15:>6.0f} fJ a step")
-    f_lo, f_hi = fom_range()
     print(f"  At {f_lo * 1e15:.0f} to {f_hi * 1e15:.0f} fJ a step, an effective B bits at 1 GS/s, and {n} of them:")
     for b in (v0["adc_bits"], v1["adc_bits"], 8):
         lo, hi = adc_w(b, FS, f_lo), adc_w(b, FS, f_hi)
@@ -249,6 +259,13 @@ def main():
     d_lo = n * (adc_w(v1["adc_bits"], FS, f_lo) - adc_w(v0["adc_bits"], FS, f_lo))
     d_hi = n * (adc_w(v1["adc_bits"], FS, f_hi) - adc_w(v0["adc_bits"], FS, f_hi))
     print(f"  So version 1's seventh bit is {w(d_lo)} to {w(d_hi)}: as much again as the six.")
+    print(f"  The same {n} converters at {bits} bits, by shot rate, from the survey near each:")
+    for fs in (0.1e9, 1e9, 10e9):
+        a, b = fom_range(fs)
+        print(f"    {fs / 1e9:>4.1f} GS/s  {a * 1e15:>5.1f} to {b * 1e15:>4.1f} fJ a step"
+              f"  {w(n * adc_w(bits, fs, a)):>8} to {w(n * adc_w(bits, fs, b))}")
+    print("  Ten times the rate is fifteen to sixteen times the converters at the")
+    print("  frontier, because a fast converter is also a less efficient one.")
 
     # ------------------------------------------------------------------ 4
     section("4. The inputs: an electrode is charged every shot")
@@ -353,12 +370,14 @@ def findings():
     print("   five or six decibels in hand, if that receiver survives the bond.")
     print()
     conv = (n * TIA_W + n * adc_w(bits, FS, f_lo), n * TIA_W + n * adc_w(bits, FS, f_hi))
-    print("2. THE CONVERTERS ARE PRICED: HALF A WATT TO UNDER ONE.")
+    print("2. THE CONVERTERS ARE PRICED: 0.4 TO 0.6 W, FROM THE SURVEY OF THE FIELD.")
     print(f"   {n} receivers are {w(n * TIA_W)} and {n} seven-bit ADCs {w(n * adc_w(bits, FS, f_lo))} to"
           f" {w(n * adc_w(bits, FS, f_hi))}, so {w(conv[0])} to {w(conv[1])}")
     print("   together.  The seventh bit is as much again as the first six, because a")
     print("   converter's power doubles with a bit.  They are the largest thing on the")
-    print("   chip only once the two below have been dealt with.")
+    print("   chip only once the two below have been dealt with.  The first pricing of")
+    print("   this, from three parts read one at a time, was twice as dear: the best")
+    print("   published converter near 1 GS/s is twice as good as the best of those.")
     print()
     print("3. TWO THINGS CAN EACH COST MORE THAN ALL THE CONVERTERS.  The link, if the")
     print(f"   weights are re-sent every batch: {w(l_re[0])} to {w(l_re[1])} at the standard's own target,")
@@ -423,11 +442,21 @@ def checks():
     for (name, _, fs, p, s), want in zip(ADCS, (34, 73, 40)):
         assert abs(walden_j(p, fs, s) * 1e15 - want) < 1.0, (name, walden_j(p, fs, s))
     f_lo, f_hi = fom_range()
+    # and the survey holds two of the three, at the papers' own figures, with
+    # its best part twice as good as the best of them
+    for name, _, fs, p, s in (ADCS[0], ADCS[2]):
+        hit = [r for r in adc.TABLE if abs(r[0] - fs / 1e9) < 0.005 and abs(r[1] - s) < 0.05]
+        assert len(hit) == 1 and abs(hit[0][2] / (p * 1e3) - 1.0) < 0.02, (name, hit)
+    assert abs(f_lo * 1e15 - 16.6) < 0.1 and abs(f_hi * 1e15 - 40.3) < 0.1
+    assert 2.0 < min(walden_j(p, fs, s) for _, _, fs, p, s in ADCS) / f_lo < 2.1
 
     # 5. A bit doubles a converter, so the seventh costs what the six do.
     for f in (f_lo, f_hi):
         assert abs(adc_w(7, FS, f) - 2 * adc_w(6, FS, f)) < 1e-15
-    assert abs(n * adc_w(7, FS, f_lo) - 0.28) < 0.005 and abs(n * adc_w(7, FS, f_hi) - 0.59) < 0.01
+    assert abs(n * adc_w(7, FS, f_lo) - 0.136) < 0.002 and abs(n * adc_w(7, FS, f_hi) - 0.330) < 0.002
+    # and ten times the rate is fifteen to sixteen times the converters
+    for a, b in ((fom_range(1e9), fom_range(10e9)),):
+        assert 15.0 < 10 * b[1] / a[1] < 10 * b[0] / a[0] < 16.5
 
     # 6. The 50 ohm line's capacitance is inside the sweep, and near its middle.
     assert C_LINE_F_CM[0] < C_LINE_50_OHM < C_LINE_F_CM[-1]
@@ -467,13 +496,13 @@ def checks():
     # and resident at 2 V the converters are most of the low end, which is
     # reading 2's last sentence
     _, low = chip_w(k, n, bits, 2.0, True)
-    assert (low["receivers"][0] + low["ADCs"][0]) / sum(q[0] for q in low.values()) > 0.7
+    assert (low["receivers"][0] + low["ADCs"][0]) / sum(q[0] for q in low.values()) > 0.6
 
-    # 10. The parts sum to the total, and the total is a watt to about nine.
+    # 10. The parts sum to the total, and the total is 0.6 W to about eight.
     for volts, resident in ((5.0, False), (5.0, True), (2.0, True)):
         (lo, hi), parts = chip_w(k, n, bits, volts, resident)
         assert abs(lo - sum(p[0] for p in parts.values())) < 1e-12
-        assert 0.7 < lo < hi < 12.0, (volts, resident, lo, hi)
+        assert 0.6 < lo < hi < 8.0, (volts, resident, lo, hi)
 
     # 11. Energy a multiply-accumulate sits between the design estimate's 27.9 fJ
     #     at four bits and the 1,142 fJ it gives a digital part at eight.

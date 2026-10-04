@@ -167,7 +167,7 @@ packages are out of reset.
 
 *For scale, 2026-10-04.* [`pta_power.py`](pta_power.py) puts a floor under the
 chiplet's rails from published parts, for a 256 × 64 tile at 1 GS/s. The analog
-rail's receivers and ADCs are 0.5 to 0.9 W. The drive to the modulators and the
+rail's receivers and ADCs are 0.4 to 0.6 W. The drive to the modulators and the
 weights is 0.1 to 4 W, depending on a swing and a capacitance that are both
 open. The link is 0.13–0.22 W with the weights resident and 1.8–3.1 W with them
 re-sent, which is both ends of it. None of this is a current. It says which
