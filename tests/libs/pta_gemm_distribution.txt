@@ -1,0 +1,31 @@
+# grxblasGemmEx on the photonic tile: the error against the product.
+#
+# Written by tests/libs/test_grxblas_pta_dist --regenerate. This is a
+# RECORD of what was measured, not a reference: the reference for these
+# numbers is the prediction the test computes, and the test fails when a
+# measurement leaves its band whatever this file says. What the file is
+# for is making a move VISIBLE -- when the error model is tuned, the
+# test prints every point that differs from the line below, and the
+# regenerated diff goes in the same change.
+#
+# Each point is 128 GEMMs of 12 x 8 x 16, uniform int8 operands, a fresh
+# PTA_SEED per GEMM. sum_e2 and sum_c2 are the sums of the squared error
+# and of the squared exact product over every element, in product units;
+# the relative RMS error is sqrt(sum_e2 / sum_c2).
+version 1
+tile rows=4 cols=4 operand_bits=16 accumulator_bits=48
+shape m=12 n=8 k=16 gemms=128
+shift v0=11 v1=10
+points 12
+point v0-quantisers sum_e2=24928122824 sum_c2=5941454153672 sum_e=809374 max_abs_e=5085 moved=12284 sats=0 count=12288
+point v0-thermal sum_e2=206160165184 sum_c2=5941454153672 sum_e=466264 max_abs_e=15536 moved=12279 sats=0 count=12288
+point v0-shot sum_e2=277721141696 sum_c2=5941454153672 sum_e=-943736 max_abs_e=20992 moved=12279 sats=0 count=12288
+point v0-programming sum_e2=17171199722 sum_c2=5941454153672 sum_e=-12890 max_abs_e=4875 moved=12285 sats=0 count=12288
+point v0-crosstalk sum_e2=91899720272 sum_c2=5941454153672 sum_e=456118 max_abs_e=11146 moved=12282 sats=0 count=12288
+point v0-all sum_e2=630894458824 sum_c2=5941454153672 sum_e=653726 max_abs_e=27201 moved=12287 sats=0 count=12288
+point v1-quantisers sum_e2=7665715144 sum_c2=5941454153672 sum_e=198046 max_abs_e=3003 moved=12281 sats=0 count=12288
+point v1-thermal sum_e2=3276886656 sum_c2=5941454153672 sum_e=-60344 max_abs_e=1864 moved=12246 sats=0 count=12288
+point v1-shot sum_e2=14530288912 sum_c2=5941454153672 sum_e=85412 max_abs_e=4552 moved=12272 sats=0 count=12288
+point v1-programming sum_e2=1071023295 sum_c2=5941454153672 sum_e=-16729 max_abs_e=1582 moved=12273 sats=0 count=12288
+point v1-crosstalk sum_e2=3398605262 sum_c2=5941454153672 sum_e=87852 max_abs_e=2143 moved=12278 sats=0 count=12288
+point v1-all sum_e2=29645543368 sum_c2=5941454153672 sum_e=67998 max_abs_e=5760 moved=12286 sats=0 count=12288

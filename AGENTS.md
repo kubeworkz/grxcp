@@ -90,6 +90,13 @@ These are the rules most likely to be violated by a well-meaning change.
   a device's output, and put the diff in the same change as the model. The
   analog gate is the one place "bitwise" survives an analog device: do not
   answer a red run by adding a tolerance.
+- **A bound on an analog error is a prediction, or it is nothing.**
+  `test_grxblas_pta_dist` holds each impairment's measured error to a
+  closed-form estimate, above and below. If it goes out of band after the error
+  model changes, fix the formula in the same change — do not widen the band,
+  and do not replace the formula with the number that was measured.
+  `tests/libs/pta_gemm_distribution.txt` beside it is a record of the last
+  measurement, there so a move is printed; it is not what the test is held to.
 - **Allocator invariants are load-bearing.** The interval map must never
   return a stale mapping; a freed extent is unmapped before it is reusable.
   Add a test with every allocator change.

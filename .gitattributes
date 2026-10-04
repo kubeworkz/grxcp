@@ -14,3 +14,4 @@ third_party/grx930/*.c          -text
 third_party/grx930/*.h          -text
 third_party/grx930/*.txt        -text
 tests/libs/pta_gemm_golden.txt  -text
+tests/libs/pta_gemm_distribution.txt  -text

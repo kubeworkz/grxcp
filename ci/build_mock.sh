@@ -566,6 +566,27 @@ else
     exit 1
   fi
   tail -1 "$BUILD/analog-gemm-gate.log"
+
+  # AND THE OTHER HALF: how far the model's answer is from the product. Not a
+  # zero-tolerance gate, by design -- an analog GEMM is not the product, and a
+  # tolerance on that would be a number somebody fitted. Each impairment's
+  # contribution is PREDICTED from the configuration the device reports, and
+  # the measurement has to land within a stated band of the prediction, above
+  # and below: too little error is an impairment that is not being applied.
+  # The table is printed every run because it is the result; a point that has
+  # moved since tests/libs/pta_gemm_distribution.txt was recorded is printed
+  # as MOVED and is not, by itself, a failure.
+  echo
+  echo "==> ANALOG GEMM REPORT: the tile against the product, predicted and measured"
+  if ( cd "$ROOT/tests/libs" && "$BUILD/cmake-npu/tests/test_grxblas_pta_dist" ) \
+       > "$BUILD/analog-gemm-report.log" 2>&1; then rc=0; else rc=$?; fi
+  grep -E '^  ((ok|FAIL|note|MOVED|point) |v[01]-)' "$BUILD/analog-gemm-report.log" | sed 's/^/  /'
+  if [[ $rc -ne 0 ]]; then
+    [[ $rc -eq 77 ]] && echo "  FAIL  the report SKIPPED. An NPU build has the tile model; it must run."
+    echo "FAILED: analog GEMM report (exit $rc)"
+    exit 1
+  fi
+  tail -1 "$BUILD/analog-gemm-report.log"
 fi
 
 echo "all mock checks passed"

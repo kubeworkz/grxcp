@@ -888,7 +888,7 @@ held to once there is one.
 |---|---|---|---|
 | S0 | **Done, below.** The D2 property specified: its fields, what an NPU without a tile reports, and the `grx-smi` line | Review; no code. CPU document §7.1, which also states what S1 must do to satisfy it, so the specification is testable rather than agreeable | D2 |
 | S1 | **Done, below.** The property populated from the PTA CSRs, and the vendored DPI shim extended to answer on them | `AGENTS.md` §3: every field sourced or reported unknown (−1); the NPU BACKEND GATE in `ci/build_mock.sh` green. Sourcing them took four read-only words the c930 did not have, and S0's own table was keyed on the wrong bit | S0, C4's CSR map |
-| S2 | **The bitwise gate done, below; the distributional report is next.** The two gates: bitwise against the model, its golden data regenerated only as a reviewed step, and the distributional report | CPU document §7. Gate 1 is `tests/libs/test_grxblas_pta.cpp`: 556 results in eight cases, each held to the device, to the model rebuilt from the device property alone, and to committed golden data | S1 |
+| S2 | **Done, below: both gates.** The two gates: bitwise against the model, its golden data regenerated only as a reviewed step, and the distributional report | CPU document §7. Gate 1 is `tests/libs/test_grxblas_pta.cpp`: 556 results in eight cases, each held to the device, to the model rebuilt from the device property alone, and to committed golden data. Gate 2 is `tests/libs/test_grxblas_pta_dist.cpp`: twelve points, each within 3.3% of a closed-form prediction | S1 |
 
 **S0, specified.** CPU document §7.1. D2 had settled that the property is a
 struct rather than a flag; S0 is its shape, and three things came out of writing
@@ -1020,6 +1020,48 @@ first. And grxcp reports the tile without being able to configure it
 (`cuda_mapping.md` 7.40), which the report will have to work around the same way
 the gate did.
 
+**S2, the distributional report.** CPU document §7 has it and its table. The
+brief was a report "with a stated bound that moves as the error model is tuned",
+and the bound is where the work was.
+
+**A bound that is measured is not a bound.** Written down from one run, it moves
+when somebody re-runs and it passes a tile with its noise switched off. So each
+impairment's error is predicted in closed form — from the configuration the
+device reports, the tile and the operands' moments — and the measurement has to
+sit within 15% of the prediction on either side. Across twelve points the
+furthest is 3.3% off. The bound moves with the model because it is a formula of
+the model's parameters, which is what the brief asked for and what a recorded
+number cannot do.
+
+**The parts add in quadrature.** All five impairments at once measure 1.010 and
+0.995 of the root-sum-square of the five alone, at the board plan's version 0 and
+version 1. So on a GEMM, error does what independent errors do. The board plan's
+"analog error does not add, it compounds" was measured as accuracy — at most 0.45
+points a part, 12.8 together — and that is a statement about a network's
+response, which this does not contradict and does not explain. It moves the
+question: version 0's parts are each under 22% of the product's RMS and together
+32.6%, and somewhere between those a 784-100-10 MLP stops coping. Where, and
+whether it is a threshold, is measurable with the harness that exists.
+
+**An LSB-denominated allowance is tied to its ADC.** Version 1's thermal sigma
+is a quarter of version 0's and its thermal error an eighth, because the 7-bit
+ADC's LSB is half the 6-bit one's. §4.3 of the board plan states every noise
+allowance in LSB. A receiver designed to "0.25 LSB" is designed to a number that
+moves with the ADC's range, and the range is set by the workload's clip rule.
+
+**Shot noise leads at both versions.** 21.6% of the 32.6% at version 0, 4.9% of
+the 7.1% at version 1. The board plan's question 1 already made light at the
+detector the number that bounds the shot rate; it is also the number that bounds
+the error.
+
+**What it is a report about** is the register model's 4 × 4 tile at one shape with
+uniform operands. The formulas carry over to another tile and workload; the
+numbers do not, and the SoC's tile and the chiplet's are both different.
+
+Track S is complete with this. What is left that touches it is outside it: a way
+to configure the tile from grxcp (`cuda_mapping.md` 7.40), the activation stage
+that nothing reports (7.39), and the board plan's S3 and S4.
+
 ---
 
 ## 4. Order
@@ -1029,7 +1071,7 @@ the gate did.
 | Now | Immediately, in parallel | A3; G1 (D1–D4 settled; F0 and C0 done). S0 and A-synth are done |
 | Next | C0 green, as it now is | C1 and C3 are green; G0's vendoring half has reported (below) and what it still owes, like G1, is SimX (F1 done) |
 | Then | C1, C2 tile, MB, C4, SoC-B, F2 and F3 now green | G2: G1's model has reported, and what it still owes G2 is the SimX confirmation rather than the answer. Track F is complete: F3's handoff is in the board plan's X2 §1, with the host's ~1,090 cycles labelled there as this SoC's MMIO path rather than a fabric rate |
-| Last | C2 tile, MB, C3 and A-synth green | C4; then S1 and S2 on its CSR map, F3 on its numbers, and G3. S1 is done, and so is S2's bitwise gate; its distributional report is what is left |
+| Last | C2 tile, MB, C3 and A-synth green | C4; then S1 and S2 on its CSR map, F3 on its numbers, and G3. S1 and S2 are done, which completes track S |
 
 The critical path is C0 → C1 → C2 tile → MB → C4. Everything else runs beside
 it or hangs off one of its gates, and nothing on it waits for the GPU.
