@@ -113,8 +113,10 @@ The shadow scheduler fires when the input buffer falls below a watermark and
 the predicted error is above a floor, with the predictive threshold as the
 backstop the CPU document specifies.
 
-`PTA_CAL_CT` and `PTA_CAL_CYC`, 64-bit on this map, are what make the four
-modes comparable rather than arguable.
+`PTA_CAL_CT` and `PTA_CAL_CYC` are what make the four modes comparable rather
+than arguable. `PTA_CAL_CYC` is 64 bits on this map. `PTA_CAL_CT` is not — this
+sentence said both were until X5 built the map, which has an upper half for the
+cycles and none for the count — and four billion calibrations is enough.
 
 *What C3(b) built, and what it needed that this section did not say.* The four
 modes are in `grx930/c930/rtl/pta/c930_pta_cal.sv`, with the c930's window being
@@ -190,6 +192,16 @@ The engine also needs configuration no map had a place for — the probe's
 amplitude, its repeat count, the DAC's step and clamp, and its own seed. Three
 words, in [`pta_chiplet_regmap.md`](pta_chiplet_regmap.md) §4.
 
+*Against X5's twin, 2026-10-04.* The five obligations above are built on the
+chiplet's map and held by its gate: CAL_BUSY for the whole of a calibration and
+in one word with BUSY; three commands during one queued at occupancy 1, 2 and 3
+and run after it in order; a `MODEL_RST` during one refused with
+`PTA_IRQ_STATUS.ERR`; `CAL_DONE` at its end and `CAL_VALID` only if its result
+was used; and the residual and the error found in their two registers, equal to
+what grx930's `pta_cal_bank()` returns. The twin's engine is that function. What
+the twin adds is where BUSY stands while work waits behind a calibration
+([`pta_chiplet_regmap.md`](pta_chiplet_regmap.md) §5).
+
 ## 7. The gate, for the chiplet
 
 C3's gate is that accuracy recovers to within a stated margin of the no-drift
@@ -205,7 +217,10 @@ periodic one at equal accuracy. For the chiplet:
 - **The comparison of schedulers** runs on the twin first, where wall-clock is
   countable exactly, and then in RTL. *On the c930 those are the same thing* —
   PTM-C is the twin — so C3(b) ran it once, in RTL, and §8 has it. The chiplet's
-  own twin is X5's.
+  own twin is X5's. *X5 built it on 2026-10-04 with the scheduler off:* a
+  calibration runs when `CAL_NOW` asks. So this comparison is still owed. It
+  needs the three scheduled modes, and for the shadow an idle window the twin can
+  see, which waits on what link 2 carries.
 - *Ablation:* the START-during-calibration regression from the CPU document's
   §3.2, which on this chiplet means commands arriving while CAL_BUSY is set —
   three back to back, with the queue's occupancy checked at each step.

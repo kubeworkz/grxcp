@@ -414,6 +414,58 @@ else
 fi
 
 echo
+echo "==> PTA CHIPLET TWIN GATE: the chiplet's map, with that model behind it"
+# The board plan's X5. src/backends/pta_chiplet/pta_chiplet_twin.c presents the
+# register map of docs/designs/pta_chiplet_regmap.md, and the model the gate
+# above has just held to grx930's vectors is what answers behind it. The gate
+# drives the map -- identity, the per-GEMM seed, the completion contract behind
+# a link, the calibration engine's words -- and holds every GEMM and every
+# calibration to the model called directly, on a device the twin never sees.
+#
+# It also points the c930 backend's own register reader at the twin, through a
+# change of base and nothing else, which is the map's claim that one driver
+# addresses both.
+#
+# A twin is not a chiplet, and there is no chiplet. Passing here says the map
+# can be implemented as written and that this implementation is the model.
+#
+# Then three twins that are each wrong in one way -- a GEMM that runs on
+# PTA_SEED itself, a command taken into a calibrating tile, a MODEL_RST
+# honoured under a running command -- and the gate has to fail against each.
+TWIN_DIR="$ROOT/src/backends/pta_chiplet"
+if ! command -v "$CC_BIN" >/dev/null 2>&1; then
+  echo "SKIPPED: no C compiler ($CC_BIN) beside $CXX."
+else
+  twin_build() {   # $1: the output; then any -D for the twin
+    local out="$1"; shift
+    $CC_BIN -std=c99 -Wall -Wextra -Wpedantic -O2 "$@" -I"$PTA_DIR" -I"$TWIN_DIR" \
+      -c "$TWIN_DIR/pta_chiplet_twin.c" -o "$out.twin.o"
+    $CC_BIN -std=c99 -O2 -I"$PTA_DIR" -c "$PTA_DIR/pta_tile_model.c" -o "$out.model.o"
+    $CXX -std=c++17 -Wall -Wextra -O1 -I"$TWIN_DIR" -I"$PTA_DIR" -I"$NPU_DIR" \
+      "$TWIN_DIR/test_pta_chiplet_twin.cc" "$NPU_DIR/npu_c930.cpp" \
+      "$out.twin.o" "$out.model.o" -o "$out"
+  }
+  twin_build "$BUILD/test_pta_chiplet_twin"
+  "${RUN[@]}" "$BUILD/test_pta_chiplet_twin" > "$BUILD/pta_chiplet_twin.log" 2>&1 || {
+    echo "  FAIL  the twin does not hold to its map, or to the model:"
+    grep -E "^  FAIL" "$BUILD/pta_chiplet_twin.log" | head -12 | sed 's/^/      /'
+    exit 1
+  }
+  echo "  ok    $(grep -E '^[0-9]+ checks, 0 failed$' "$BUILD/pta_chiplet_twin.log")"
+  for ablation in SEED CAL_GUARD RST_GUARD; do
+    twin_build "$BUILD/test_pta_chiplet_twin_$ablation" "-DPTA_TWIN_ABLATE_$ablation"
+    if "${RUN[@]}" "$BUILD/test_pta_chiplet_twin_$ablation" \
+         > "$BUILD/pta_chiplet_twin_$ablation.log" 2>&1; then
+      echo "  FAIL  a twin built with PTA_TWIN_ABLATE_$ablation still passed."
+      echo "        The gate is not checking what that switch breaks."
+      exit 1
+    fi
+    echo "  ok    and a twin built with PTA_TWIN_ABLATE_$ablation fails it:" \
+         "$(grep -cE '^  FAIL' "$BUILD/pta_chiplet_twin_$ablation.log") checks"
+  done
+fi
+
+echo
 echo "==> NPU GROUNDWORK: a device with no pipeline refuses launches"
 # Phase 7 begins here, before there is an NPU to talk to. The c930 NPU is a
 # systolic array with no SIMT pipeline, and grxcp_architecture.md section 6
@@ -474,6 +526,11 @@ else
   done
   [[ $missing -eq 0 ]] || exit 1
   echo "  ok    grxrt, grxblas, grxdnn and the tools are all present"
+  # The twin needs no flag, so the default configuration has to have built it.
+  if [[ ! -x "$CMBUILD/src/backends/pta_chiplet/test_pta_chiplet_twin" ]]; then
+    echo "  FAIL  cmake did not build the PTA chiplet twin's gate"; exit 1
+  fi
+  echo "  ok    and so is the PTA chiplet twin's gate, which needs no flag"
 
   # The NPU flag, which is the thing the GRX930 team asked about. Both
   # configurations are built, because "the GPU path is unchanged when the flag
