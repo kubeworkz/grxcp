@@ -110,9 +110,11 @@ int main() {
           a.driftLog2Shots == -1 && a.driftClampQ8 == -1 &&
           a.crosstalkQ8 == -1 && a.loopModes == -1 && a.calibrationValid == -1 &&
           a.tileRows == -1 && a.tileCols == -1 && a.operandBits == -1 &&
-          a.accumulatorBits == -1,
+          a.accumulatorBits == -1 && a.gemmIndex == -1,
           "and no error-model field carries a value that could be mistaken "
           "for a setting");
+    // A GPU's memory is its own. Only a PTA chiplet names a parent.
+    check(p.parentDevice == -1, "no parent device: this one's memory is its own");
     check(a.impairmentsImplemented == 0,
           "nothing implemented is 0, because that much is known");
   }

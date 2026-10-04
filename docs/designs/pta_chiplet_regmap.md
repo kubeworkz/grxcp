@@ -149,7 +149,9 @@ GEMMs *started*, so the GEMM behind a refused one is the next in the sequence an
 not the one after. And **`PTA_SEED` alone does not reproduce a result**: GEMM 0
 under seed *s* runs on `seed_0`, not on *s*. A report of what a GEMM ran on needs
 its index as well, which the CPU document's D2 property does not carry — it was
-built for the c930, where the host writes the seed each time. That is S4's to add.
+built for the c930, where the host writes the seed each time. *S4 added it,
+2026-10-04:* `grxAnalogGemm_t.gemmIndex`, and a gate that reproduces a chiplet's
+GEMM from the property with it and fails to without it.
 
 **Counters are 64 bits.** A 32-bit `PTA_SHOT_CT` wraps in 4.3 seconds at one
 shot a nanosecond, which is inside X2's candidate range. The low half keeps its
@@ -331,9 +333,12 @@ timing is two formulas — a GEMM holds the tile for
 `programmings × PTA_TW + shots × PTA_TS` cycles, a calibration for
 `passes × repeats × (PTA_TW + rows × PTA_TS)` — and nothing else.
 
-It is not yet a device grxcp can see. Nothing in the runtime enumerates it, so
-`grxblasGemmEx` does not reach it and the D2 property is not filled from it:
-that is S4, which needed this first.
+It was not, at first, a device grxcp could see. *S4 made it one on 2026-10-04*
+(the board plan's §3.4): a GEMM-only device whose parent is its GPU, enumerated
+only when a model is attached, with the D2 property read from this map through
+`src/backends/pta_chiplet/pta_chiplet.cpp` and `grxblasGemmEx` routed to it.
+That driver keeps its own transcription of the offsets above, and a test holds
+it to the twin's.
 
 ---
 

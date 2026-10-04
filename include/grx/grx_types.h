@@ -137,7 +137,17 @@ typedef enum {
 // Device model
 // ---------------------------------------------------------------------------
 
-typedef enum { GRX_DEVICE_TYPE_GPU = 0, GRX_DEVICE_TYPE_NPU = 1 } grxDeviceType_t;
+typedef enum {
+  GRX_DEVICE_TYPE_GPU = 0,
+  GRX_DEVICE_TYPE_NPU = 1,
+  // The photonic tensor chiplet in a GPU's package (the development board's
+  // PTA). A device of its own because the current device is what decides which
+  // engine a GEMM runs on, and on this one every GEMM runs on the tile. It is
+  // GEMM-only and has no memory: its operands are its parent GPU's, moved by
+  // that GPU's copy engine, so grxDeviceProp_t.parentDevice says whose
+  // pointers it takes (docs/designs/board_program_plan.md, B9).
+  GRX_DEVICE_TYPE_PTA = 2
+} grxDeviceType_t;
 
 // Which execution backend a device is running on. Programs that reason about
 // wall-clock time must check this: a simx device is several orders of
@@ -253,6 +263,21 @@ typedef struct {
   int     tileCols;               // outputs a shot yields
   int     operandBits;            // DIN_W
   int     accumulatorBits;        // ACC_W
+
+  // WHICH GEMM THIS IS, on a device that gives each one a seed of its own.
+  //
+  // A c930's host writes PTA_SEED before every GEMM, and the GEMM runs on it.
+  // A chiplet is across a link, so its seed is written once a run and GEMM i
+  // runs on a stated function of `seed` and i
+  // (docs/designs/pta_chiplet_regmap.md section 4). There `seed` alone
+  // reproduces nothing: this is PTA_GEMM_CT, the index the NEXT GEMM on the
+  // device will take, read before the GEMM it describes.
+  //
+  // -1 on a device whose GEMMs run on `seed` as written, which is every c930,
+  // and wherever tileIsPresent is not 1. A fact about the device's state and
+  // not its configuration, so like the tile it is reported whether or not any
+  // impairment is enabled: an exact GEMM takes an index too.
+  int64_t gemmIndex;
 } grxAnalogGemm_t;
 
 #define GRX_ANALOG_QUANT     0x01
@@ -313,6 +338,15 @@ typedef struct {
   // Whether a GEMM on this device is the GEMM that was asked for. Nested
   // because its fields only mean anything together, and live -- see the type.
   grxAnalogGemm_t analogGemm;
+
+  // The device whose memory this device's operands live in, or -1 for a device
+  // with memory of its own, which is every GPU and every NPU. A PTA chiplet
+  // has none: it is fed from its GPU's memory by that GPU's copy engine, so a
+  // GEMM on it takes pointers allocated on device `parentDevice`, and
+  // grxMalloc on the chiplet itself is refused. This is the one place a
+  // pointer is resolved against a device other than the current one, and the
+  // field is how a caller finds out which.
+  int    parentDevice;
 } grxDeviceProp_t;
 
 // Attributes of a compiled kernel. Fields the toolchain cannot yet supply

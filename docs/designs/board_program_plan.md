@@ -321,7 +321,7 @@ tree. So L4 is planned alongside L1, not after it.
 | X2 | **Predicted, below.** Link sizing in [`pta_chiplet_link.py`](pta_chiplet_link.py), which adds the die-to-die term to F1's model and carries the PTA plan's F3 handoff | Predictions stated before any RTL, and every number traced, as F1's were | B4, F1 |
 | X3 | **Specified, measured and built:** [`pta_chiplet_calibration.md`](pta_chiplet_calibration.md), with C3(a)'s recovery and C3(b)'s RTL in its §8 — the trim returns a tile at chance to within 0.01 points of the no-drift case, and the engine that writes it agrees with the C reference cell for cell | C3's own gate, at TFLT's and TFLN's drift | Done |
 | X4 | **Drafted:** [`pta_chiplet_regmap.md`](pta_chiplet_regmap.md) — the §3.1 block at its own offsets in the GPU's BAR, with identity, interrupts and 64-bit counters added, and §3.2's contract restated for a device behind a link | Review | B4, B7 |
-| X5 | **Built, below:** the digital twin, `pta_tile_model.c` behind X4's map, so that drivers and grxcp can bring the PTA up before silicon | grxcp's backend gates pass against it, bitwise against the model. Bitwise against the model: met. Through grxcp's runtime: not yet, and S4's | X4 |
+| X5 | **Built, below:** the digital twin, `pta_tile_model.c` behind X4's map, so that drivers and grxcp can bring the PTA up before silicon | grxcp's backend gates pass against it, bitwise against the model. Bitwise against the model: met. Through grxcp's runtime: met by S4 (§3.4) | X4 |
 
 **X2, predicted.** [`pta_chiplet_link.py`](pta_chiplet_link.py) prices the
 link the way F1 priced the c930's feed, and carries F3's handoff in its first
@@ -433,9 +433,10 @@ cover the chiplet's queue; the affine has eight words and the tile 64 columns;
 by one driver; a host cannot restore a saved trim; and a GEMM's seed cannot be
 reported without its index.
 
-What it is not. It is not a device grxcp can see: nothing enumerates it, so
-`grxblasGemmEx` does not reach it and X5's gate is met against the model and not
-yet through the runtime. That is S4. Its calibration scheduler is off, so the
+What it is not. It was not, when this was written, a device grxcp could see:
+nothing enumerated it, so `grxblasGemmEx` did not reach it and X5's gate was met
+against the model and not through the runtime. *S4 has since made it one*
+(§3.4). Its calibration scheduler is off, so the
 comparison of schedulers that
 [`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) §7 assigns to this
 twin is still owed. And it is a model: a result through it is a statement about
@@ -449,7 +450,44 @@ chiplet.
 | S1 | Enumeration over CXL: the GPU, and its PTA, found through configuration space | [`heterogeneous_devices.md`](heterogeneous_devices.md) §4's rule: a device that is not present is not enumerated | L4, X4 |
 | S2 | A coherent shared pool: pointers valid on both the CPU and the GPU, beside the per-device spaces of §4.1 | Each coherent allocation reported through a device property, and no pointer resolved to the wrong device | L1, L2 |
 | S3 | The dispatch cost model: the §2.1 model with X2's link terms and C1's accuracy, placing each GEMM on the PTA, the GPU or the NPU | Its predictions checked on rev 0 | X2, P2 |
-| S4 | The PTA reported through the PTA plan's D2 property — effective bits, seed, impairment mask — from the twin now and from silicon later. X5 is built, and found one thing this step has to add: on the chiplet a GEMM's seed is derived from `PTA_SEED` and the GEMM's index, so the property needs the index or it describes a run and not a result | `AGENTS.md` §3: every field sourced or reported unknown (−1) | X5 |
+| S4 | **Built, below.** The PTA reported through the PTA plan's D2 property — effective bits, seed, impairment mask — from the twin now and from silicon later. X5 found one thing this step had to add: on the chiplet a GEMM's seed is derived from `PTA_SEED` and the GEMM's index, so the property needs the index or it describes a run and not a result | `AGENTS.md` §3: every field sourced or reported unknown (−1) | X5 |
+
+**S4, built 2026-10-04.** The chiplet is a device grxcp can see, as B9 settles
+it. `src/backends/pta_chiplet/pta_chiplet.cpp` is its driver, the runtime
+enumerates it behind `-DGRXCP_ENABLE_PTA=ON`, and grxBLAS routes an int8 GEMM
+on it to the tile. The only chiplet there is to attach is X5's twin, through a
+seam, and the device says it is a model. Four things.
+
+- **The property carries the GEMM's index.** `grxAnalogGemm_t.gemmIndex` is
+  `PTA_GEMM_CT`, read before the GEMM it describes, and `-1` on a c930, whose
+  GEMMs run on the seed as written. The gate is
+  `tests/libs/test_grxblas_pta_chiplet.cpp`: eight cases on a 256 × 64 tile,
+  4,164 results through `grxSetDevice` and `grxblasGemmEx`, each equal to
+  the model built from the property and nothing else. A reference built on the
+  seed alone, as a c930's would be, differs in 285 elements of 600.
+- **X5's gate is met through the runtime.** "grxcp's backend gates pass against
+  it, bitwise against the model" was met by X5 against the model called
+  directly, and is now met through the same calls a program makes.
+- **Its operands are its parent's.** `parentDevice` names the GPU, `grxMalloc`
+  on the chiplet is refused, and a GEMM on it takes the GPU's pointers. A
+  pointer that is not live on the parent is refused by name. Outside a GEMM the
+  exception does not exist: `grxMemcpy` on the chiplet refuses the same pointer.
+- **It has no hardware path, and says so.** With the backend built and nothing
+  attached, no PTA device is enumerated, on any machine. Two things are missing
+  and neither is grxcp's to supply. The GPU's driver has no call that reaches
+  the chiplet's page of its BAR, which is a proposal owed to grxgpu. And link 2
+  has no command format ([`board_icd.md`](board_icd.md) §7, item 7), so the
+  driver's path for work is a hook that only a model fills. A chiplet with a
+  window and no link is the state every one is in off a model: it is enumerated
+  and reported, and a GEMM on it returns "not supported" with C untouched.
+
+What stands in, where a model is attached: the operands make a host round trip
+in place of the copy engine and the link. It is reachable only through the seam.
+
+What it leaves. S1, finding the chiplet through configuration space, which
+waits on L4. S3, which device a GEMM should go to. And a way to configure the
+tile from grxcp, which is `cuda_mapping.md` 7.40 for the chiplet as it was for
+the c930: the gate programs the registers behind the runtime's back.
 
 ---
 
@@ -980,6 +1018,28 @@ it as "the per-lane modulation rate of your photonic transceivers" is answering
 the link's question, not the tile's. Question 1 has since been bounded
 ([`pta_shot_rate.py`](pta_shot_rate.py)), and the modulator turns out not to be
 among the bounds that bind.
+
+**B9 — How grxcp sees the chiplet.** *Settled 2026-10-04.*
+
+Two documents answer this two ways. B4 calls the PTA "a device-level engine that
+the whole GPU shares" and B7 gives its register block to the GPU's driver, which
+reads as an engine of the GPU device. grxBLAS's dispatch rule reads the other
+way: the current device decides which engine a GEMM runs on, nothing consults a
+preference, and nothing falls back, "because the alternative is the same source
+line running on different silicon depending on state set somewhere else". A GPU
+device with two GEMM engines needs exactly that state. And `analogGemm` would
+stop meaning what it means on a c930, that a GEMM on this device is impaired.
+
+*Recommended, and settled as recommended:* the chiplet is a **device of its own**
+in grxcp's table — `GRX_DEVICE_TYPE_PTA`, GEMM-only, appended after the GPUs —
+and its GPU is its **parent**. That keeps both rules whole and costs one
+exception, stated once. The chiplet has no memory, so a GEMM on it takes pointers
+allocated on its parent, and `grxDeviceProp_t.parentDevice` says which device
+that is. That is B4's copy engine seen from the API: the operands are in the
+GPU's memory because the GPU is what feeds the tile. Everything else on the
+chiplet is refused. S3's placement becomes a choice of device, made above
+grxBLAS, where [`heterogeneous_devices.md`](heterogeneous_devices.md) §6 already
+put it. *Needed by:* S4, S3 and S1.
 
 ---
 

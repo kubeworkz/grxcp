@@ -137,6 +137,7 @@ typedef enum {
   GRXBLAS_ENGINE_NONE       = 0,  // the routing has nowhere to send this call
   GRXBLAS_ENGINE_GPU_TENSOR = 1,  // the GRX-G100 tensor unit
   GRXBLAS_ENGINE_NPU_C930   = 2,  // the GRX930 systolic array over MMIO
+  GRXBLAS_ENGINE_PTA_CHIPLET = 3, // the photonic tile in a GPU's package
 } grxblasEngine_t;
 
 const char* grxblasGetEngineString(grxblasEngine_t engine);

@@ -10,6 +10,7 @@ option(GRXCP_BUILD_TOOLS      "Build grx-smi / grx-prof / grx-sanitize"       ON
 option(GRXCP_BUILD_LIBS       "Build grxBLAS and friends"                     ON)
 option(GRXCP_BUILD_TESTS      "Build the test suites"                         ON)
 option(GRXCP_ENABLE_NPU       "Build the GRX930 NPU backend (phase 7)"        OFF)
+option(GRXCP_ENABLE_PTA       "Build the PTA chiplet backend (board plan S4)" OFF)
 option(GRXCP_USE_MOCK_DRIVER  "Link the mock driver instead of libvortex"     OFF)
 
 # ---------------------------------------------------------------------------

@@ -63,6 +63,11 @@ grxError_t grxEventCreateWithFlags(grxEvent_t* event, unsigned int flags) {
   grxError_t e = grxcp::acquire_device(device, &d);
   if (e != grxSuccess) return grxcp::set_error(e);
 
+  // A device whose profile has no events has none, and says so, rather than
+  // handing the driver a handle it does not have.
+  if (!(d->prop.capabilities & GRX_CAP_EVENTS))
+    return grxcp::set_error(grxErrorNotSupported);
+
   vx_event_h ev = nullptr;
   vx_result_t r = vx_event_create(d->handle, &ev);
   if (r != VX_SUCCESS) return grxcp::set_error(grxcp::map_result(r));

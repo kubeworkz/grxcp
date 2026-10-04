@@ -463,6 +463,25 @@ else
     echo "  ok    and a twin built with PTA_TWIN_ABLATE_$ablation fails it:" \
          "$(grep -cE '^  FAIL' "$BUILD/pta_chiplet_twin_$ablation.log") checks"
   done
+
+  # THE DRIVER, against that twin and against windows and links that
+  # misbehave. pta_chiplet.cpp is the half of the chiplet's support that would
+  # meet hardware, and there is none, so everything it decides is a response to
+  # what a window and a link do: nothing behind the window, a tile that never
+  # stops being busy, a link that will not take a command and one that loses
+  # it. It is held to the model through the twin, and to the c930 backend's
+  # reader field for field. No runtime, so it runs here in tier 1.
+  $CXX -std=c++17 -Wall -Wextra -O1 -I"$TWIN_DIR" -I"$PTA_DIR" -I"$NPU_DIR" \
+    "$TWIN_DIR/test_pta_chiplet_driver.cc" "$TWIN_DIR/pta_chiplet.cpp" \
+    "$NPU_DIR/npu_c930.cpp" "$BUILD/test_pta_chiplet_twin.twin.o" \
+    "$BUILD/test_pta_chiplet_twin.model.o" -o "$BUILD/test_pta_chiplet_driver"
+  "${RUN[@]}" "$BUILD/test_pta_chiplet_driver" > "$BUILD/pta_chiplet_driver.log" 2>&1 || {
+    echo "  FAIL  the chiplet's driver:"
+    grep -E "^  FAIL" "$BUILD/pta_chiplet_driver.log" | head -12 | sed 's/^/      /'
+    exit 1
+  }
+  echo "  ok    the driver, against the twin:" \
+       "$(grep -E '^[0-9]+ checks, 0 failed$' "$BUILD/pta_chiplet_driver.log")"
 fi
 
 echo
@@ -531,6 +550,9 @@ else
     echo "  FAIL  cmake did not build the PTA chiplet twin's gate"; exit 1
   fi
   echo "  ok    and so is the PTA chiplet twin's gate, which needs no flag"
+  if [[ ! -x "$CMBUILD/src/backends/pta_chiplet/test_pta_chiplet_driver" ]]; then
+    echo "  FAIL  cmake did not build the PTA chiplet driver's gate"; exit 1
+  fi
 
   # The NPU flag, which is the thing the GRX930 team asked about. Both
   # configurations are built, because "the GPU path is unchanged when the flag
@@ -598,7 +620,7 @@ else
   # runs and once in the closing list -- so a bare `grep -c Skipped` reports
   # double, which is how the first version of this line claimed 22 skips out of
   # 24 tests.
-  printf "        %s skipped -- each needs a device or a compiled kernel\n" \
+  printf "        %s skipped -- each needs a device, a compiled kernel or a backend this build lacks\n" \
     "$(grep -cE '^[[:space:]]+[0-9]+ - .* \(Skipped\)' \
         "$BUILD/ctest-npu.log" || echo 0)"
 
@@ -644,6 +666,61 @@ else
     exit 1
   fi
   tail -1 "$BUILD/analog-gemm-report.log"
+
+  # THE PTA CHIPLET, AS A DEVICE THE RUNTIME ENUMERATES. The board plan's S4,
+  # and its own configuration: -DGRXCP_ENABLE_PTA=ON with the NPU flag OFF, so
+  # that neither backend is found to depend on the other. Only what the two
+  # gates below need is built.
+  #
+  # There is no chiplet, and no call in the GPU's driver that would find one,
+  # so the only way a PTA device exists is the seam in pta_chiplet_testing.h
+  # with the digital twin behind it. A device reached that way says it is a
+  # model, and nothing below may be reported as a chiplet working.
+  echo
+  echo "==> PTA CHIPLET DEVICE GATE: the chiplet's twin, as a device grxcp can see"
+  if ! cmake -S "$ROOT" -B "$BUILD/cmake-pta" -DGRXCP_ENABLE_PTA=ON \
+       -DGRXCP_USE_MOCK_DRIVER=ON \
+       -DGRXCP_VORTEX_INCLUDE_DIR="$VORTEX_INCLUDE" \
+       > "$BUILD/cmake-pta.log" 2>&1 ||
+     ! cmake --build "$BUILD/cmake-pta" -j"$(nproc 2>/dev/null || echo 4)" \
+       --target test_pta_chiplet_device test_grxblas_pta_chiplet grx-smi \
+       >> "$BUILD/cmake-pta.log" 2>&1; then
+    echo "  FAIL  -DGRXCP_ENABLE_PTA=ON does not build."
+    grep -E "error:|Error|CMake Error" "$BUILD/cmake-pta.log" | head -8 |
+      sed 's/^/        /'
+    exit 1
+  fi
+  echo "  ok    -DGRXCP_ENABLE_PTA=ON configures and builds, with the NPU flag off"
+
+  # A BUILD FLAG IS NOT A CHIPLET. With the backend compiled in and nothing
+  # attached through the seam, no PTA device may appear: there is no hardware
+  # path that could have found one.
+  pta_seen="$("$BUILD/cmake-pta/tools/grx-smi" 2>/dev/null | grep -c 'PTA chiplet' || true)"
+  if [[ "$pta_seen" != "0" ]]; then
+    echo "  FAIL  a PTA chiplet was enumerated with nothing attached:"
+    "$BUILD/cmake-pta/tools/grx-smi" 2>&1 | grep -i 'pta chiplet' | sed 's/^/        /'
+    exit 1
+  fi
+  echo "  ok    and no PTA device is enumerated with nothing attached to the seam"
+
+  # The device: what it reports, what it refuses, and the state every chiplet
+  # is in off a model -- a window and no link. Then the GEMM, through
+  # grxSetDevice and grxblasGemmEx, held bit for bit to the model built from
+  # the device property alone. A skip is a failure in this configuration: the
+  # backend and the twin are both here, so exit 77 would mean a gate did not
+  # run and nothing said so.
+  for gate in "unit:test_pta_chiplet_device" "libs:test_grxblas_pta_chiplet"; do
+    dir="${gate%%:*}"; name="${gate##*:}"
+    if ( cd "$ROOT/tests/$dir" && "$BUILD/cmake-pta/tests/$name" ) \
+         > "$BUILD/$name.log" 2>&1; then rc=0; else rc=$?; fi
+    grep -E '^  (ok|FAIL|note) ' "$BUILD/$name.log" | sed 's/^/  /'
+    if [[ $rc -ne 0 ]]; then
+      [[ $rc -eq 77 ]] && echo "  FAIL  $name SKIPPED. A PTA build has the backend and the twin; it must run."
+      echo "FAILED: $name (exit $rc)"
+      exit 1
+    fi
+    tail -1 "$BUILD/$name.log"
+  done
 fi
 
 echo "all mock checks passed"

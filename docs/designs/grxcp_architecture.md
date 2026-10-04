@@ -155,7 +155,8 @@ otherwise would mislead:
 
 ```c
 typedef enum { GRX_DEVICE_TYPE_GPU = 0,
-               GRX_DEVICE_TYPE_NPU = 1 } grxDeviceType_t;
+               GRX_DEVICE_TYPE_NPU = 1,
+               GRX_DEVICE_TYPE_PTA = 2 } grxDeviceType_t;
 
 // Which execution backend this device is running on. Programs that care
 // about wall-clock (benchmarks, timeouts) must check this: a simx device
@@ -581,6 +582,22 @@ Consequences, decided now so the NPU can be added without an API break:
 The GRX930 is also the eventual **host**: `libgrxrt` must build and run
 natively on riscv64. Nothing in the design blocks this — the only host-arch
 dependencies are pinned-memory allocation and the monotonic clock.
+
+*A third device, 2026-10-04: the PTA chiplet.* The development board puts a
+photonic tensor chiplet in the GPU's package, and it is a device of its own here
+rather than a second engine on the GPU, for the reason the NPU is: the current
+device decides the engine, and on this device every GEMM runs on the tile
+(`board_program_plan.md`, B9). Its profile is one bit wide.
+
+| Profile bit | PTA chiplet |
+|---|---|
+| `GRX_CAP_KERNEL_LAUNCH`, `GRX_CAP_STREAMS`, `GRX_CAP_EVENTS` | no |
+| `GRX_CAP_MEMCPY` | no — it has no memory. Its operands are its parent GPU's, `grxDeviceProp_t.parentDevice` |
+| `GRX_CAP_GEMM` | yes (INT8→INT32, on the tile; `analogGemm` says how inexact) |
+
+`grxblasGemmEx` on it takes the parent's pointers and runs on the tile. Every
+other call is refused with `grxErrorNotSupported`. There is no chiplet, and no
+path to one from a host, so it is enumerated only with a model attached.
 
 ---
 

@@ -278,6 +278,8 @@ grxError_t allocate_device_physical(int device, uint64_t bytes,
   Device* d = nullptr;
   grxError_t e = acquire_device(device, &d);
   if (e != grxSuccess) return e;
+  // A PTA chiplet has no memory. Its operands are its parent GPU's.
+  if (d->type == DeviceType::PTA) return grxErrorNotSupported;
 
   const uint64_t align = alignment_for(*d);
   const uint64_t need = align_up(bytes + sanitize_redzone_bytes(), align);
@@ -318,6 +320,16 @@ grxError_t allocate_device(int device, uint64_t bytes, bool managed,
   Device* d = nullptr;
   grxError_t e = acquire_device(device, &d);
   if (e != grxSuccess) return e;
+
+  // A PTA CHIPLET HAS NO MEMORY TO ALLOCATE FROM.
+  //
+  // It is fed from its GPU's memory by that GPU's copy engine, so a GEMM on it
+  // takes its parent's pointers (grxDeviceProp_t.parentDevice) and an
+  // allocation "on the chiplet" has nowhere to be. Refused by name, and not
+  // sent on to vx_buffer_create with the null handle this device has -- which
+  // comes back "invalid value" and blames the size, the mistake the NPU branch
+  // below records having made once already.
+  if (d->type == DeviceType::PTA) return grxErrorNotSupported;
 
   const uint64_t align = alignment_for(*d);
   // Under GRX_SANITIZE every allocation gets a trailing redzone. It is not
@@ -764,6 +776,8 @@ grxError_t grxMallocHost(void** ptr, size_t size) {
   // back "invalid value" and blame the size.
   if (d->type == grxcp::DeviceType::NPU) return grxcp::set_error(grxErrorNotSupported);
 #endif
+  // Nor on a PTA chiplet, which has no driver handle either.
+  if (d->type == grxcp::DeviceType::PTA) return grxcp::set_error(grxErrorNotSupported);
 
   vx_buffer_h buf = nullptr;
   vx_result_t r = vx_buffer_create(d->handle, size,

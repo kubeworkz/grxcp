@@ -151,6 +151,15 @@ the register block and reports zero devices if it is absent. A build flag is a
 statement about what code exists, not about what hardware is attached, and
 conflating the two is how a device appears in `grx-smi` that nobody can talk to.
 
+*A third device type, 2026-10-04.* The development board's PTA chiplet is a
+device of its own, `GRX_DEVICE_TYPE_PTA`, appended after the GPUs and the NPU
+(the board plan's B9 and S4). Its backend is behind `-DGRXCP_ENABLE_PTA=ON`, and
+the rule above applies to it without exception, because it has no hardware path
+at all: the chiplet's registers are a page of the GPU's BAR and the GPU's driver
+has no call that reads it. So a build with the flag enumerates a PTA device only
+when a test has attached a model, and tier 1 checks that it enumerates none
+otherwise. Its profile is `GRX_CAP_GEMM` and nothing else.
+
 ### 4.1 Every device has its own address space, and they overlap
 
 A device address is meaningful only together with the device it came from. Each
@@ -175,6 +184,16 @@ guess when it is live on both — that case is genuinely ambiguous and "this
 pointer, on this device" is the only reading with a defence. The NPU makes this
 sharper rather than softer: its addresses are physical DDR and the GPU's come
 from the driver, so the two spaces have no reason to be disjoint either.
+
+**One exception, and it is named in the device's properties.** A PTA chiplet has
+no address space. It is fed from its GPU's memory by that GPU's copy engine, so
+a GEMM on it takes pointers allocated on its parent, and
+`grxDeviceProp_t.parentDevice` is that device's index. grxBLAS resolves the three
+operands against the parent and nowhere else, and refuses one that is not live
+there. The exception is the GEMM's alone: `grxMalloc` on a chiplet is refused,
+and `grxMemcpy` with the chiplet current refuses its parent's pointer like any
+other device's. A device with memory of its own reports `parentDevice` as `-1`,
+which is every device but that one.
 
 ---
 

@@ -45,8 +45,9 @@ These are the rules most likely to be violated by a well-meaning change.
   and cannot measure.
 - **Every sanctioned emulation is reported through a device property.** The
   warp-shuffle fallback sets `warpShuffleIsEmulated`; the host-clock event
-  timing clears `eventTimingIsDeviceSide`; a GEMM on a c930's photonic tile is
-  reported by `analogGemm`. If you add another, add its flag.
+  timing clears `eventTimingIsDeviceSide`; a GEMM on a photonic tile, a c930's
+  or the PTA chiplet's, is reported by `analogGemm`. If you add another, add its
+  flag.
 - **A property that describes writable device state is read when it is asked
   for.** `grxDeviceProp_t` is populated once, at the first acquire, and that is
   right for what a device *is*. `analogGemm` is what a device is currently *set

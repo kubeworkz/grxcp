@@ -233,6 +233,33 @@ against each: `PTA_TWIN_ABLATE_SEED` runs every GEMM on `PTA_SEED` itself,
 **A twin is not a chiplet**, and there is no chiplet. A green run says the map
 can be implemented as written and that this implementation is the model.
 
+Under the same heading it runs the chiplet's **driver**,
+`src/backends/pta_chiplet/pta_chiplet.cpp`, against that twin and against
+windows and links that misbehave: a window with nothing behind it, a later
+version of the map, a tile that never stops being busy, a link that will not
+take a command and one that loses it. 26 checks. The driver's reader is
+held to this backend's own, field for field, on the same device.
+
+The **PTA CHIPLET DEVICE GATE** is the board plan's S4, in a CMake configuration
+of its own: `-DGRXCP_ENABLE_PTA=ON` with the NPU flag off, so that neither
+backend is found to depend on the other. It checks three things. That a build
+with the backend and nothing attached enumerates **no** PTA device, because
+there is no hardware path that could have found one. That the device the twin
+becomes, through the seam in `pta_chiplet_testing.h`, reports what it is and
+refuses everything that is not a GEMM (`tests/unit/test_pta_chiplet_device.cpp`,
+44 checks), including a GEMM when it has a window and no link. And that
+`grxblasGemmEx` on it is the error model bit for bit, with the reference built
+from `grxDeviceProp_t.analogGemm` alone
+(`tests/libs/test_grxblas_pta_chiplet.cpp`, 48 checks over 4,164
+results). Neither test may skip in this configuration.
+
+Nine planted errors were each watched failing one or both: the property losing
+the GEMM's index, the property cached and not re-read, the operands reaching
+the tile unswapped, a refused GEMM reported as success, a chiplet with no link
+reporting success, `grxMalloc` not refused on the chiplet, the GEMM taking the
+current device's pointers and not the parent's, the device reporting silicon,
+and its profile claiming memcpy.
+
 The **NPU GROUNDWORK** gate is phase 7 work that can be checked before there is
 an NPU. `grxcp_architecture.md` section 6 fixes the c930 NPU's profile as
 `GRX_CAP_GEMM` without `GRX_CAP_KERNEL_LAUNCH`, and fixes what a launch on it

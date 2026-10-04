@@ -54,6 +54,11 @@ foreach(src ${UNIT_SRC})
     target_compile_definitions(${name} PRIVATE ${_extra_defs})
   endif()
   target_link_libraries(${name} PRIVATE ${_unit_libs} grxrt)
+  # A test that installs the PTA chiplet's digital twin needs the twin linked,
+  # and its model with it. Read from what it includes, as everything here is.
+  if(GRXCP_ENABLE_PTA AND _src_text MATCHES "pta_twin_adapter\\.h")
+    target_link_libraries(${name} PRIVATE pta_chiplet_twin)
+  endif()
   target_include_directories(${name} PRIVATE
       ${CMAKE_CURRENT_SOURCE_DIR}/common
       ${CMAKE_SOURCE_DIR}/third_party/grx930)
@@ -114,6 +119,9 @@ foreach(src ${LIB_TEST_SRC})
         ${CMAKE_CURRENT_SOURCE_DIR}/common
         ${CMAKE_SOURCE_DIR}/third_party/grx930)
     target_link_libraries(${name} PRIVATE ${_libs} grxrt)
+    if(GRXCP_ENABLE_PTA AND _src_text MATCHES "pta_twin_adapter\\.h")
+      target_link_libraries(${name} PRIVATE pta_chiplet_twin)
+    endif()
     add_test(NAME ${name} COMMAND ${name})
     # RUN THEM WHERE THEIR REFERENCE VECTORS ARE.
     #

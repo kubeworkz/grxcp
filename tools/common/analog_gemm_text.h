@@ -97,6 +97,15 @@ inline std::vector<std::string> analog_gemm_lines(const grxAnalogGemm_t& a) {
   std::snprintf(buf, sizeof(buf), "seed 0x%08llx", (unsigned long long)a.seed);
   out.push_back(label + "EMULATED on the PTA tile: " + act + "/" + wgt + of +
                 ", " + adc + ", " + buf);
+  // A chiplet's seed is the run's, not the GEMM's. Said on the line under it,
+  // because a reader who reproduces a result from the number above and gets a
+  // different answer should not have to find out why from the register map.
+  if (a.gemmIndex >= 0) {
+    std::snprintf(buf, sizeof(buf),
+                  "GEMM %lld is next: each runs on a seed derived from that one "
+                  "and its index", (long long)a.gemmIndex);
+    out.push_back(cont + buf);
+  }
   out.push_back(cont + "impairments " + impair_names(a.impairments));
 
   // The quantiser keeps the TOP of the operand word. An int8 operand lives in
@@ -163,8 +172,12 @@ inline std::vector<std::string> analog_gemm_lines(const grxAnalogGemm_t& a) {
   else if (unbuilt)
     out.push_back(cont + impair_names(unbuilt) +
                   " is defined but not implemented; a START with it is refused");
-  out.push_back(cont +
-      "this device does NOT compute the same function as a digital c930");
+  // The comparison a c930's owner cares about is with the digital array the
+  // tile replaced. A chiplet replaced nothing: it is a device of its own, and
+  // what there is to say is that its answer is not the product.
+  out.push_back(cont + (a.gemmIndex >= 0
+      ? "this device does NOT compute the product it is asked for"
+      : "this device does NOT compute the same function as a digital c930"));
   return out;
 }
 

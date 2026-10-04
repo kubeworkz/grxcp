@@ -1,9 +1,11 @@
-# The PTA chiplet's digital twin
+# The PTA chiplet: its digital twin, and its driver
 
-**Board plan step X5.** A C model that presents the chiplet's register map
+**Board plan steps X5 and S4.** X5 is a C model that presents the chiplet's
+register map
 ([`pta_chiplet_regmap.md`](../../../docs/designs/pta_chiplet_regmap.md), X4)
 with the photonic tile's error model behind it, so that a driver, grxcp and the
-dispatch model can be brought up before there is a chiplet.
+dispatch model can be brought up before there is a chiplet. S4 is that driver,
+and the runtime's use of it.
 
 **It is a model, and there is no chiplet.** `PTA_CAPS2` says so in bit 31.
 Nothing that runs through the twin is a statement about a photonic device. What
@@ -20,16 +22,38 @@ workload.
 | `test_pta_chiplet_twin.cc` | The gate |
 | `pta_mnist_via_twin.c` | grx930's accuracy harness with the twin where the model was — the software half of the board plan's P2 gate |
 | `pta_mnist_budget_via_twin.sh` | Runs that harness over grx930's whole accuracy budget and holds each line to the one recorded |
-| `CMakeLists.txt` | `pta_chiplet_twin`, a static library, and the gate as a test |
+| `pta_chiplet.h`, `pta_chiplet.cpp` | The host's driver: detection, the property's reader, the completion test, one GEMM start to end. In `libgrxrt` under `-DGRXCP_ENABLE_PTA=ON` |
+| `pta_chiplet_testing.h` | The seam that attaches a model as the chiplet the runtime enumerates |
+| `test_pta_chiplet_driver.cc` | The driver's gate, against the twin and against windows and links that misbehave |
+| `CMakeLists.txt` | `pta_chiplet_twin`, a static library, and the two gates as tests |
 
 The tile's arithmetic is not in this directory. It is
 `third_party/grx930/pta_tile_model.c`, grx930's, vendored byte for byte and held
 to grx930's own vectors by `ci/build_mock.sh`. The twin calls it and adds
 nothing to it.
 
-**Nothing here is in `libgrxrt`.** A runtime that linked the twin could
-enumerate it as a device. What reports the PTA, and how, is the board plan's
-S4.
+**The twin is not in `libgrxrt`.** A runtime that linked it would be carrying
+its own device. The driver is, under the flag, and a test attaches the twin to
+it through the seam.
+
+## The driver, and the device
+
+The chiplet is a device of its own in grxcp's table (the board plan's B9):
+`GRX_DEVICE_TYPE_PTA`, GEMM-only, with its GPU as its parent. It has no memory,
+so a GEMM on it takes pointers allocated on `grxDeviceProp_t.parentDevice`.
+
+**It has no hardware path.** The chiplet's registers are a page of the GPU's
+BAR and the GPU's driver has no call that reaches it, and the link that carries
+its work has no command format. So the driver's three ways in are hooks, and
+only a model fills them. A runtime built with the flag and nothing attached
+enumerates no PTA device. One with a window and no link enumerates it, reports
+it, and refuses a GEMM as not supported with C untouched.
+
+The gates that need the runtime are
+`tests/unit/test_pta_chiplet_device.cpp`, what the device reports and refuses,
+and `tests/libs/test_grxblas_pta_chiplet.cpp`, `grxblasGemmEx` on it held bit
+for bit to the model built from the device property alone.
+`tests/common/pta_twin_adapter.h` is how a test asks for the twin.
 
 ## Using it
 
