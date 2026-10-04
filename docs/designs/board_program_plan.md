@@ -475,7 +475,8 @@ seam, and the device says it is a model. Four things.
 - **It has no hardware path, and says so.** With the backend built and nothing
   attached, no PTA device is enumerated, on any machine. Two things are missing
   and neither is grxcp's to supply. The GPU's driver has no call that reaches
-  the chiplet's page of its BAR, which is a proposal owed to grxgpu. And link 2
+  the chiplet's page of its BAR, which was a proposal owed to grxgpu and has
+  since been made (§4.2). And link 2
   has no command format ([`board_icd.md`](board_icd.md) §7, item 7), so the
   driver's path for work is a hook that only a model fills. A chiplet with a
   window and no link is the state every one is in off a model: it is enumerated
@@ -512,6 +513,28 @@ the c930: the gate programs the registers behind the runtime's back.
 - The G100's microscaling path (the GPU document, §5) as the PTA's numeric
   format: FP8-class inputs reach the analog tile as block-scaled integers.
 - A GDDR6 controller and PHY (B2).
+- *Made, 2026-10-04:* the chiplet's host path,
+  `grxgpu/docs/proposals/pta_chiplet_host_path.md`
+  ([kubeworkz/grxgpu#2](https://github.com/kubeworkz/grxgpu/pull/2)), open
+  until grxgpu answers. It sits in front of the first two items and replaces
+  neither. It asks for no RTL, no port and no copy engine, only for how a host
+  tells the GPU to use the chiplet: the registers as a range of the GPU's DCR
+  addresses, reached by its driver's existing register commands, and a GEMM as
+  one command of its command processor with the operands in device memory, in
+  the simulators' command processor first.
+
+  Three things here would follow if it is taken as written. None has been
+  changed yet.
+
+  - **X4's window** is a page of the GPU's BAR and would become that range.
+    What B7 chose is untouched: one control path, owned by the GPU's driver,
+    with the link's CRC and retry. Its words "as MMIO" would no longer describe
+    it, so this is B7's to confirm and not only grxgpu's to accept.
+  - **The chiplet's own queue** would go. The command processor's ring would be
+    the queue, the depth X4 leaves open (its §7, item 3) would not be a number
+    anyone needs, and BUSY would mean running.
+  - **A launch and a GEMM on the chiplet would be serial** while the GPU has one
+    command queue, which is its default. S3 has to price that.
 
 ### 4.3 To the PTA chiplet: EIC requirements
 

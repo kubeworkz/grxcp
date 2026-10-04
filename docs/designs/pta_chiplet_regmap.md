@@ -37,6 +37,16 @@ map does not say, and §4, §5 and §7 carry them where they belong.
   had (§4); 0x0E0 up carries the upper halves of the counters and, at 0x0F0, the
   error a calibration found.
 
+*Proposed otherwise, 2026-10-04.* grxcp's proposal to grxgpu for the chiplet's
+host path (`grxgpu/docs/proposals/pta_chiplet_host_path.md`) asks for this
+window as a range of the GPU's DCR addresses,
+`base + instance × stride + (offset >> 2)`, reached by the driver's existing
+register commands, and offers the page above as the alternative. The offsets and
+everything in §2 to §4 are the same either way. If grxgpu takes the range, the
+first two bullets here change, and §5's ordering rule comes from the GPU's
+command ring instead of from CXL.io. Nothing here has been changed on the
+strength of a proposal.
+
 ---
 
 ## 2. Identity and capability, new
@@ -350,7 +360,9 @@ it to the twin's.
    twin's.
 3. **The chiplet's command queue depth**, which the GPU's dispatcher has to
    know. The twin takes it as a build parameter and reports it nowhere; the c930
-   has a `QUEUE_MAX` register for the same number.
+   has a `QUEUE_MAX` register for the same number. *The host-path proposal would
+   remove the question:* the GPU's command ring would be the queue, and the
+   chiplet would be handed one command at a time.
 4. **How many MSI vectors** the function offers, and whether the PTA shares the
    GPU's or has its own.
 5. **The seed function** — written out in §4 now, and implemented by the twin
@@ -358,7 +370,11 @@ it to the twin's.
    silicon implements it, as this item has always said.
 6. **What a command on link 2 is.** The map has no way to issue work and nothing
    else specifies one. It decides what the chiplet's queue holds, what BUSY
-   counts, and how a refusal reaches whoever sent the command.
+   counts, and how a refusal reaches whoever sent the command. *The host's half
+   was proposed to grxgpu on 2026-10-04* (`grxgpu/docs/proposals/pta_chiplet_host_path.md`):
+   one command, a GEMM with its operands in the GPU's memory, which ends done,
+   refused or lost and reports the index it took. How the link frames it is
+   still nobody's.
 7. **The affine past eight columns.** `PTA_GAIN[j]` and `PTA_OFFS[j]` have eight
    words each. An index register and a data register would reach any width; so
    would a second page.

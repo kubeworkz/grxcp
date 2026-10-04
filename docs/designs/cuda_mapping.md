@@ -2274,9 +2274,22 @@ host round trip where the copy engine and the link would be, and the device
 reports `GRX_BACKEND_MODEL`. In no configuration does a call succeed over a
 product nobody computed.
 
-**What would close it.** A proposal to grxgpu for the two driver calls that read
-and write the PTA page, and the link's command format from L3 and the chiplet's
-owners together. Then the hooks have something to be replaced by.
+**What would close it.** A proposal to grxgpu for the host's path, and the link's
+command format from L3 and the chiplet's owners together. Then the hooks have
+something to be replaced by.
+
+*The proposal was made on 2026-10-04:*
+`grxgpu/docs/proposals/pta_chiplet_host_path.md`
+([kubeworkz/grxgpu#2](https://github.com/kubeworkz/grxgpu/pull/2)), open
+until grxgpu answers. It asks for the registers as a range of the GPU's DCR
+addresses, reached by the driver's existing register commands, and for a GEMM as
+one command of the GPU's command processor with its operands in device memory,
+in the simulators' command processor first. That is not the two calls on a page
+of the BAR that this entry expected. The page is offered as the alternative, and
+the range is recommended because the command ring orders a register write
+against the work beside it, which a page cannot. It leaves the link's wire
+format open, narrowed to one command and the ways it can end. Nothing above
+changes until it is answered: the hooks are still all there is.
 
 ## 8. Where GRX-G100 is *ahead* of the reference
 

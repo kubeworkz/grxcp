@@ -49,6 +49,11 @@ only a model fills them. A runtime built with the flag and nothing attached
 enumerates no PTA device. One with a window and no link enumerates it, reports
 it, and refuses a GEMM as not supported with C untouched.
 
+What would replace the hooks has been proposed to grxgpu
+(`grxgpu/docs/proposals/pta_chiplet_host_path.md`): the registers through its
+driver's register commands, and a GEMM as one command of its command processor.
+Until that is answered, nothing here changes.
+
 The gates that need the runtime are
 `tests/unit/test_pta_chiplet_device.cpp`, what the device reports and refuses,
 and `tests/libs/test_grxblas_pta_chiplet.cpp`, `grxblasGemmEx` on it held bit
