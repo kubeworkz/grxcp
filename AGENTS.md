@@ -97,6 +97,12 @@ These are the rules most likely to be violated by a well-meaning change.
   and do not replace the formula with the number that was measured.
   `tests/libs/pta_gemm_distribution.txt` beside it is a record of the last
   measurement, there so a move is printed; it is not what the test is held to.
+- **A noise figure in LSB names its ADC.** The error model's thermal and shot
+  fields are in LSB of the ADC the same block configures, so one receiver is
+  1 LSB at eight bits and a quarter of one at six. A requirement, a budget row
+  or a test's operating point that says "LSB" says which ADC's, or is restated
+  in 8-bit LSB. The board plan sized an interface chip and a laser on four
+  times the noise for want of this (`docs/designs/board_program_plan.md` §4.3).
 - **Allocator invariants are load-bearing.** The interval map must never
   return a stale mapping; a freed extent is unmapped before it is reusable.
   Add a test with every allocator change.
