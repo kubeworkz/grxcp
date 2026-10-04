@@ -254,7 +254,7 @@ UCIe sideband carries the link's own management. *Needed by:* X4. *Settled on
 | Step | What | Gate | Needs |
 |---|---|---|---|
 | P0 | **Drafted:** [`board_icd.md`](board_icd.md), with the block diagram, the nine links, power, clocks, resets and debug, and a list of what it cannot source yet | Review: every link has an owner on each side, and every number a source | B1–B7 |
-| P1 | Package study of the GPU package with the PTA chiplet: floorplan, UCIe-S on the organic substrate B2 chose, fiber attach, and a thermal co-simulation with TFLT's drift in place of heater terms | The model predicts the PIC's temperature range under the GPU's power map, and C1's drift fits say what that costs in calibration | B1, B2, B5 |
+| P1 | Package study of the GPU package with the PTA chiplet: floorplan, UCIe-S on the organic substrate B2 chose, fiber attach, and a thermal co-simulation with TFLT's drift in place of heater terms. §8, question 1 holds one published package of the kind, for scale | The model predicts the PIC's temperature range under the GPU's power map, and C1's drift fits say what that costs in calibration | B1, B2, B5 |
 | P2 | Board rev 0, on B6's FPGA platform: the GPU partition as a CXL Type-2 device, and the PTA as the error-model tile | Linux on a CXL host enumerates the device, and the D3 network runs through the emulated PTA bit-identical to `pta_mnist`'s C reference | B6, L2, X4, X5 |
 | P3 | Board rev A, on silicon | Scoped after P1 and the silicon plans; no gate yet | P1, L1–L4 |
 
@@ -703,6 +703,71 @@ among the bounds that bind.
    requirement on the interface chip rather than an unknown: two weight banks
    and a write path `k×n / batch` cells wide (§4.3). Still not priced is the
    converters' power, which needs a device figure.
+
+   **A package with millimeters on it, 2026-10-03.** Nothing above has a length
+   in it. One published package does: X. Li et al., "1.6 Tbps FOWLP-Based
+   Silicon Photonic Engine for Co-Packaged Optics", *J. Lightwave Technol.*
+   43(4), 1979 (2025), doi:10.1109/JLT.2024.3493855, from Rain Tree Photonics,
+   Singapore's Institute of Microelectronics and Advanced Micro Foundry. It is a
+   transceiver and not a tile, and silicon photonics and not TFLT, so it is a
+   reference for the **package** and says nothing about the computation.
+
+   | | What the paper reports | What it bears on |
+   |---|---|---|
+   | The package | 9.5 mm × 13 mm, fan-out wafer-level, made on a 300 mm line. The photonic die is molded in and the electronic dies flip-chip on top, directly over its RF pads. No wire bonds and no through-silicon vias | B4's "stacked or side by side" |
+   | Down to the board | C4 bumps of 120 µm at 250 µm pitch onto an organic substrate; through-mold vias of 150 µm at 300 µm pitch, 300 µm tall; redistribution at 15 µm line and space, two layers above the die and one below | B2's substrate, P1's floorplan |
+   | The photonic die | 8 travelling-wave Mach–Zehnder modulators and 8 germanium waveguide detectors, with thermo-optic and passive circuits. **Its size is not given**, nor the electronic dies', nor the micro-bump pitch between them | The size this question asks for, which it leaves unanswered |
+   | Light | Edge couplers along one edge to a fiber array at 250 µm pitch: **under 2 dB a facet** after packaging, without index-matching epoxy, and comparable to the bare die. Grating couplers through windows in the redistribution dielectric, for wafer-level test | The loss budget above, P1's fiber attach |
+   | The electrical path | Simulated, 1.1 dB at 56 GHz through 2 mm of substrate line, a via and the redistribution. Measured, a via alone: under 0.5 dB to 50 GHz | A link that crosses such a package |
+   | Rate | 112 GBaud a lane: NRZ open on a 5-tap transmit equaliser, PAM4 at a TDECQ of 2.44 dB through 9 receive taps, at an extinction ratio of 4.07 dB | B8's question and not this one: an eye read through an equaliser is not a settled level |
+
+   **What was measured is the package, not an engine running.** The electronic
+   dies are in the photograph and not in the signal path: the modulators were
+   driven by a waveform generator and an external amplifier through probes, and
+   the detectors were read at probe pads, with light from an external source
+   through the fiber array. The abstract's 1.79 Tb/s is eight times one lane's
+   224 Gb/s — the title's 1.6 is the same eight lanes at their nominal 200 — and
+   the text does not report eight lanes driven at once. No power and no
+   temperature is reported, and neither the wavelength nor the fiber's
+   polarization is stated.
+
+   Three things in it bear on this plan, and each is smaller than it looks.
+
+   - **The loss budget has its first sourced term.** The tile's light crosses
+     one facet on the way in and, with the detectors on the die, none on the way
+     out. Under 2 dB of the 13.9 dB ceiling above leaves about 12 for the fiber,
+     the excess loss of the split to the rows, the modulators and the tile. What
+     the measurement supports is that molding a die into a package cost its
+     coupler nothing. It is a silicon spot-size converter: it is not what a TFLT
+     facet loses, nor what one loses on the polarization-maintaining fiber B5
+     needs.
+   - **A fiber count, and it collides with question 8.** At 250 µm a 13 mm edge
+     holds 52 fibers and a 9.5 mm edge 38, were the whole edge facet. An emitter
+     an input row, brought from off the package on a fiber a row, is 256 fibers:
+     64 mm of facet, five times this package's longer side. So at this pitch
+     B5's "off the package" and question 8's "an emitter an input row" hold
+     together only if the rows' lines are combined onto a few fibers before they
+     arrive, which wavelength allows a ring bank. Otherwise the emitters come
+     onto the package, or the pitch is finer. 250 µm is this paper's pitch and
+     not a limit.
+   - **B4's "stacked" has been built**, without through-silicon vias in the
+     photonic die and onto the kind of substrate B2 chose. What the tile asks of
+     such a stack is not what eight lanes ask. B4 keeps a DAC-held voltage for
+     each resident weight on the interface chip, and each needs its own way down
+     to an electrode on the photonic die: at least 16,384 connections at
+     256 × 64, before the 256 inputs and the 64 outputs. That count times the
+     square of a pad pitch is an area neither die can be smaller than — the
+     first bound on this question that is not optical — and the paper gives no
+     pitch to work it with.
+
+   What it does not give is the answer. There is no die size, so no area a
+   modulator or a detector; no power; nothing on heat but a sentence in its
+   introduction; and the molding, the thinning to 300 µm and the laser drilling
+   were shown around a silicon photonic die, so whether a die carrying lithium
+   tantalate stands the same steps is not something it tests. The summary this
+   paper arrived with closed by saying an NRZ geometry needs about half the lanes
+   of a PAM4 one. The paper does not say so and its figures say the reverse: the
+   same eight lanes carry 896 Gb/s as NRZ and 1.79 Tb/s as PAM4.
 2. **What does the development kit cost, and how many are built?** That settles
    B1 and B2 more than any technical argument does.
 3. **Does the GRX930's NPU keep a PTA of its own?** The c930 PTM work is built

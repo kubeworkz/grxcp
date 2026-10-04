@@ -112,6 +112,14 @@ things, of which this document held one:
 None of this picks a laser. No part's output power or noise is held here, and
 the comparison with one belongs to whoever has its datasheet.
 
+*How many fibers, 2026-10-03.* Not decided, and not free. The one published
+package the board plan holds for scale (its §8, question 1) attaches fiber at
+250 µm pitch along one edge, which is 52 fibers on the package's longer, 13 mm
+side if the whole side is facet. A fiber an input row is 256 at X2's geometry,
+64 mm of facet. So an emitter a row reaches this link as a few fibers with the
+rows' lines combined on the board, or it does not cross this link at all and
+sits on the package. Which is the kind's question again, with a length on it.
+
 ---
 
 ## 3. Power, at block level
