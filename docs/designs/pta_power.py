@@ -21,15 +21,19 @@ MEASURED, on fabricated chips, each from its paper's abstract:
     receiver   M. Atef and H. Zimmermann, IEEE Trans. Circuits Syst. I 60 (2013):
                40 nm CMOS, 1.5 GHz, 7.2 pA/rtHz input-referred up to 1.5 GHz,
                4.1 mW the amplifier (12 mW the chip)
-    ADCs       L. Kull et al., IEEE JSSC 48 (2013): 8 bit, 1.2 GS/s, 3.1 mW,
-               39.3 dB SNDR, 32 nm SOI
-               H.-Y. Tai et al., A-SSCC 2013: 6 bit, 1.25 GS/s, 5.3 mW, 37.1 dB
-               peak SNDR, 40 nm
-               B. Verbruggen et al., IEEE JSSC 45 (2010): 6 bit, 2.2 GS/s,
-               2.6 mW, 31.1 dB SNDR, 40 nm
-               They are single converters near this operating point, not a
-               survey: B. Murmann's ADC Performance Survey is the place to
-               widen this, and was not read here.
+    ADCs       B. Murmann's ADC Performance Survey, 1997 to 2026, from its
+               author's spreadsheet as pta_adc_survey.py holds it: the 70
+               published converters of at least 7 effective bits at 1 GS/s
+               or faster, by the energy each spends a sample.  The best is
+               1.11 pJ and the fifth-best 3.14, and one measured at exactly
+               1 GS/s is 2.55 mW.
+               Three were first taken one at a time from their papers:
+               L. Kull et al., IEEE JSSC 48 (2013), 8 bit, 1.2 GS/s, 3.1 mW,
+               39.3 dB; H.-Y. Tai et al., A-SSCC 2013, 6 bit, 1.25 GS/s,
+               5.3 mW, 37.1 dB; B. Verbruggen et al., IEEE JSSC 45 (2010),
+               6 bit, 2.2 GS/s, 2.6 mW, 31.1 dB.  The survey lists the first
+               and the third, at those figures.  None of the three reaches 7
+               effective bits, and they are kept only as that check.
 
 A STANDARD'S TARGET, not a part: 0.75 to 1.25 pJ a bit for a UCIe standard-
 package link at 24 and 32 GT/s (the UCIe Consortium's Hot Chips 2023 tutorial,
@@ -57,9 +61,11 @@ ASSUMED, and marked again where each is used:
     - a weight cell's capacitance, pad included: swept from 10 to 100 fF
     - how much of its swing a line moves in a shot.  Random levels move a sixth
       of C V^2 a shot on average; a full swing every other shot moves a half
-    - that an ADC of B bits costs what the figure of merit says at an effective
-      B bits.  The figure of merit is the measured parts' own, P / (2^ENOB fs),
-      and it does not stay put across resolutions; this spans the three
+    - that a converter clocked slower than it was measured draws in
+      proportion.  The parts are priced by their energy a sample, P / fs, and
+      most of those that can do the tile's job are faster than its shot rate.
+      At version 1's seven bits the cheapest part run exactly as it was
+      measured, which assumes nothing, is inside the range used
     - the receiver's noise bandwidth: that of a single pole just fast enough to
       settle to half an LSB within a shot.  And that a receiver measured with a
       photodiode beside it keeps its noise with one a bond away
@@ -76,6 +82,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import pta_adc_survey as adc
 import pta_chiplet_link as link
 import pta_floorplan as fp
 import pta_shot_rate as shot
@@ -147,13 +154,13 @@ def walden_j(watts, fs, sndr_db):
     return watts / (2 ** enob(sndr_db) * fs)
 
 
-def fom_range():
-    f = [walden_j(w, fs, s) for _, _, fs, w, s in ADCS]
-    return min(f), max(f)
-
-
-def adc_w(bits, fs, fom_j):
-    return fom_j * 2 ** bits * fs
+def adc_w(bits, fs=None):
+    """(low, high) watts for one converter: the best and the fifth-best published
+    part of at least that many effective bits at that rate or faster, each at
+    its own energy a sample."""
+    fs = FS if fs is None else fs
+    lo, hi = adc.price_j(bits, fs)
+    return lo * fs, hi * fs
 
 
 # ---- 4. the inputs ----------------------------------------------------------------
@@ -184,10 +191,10 @@ def link_w(k, n, resident):
 # ---- the sum ----------------------------------------------------------------------
 def chip_w(k, n, bits, volts, resident):
     """(low, high) watts on the interface chip, and the parts, each a (low, high)."""
-    f_lo, f_hi = fom_range()
+    a_lo, a_hi = adc_w(bits)
     parts = {
         "receivers": (n * TIA_W, n * TIA_W),
-        "ADCs": (n * adc_w(bits, FS, f_lo), n * adc_w(bits, FS, f_hi)),
+        "ADCs": (n * a_lo, n * a_hi),
         "input drive": (k * input_drive_w(volts, C_LINE_F_CM[0], ACTIVITY[0]),
                         k * input_drive_w(volts, C_LINE_F_CM[-1], ACTIVITY[1])),
         "weight drive": (weight_drive_w(k, n, volts, C_CELL_F[0], ACTIVITY[0]),
@@ -237,18 +244,39 @@ def main():
     # ------------------------------------------------------------------ 2, 3
     section("2 and 3. The receivers and the ADCs")
     print(f"  {n} receivers at {TIA_W * 1e3:.1f} mW, the measured amplifier alone: {w(n * TIA_W)}.")
-    print("  The measured ADCs, and the figure of merit each one has:")
+    a_lo, a_hi = adc_w(bits)
+    able = adc.able(bits, FS)
+    best, pub = able[0], adc.as_published(bits, FS)
+    print(f"  The survey has {len(able)} published ADCs of at least {bits} effective bits at 1 GS/s or")
+    print(f"  faster (pta_adc_survey.py).  By energy a sample the best is {adc.sample_j(best) * 1e12:.2f} pJ --")
+    print(f"  {adc.cite(best)}, {best[adc.FS]:.1f} GS/s, {best[adc.SNDR]:.1f} dB, {best[adc.P]:.1f} mW -- and the fifth-best"
+          f" {a_hi / FS * 1e12:.2f}.")
+    print(f"  Clocked at 1 GS/s that is {a_lo * 1e3:.2f} to {a_hi * 1e3:.2f} mW, ASSUMING a part's power follows its")
+    print(f"  clock down.  One needs no assumption: {adc.cite(pub)} is {pub[adc.SNDR]:.1f} dB at {pub[adc.FS]:.2f} GS/s")
+    print(f"  for {pub[adc.P]:.2f} mW as measured, which is version 1's converter as a part and not")
+    print("  a projection.  The three first taken from their papers, none of them a")
+    print(f"  {bits}-bit converter:")
     for name, b, fs, p, s in ADCS:
         print(f"    {name:<24}{b} bit{fs / 1e9:>6.2f} GS/s{p * 1e3:>5.1f} mW  {enob(s):.2f} effective bits"
               f"{walden_j(p, fs, s) * 1e15:>6.0f} fJ a step")
-    f_lo, f_hi = fom_range()
-    print(f"  At {f_lo * 1e15:.0f} to {f_hi * 1e15:.0f} fJ a step, an effective B bits at 1 GS/s, and {n} of them:")
+    print(f"  {n} converters at 1 GS/s, of an effective B bits or more:")
     for b in (v0["adc_bits"], v1["adc_bits"], 8):
-        lo, hi = adc_w(b, FS, f_lo), adc_w(b, FS, f_hi)
-        print(f"    {b} bits  {lo * 1e3:>5.1f} to {hi * 1e3:>4.1f} mW each  {w(n * lo):>8} to {w(n * hi)}")
-    d_lo = n * (adc_w(v1["adc_bits"], FS, f_lo) - adc_w(v0["adc_bits"], FS, f_lo))
-    d_hi = n * (adc_w(v1["adc_bits"], FS, f_hi) - adc_w(v0["adc_bits"], FS, f_hi))
-    print(f"  So version 1's seventh bit is {w(d_lo)} to {w(d_hi)}: as much again as the six.")
+        lo, hi = adc_w(b)
+        print(f"    {b} bits  {lo * 1e3:>5.2f} to {hi * 1e3:>4.2f} mW each  {w(n * lo):>8} to {w(n * hi)}")
+    d_lo, d_hi = (n * (adc_w(v1["adc_bits"])[e] - adc_w(v0["adc_bits"])[e]) for e in (0, 1))
+    print(f"  So version 1's seventh bit is {w(d_lo)} to {w(d_hi)}.  At the head of the field it")
+    print("  is nearly free, because the cheapest converters at this rate are 8-bit")
+    print("  designs that reach 7.  Behind the head it doubles the cost.  An eighth")
+    e_lo, e_hi = (n * (adc_w(8)[e] - adc_w(v1["adc_bits"])[e]) for e in (0, 1))
+    print(f"  bit is not free anywhere: {w(min(e_lo, e_hi))} to {w(max(e_lo, e_hi))} more.")
+    print(f"  The same {n} converters at {bits} bits, by shot rate:")
+    for fs in (0.1e9, 1e9, 10e9):
+        lo, hi = adc_w(bits, fs)
+        print(f"    {fs / 1e9:>4.1f} GS/s  {lo / fs * 1e12:>5.2f} to {hi / fs * 1e12:>5.2f} pJ a sample"
+              f"  {w(n * lo):>8} to {w(n * hi)}")
+    print("  The best part is the same one up to 2.7 GS/s, so that far the ADCs follow")
+    print("  the rate.  Past 5 GS/s they do not: ten times the rate is over fifty times")
+    print(f"  the power, and only {len(adc.able(bits, 10e9))} published converters do {bits} bits at 10 GS/s at all.")
 
     # ------------------------------------------------------------------ 4
     section("4. The inputs: an electrode is charged every shot")
@@ -334,7 +362,7 @@ def findings():
     v0, v1 = shot.REQ["v0"], shot.REQ["v1"]
     bits = v1["adc_bits"]
     na = receiver_noise_a(FS, bits)
-    f_lo, f_hi = fom_range()
+    a_lo, a_hi = adc_w(bits)
     (lo_r, hi_r), _ = chip_w(k, n, bits, 5.0, False)
     (lo_s, hi_s), _ = chip_w(k, n, bits, 2.0, True)
     l_re, l_res = link_w(k, n, False), link_w(k, n, True)
@@ -352,13 +380,17 @@ def findings():
     print("   was true at an assumed receiver.  At a measured one the loss budget has")
     print("   five or six decibels in hand, if that receiver survives the bond.")
     print()
-    conv = (n * TIA_W + n * adc_w(bits, FS, f_lo), n * TIA_W + n * adc_w(bits, FS, f_hi))
-    print("2. THE CONVERTERS ARE PRICED: HALF A WATT TO UNDER ONE.")
-    print(f"   {n} receivers are {w(n * TIA_W)} and {n} seven-bit ADCs {w(n * adc_w(bits, FS, f_lo))} to"
-          f" {w(n * adc_w(bits, FS, f_hi))}, so {w(conv[0])} to {w(conv[1])}")
-    print("   together.  The seventh bit is as much again as the first six, because a")
-    print("   converter's power doubles with a bit.  They are the largest thing on the")
-    print("   chip only once the two below have been dealt with.")
+    conv = (n * TIA_W + n * a_lo, n * TIA_W + n * a_hi)
+    print("2. THE CONVERTERS ARE PRICED: 0.33 TO 0.46 W, AND MOST OF IT IS THE RECEIVERS.")
+    print(f"   {n} receivers are {w(n * TIA_W)} and {n} seven-bit ADCs {w(n * a_lo)} to"
+          f" {w(n * a_hi)}, so {w(conv[0])} to {w(conv[1])}")
+    print("   together.  The ADCs are priced from every published converter that can")
+    print("   do the job, and the receiver from one paper: it is now the larger of the")
+    print("   two and the less well founded.  The ADCs were first priced from three")
+    print("   parts read one at a time, at 0.28 to 0.59 W, and none of the three is a")
+    print("   7-bit converter.  The seventh bit is nearly free at the head of the field")
+    print("   and doubles the ADCs behind it.  The converters are the largest thing on")
+    print("   the chip only once the two below have been dealt with.")
     print()
     print("3. TWO THINGS CAN EACH COST MORE THAN ALL THE CONVERTERS.  The link, if the")
     print(f"   weights are re-sent every batch: {w(l_re[0])} to {w(l_re[1])} at the standard's own target,")
@@ -422,12 +454,39 @@ def checks():
     #    SNDR, is the one its paper reports: 34, 73 and 40 fJ a step.
     for (name, _, fs, p, s), want in zip(ADCS, (34, 73, 40)):
         assert abs(walden_j(p, fs, s) * 1e15 - want) < 1.0, (name, walden_j(p, fs, s))
-    f_lo, f_hi = fom_range()
+    # None of the three reaches 7 effective bits, which is what the first
+    # pricing scaled them to; and the survey's table holds the first of them, at
+    # the paper's own figures.
+    assert all(enob(s) < 7.0 for _, _, _, _, s in ADCS)
+    name, _, fs, p, s = ADCS[0]
+    hit = [r for r in adc.TABLE if abs(r[adc.FS] - fs / 1e9) < 0.005 and abs(r[adc.SNDR] - s) < 0.05]
+    assert len(hit) == 1 and abs(hit[0][adc.P] / (p * 1e3) - 1.0) < 0.02, (name, hit)
 
-    # 5. A bit doubles a converter, so the seventh costs what the six do.
-    for f in (f_lo, f_hi):
-        assert abs(adc_w(7, FS, f) - 2 * adc_w(6, FS, f)) < 1e-15
-    assert abs(n * adc_w(7, FS, f_lo) - 0.28) < 0.005 and abs(n * adc_w(7, FS, f_hi) - 0.59) < 0.01
+    # 5. The ADCs, from the parts that can do the job: 1.11 to 3.14 mW each at
+    #    7 bits and 1 GS/s, 71 to 201 mW for the 64.  The part measured at
+    #    exactly this rate is inside that range, so the range does not rest on
+    #    clocking a faster part down.
+    a_lo, a_hi = adc_w(7)
+    assert (a_lo, a_hi) == tuple(j * FS for j in adc.price_j(7, FS))
+    assert abs(n * a_lo - 0.071) < 0.001 and abs(n * a_hi - 0.201) < 0.001
+    pub = adc.as_published(7, FS)
+    assert pub[adc.FS] == 1.0 and a_lo < pub[adc.P] * 1e-3 < a_hi
+    # The seventh bit is 3 mW at the head of the field and 106 behind it, and
+    # the receivers are more than the ADCs behind them at both ends.
+    b_lo, b_hi = adc_w(6)
+    assert abs(n * (a_lo - b_lo) - 0.0032) < 0.0005 and abs(n * (a_hi - b_hi) - 0.106) < 0.001
+    assert n * TIA_W > n * a_hi
+    # an eighth bit is 141 to 197 mW more, and nearly four times the ADCs at the head
+    c_lo, c_hi = adc_w(8)
+    assert abs(n * (c_hi - a_hi) - 0.141) < 0.001 and abs(n * (c_lo - a_lo) - 0.197) < 0.001
+    assert 3.7 < c_lo / a_lo < 3.8
+    assert abs(n * (TIA_W + a_lo) - 0.333) < 0.001 and abs(n * (TIA_W + a_hi) - 0.463) < 0.001
+    # The ADCs follow the rate to 2.7 GS/s.  At 10 GS/s they are 3.8 to 22 W,
+    # over fifty times as much for ten times the rate.
+    assert abs(adc_w(7, 2.7e9)[0] / a_lo - 2.7) < 1e-9
+    f_lo, f_hi = adc_w(7, 10e9)
+    assert abs(n * f_lo - 3.77) < 0.01 and abs(n * f_hi - 22.4) < 0.1
+    assert f_lo / a_lo > 50 and f_hi / a_hi > 100
 
     # 6. The 50 ohm line's capacitance is inside the sweep, and near its middle.
     assert C_LINE_F_CM[0] < C_LINE_50_OHM < C_LINE_F_CM[-1]
@@ -467,13 +526,13 @@ def checks():
     # and resident at 2 V the converters are most of the low end, which is
     # reading 2's last sentence
     _, low = chip_w(k, n, bits, 2.0, True)
-    assert (low["receivers"][0] + low["ADCs"][0]) / sum(q[0] for q in low.values()) > 0.7
+    assert (low["receivers"][0] + low["ADCs"][0]) / sum(q[0] for q in low.values()) > 0.55
 
-    # 10. The parts sum to the total, and the total is a watt to about nine.
+    # 10. The parts sum to the total, and the total is 0.55 W to under eight.
     for volts, resident in ((5.0, False), (5.0, True), (2.0, True)):
         (lo, hi), parts = chip_w(k, n, bits, volts, resident)
         assert abs(lo - sum(p[0] for p in parts.values())) < 1e-12
-        assert 0.7 < lo < hi < 12.0, (volts, resident, lo, hi)
+        assert 0.55 < lo < hi < 7.7, (volts, resident, lo, hi)
 
     # 11. Energy a multiply-accumulate sits between the design estimate's 27.9 fJ
     #     at four bits and the 1,142 fJ it gives a digital part at eight.
