@@ -629,6 +629,56 @@ answer (§8, question 7). A deeper network is where a layer's error really is
 the next layer's input many times over, and where "compounds" could yet be
 true.
 
+*With depth, 2026-10-03.* Something deeper has been run: the same network with
+two, four and eight hidden layers of 100, five of each, through grx930's
+`sim/pta_mnist.sh depth` (its `c930/doc/pta_error_model_design_note.md`, §5).
+Loss in points against the same networks on their host:
+
+| | 1 hidden layer | 2 | 4 | 8 |
+|---|---|---|---|---|
+| Version 1 | 0.26 | 0.23 | 0.30 | 0.30 |
+| Version 0 | 1.49 | 1.96 | 2.44 | 3.19 |
+| Version 0's five rows together, less what they sum to | +0.08 ± 0.16 | +0.28 ± 0.10 | +0.34 ± 0.21 | **+0.81 ± 0.15** |
+
+And the table above again, each of version 1's rows relaxed alone to version
+0's, by depth:
+
+| Row | 1 hidden layer | 2 | 4 | 8 |
+|---|---|---|---|---|
+| Activation DAC, 6 → 5 bits | 0.09 | 0.27 | 0.32 | 0.54 |
+| ADC, 7 → 6 bits | 0.12 | 0.21 | 0.11 | 0.20 |
+| Receiver noise, 0.5 → 1 LSB | 0.18 | 0.38 | 0.23 | 0.22 |
+| Light, 15 → 3 photons | 0.34 | 0.31 | 0.23 | 0.21 |
+| Weight programming error, 1 → 4 LSB | 0.33 | 0.42 | 0.53 | 0.59 |
+| Crosstalk, 2% → 10% | 0.16 | 0.35 | 0.35 | 0.34 |
+
+Four things, and the first is why version 1 stays the requirement.
+
+- **Version 1 holds at every depth, and version 0 does not.** Version 1 costs a
+  quarter to a third of a point from one hidden layer to eight. Version 0 goes
+  from a point and a half to over three.
+- **"Compounds" is true at depth, in a small way.** At eight hidden layers
+  version 0's rows together cost 1.4 times what they sum to, five standard
+  errors clear of adding. So the menu is exact for a shallow network and
+  optimistic for a deep one: relaxing several rows at once costs more than
+  their prices say. The factor is 1.4, and not the six that was withdrawn.
+- **Noise does not accumulate, and deterministic error does.** Thermal and shot
+  noise put the same error on the outputs of a nine-layer network as of a
+  two-layer one, and cost no more: a layer's noise does not survive the next
+  layer undiminished. The activation quantiser's error is the same function of
+  the signal at every layer, and grows by three points and more a layer.
+- **So the menu moves.** At eight hidden layers the two dearest rows to relax
+  are the weight programming error and the activation DAC's sixth bit, which at
+  one hidden layer was the cheapest row there is. The two whose cost this plan
+  can name — the receiver noise, which is the laser, and the ADC's bit — stay
+  between a tenth and two fifths of a point, with no trend in depth.
+
+That sharpens what there is to decide and does not decide it. If a row is to be
+relaxed for the sake of the laser, or of the converters that sit on the tile,
+those two are the rows at every depth tried, and the two DACs are the rows to
+leave alone. It is still fully connected layers on MNIST, and networks trained
+without the impairments in the loop (§8, question 7).
+
 ### 4.4 To the PTA program
 
 - ~~C3, the calibration engine, continues, and becomes X3.~~ **Done**, both
@@ -707,6 +757,7 @@ Each lands when its decision settles, in its own document's repository.
 | UCIe and PCIe 5.0-class PHY IP: which nodes, availability, license cost | B6, L1–L3 | Source it early, and prototype on FPGA hard IP first |
 | Advanced-packaging capacity and cost | B2, P3 | Settled for rev A by B2: organic substrates, GDDR6 and DDR5, with HBM left to the Phase 2 module |
 | A requirement in LSB of an ADC it does not name. X1's joint runs carried C1's noise rows from an 8-bit ADC to a 6-bit one as the same numbers, which is four times the noise, and until 2026-10-03 this row read "analog error compounds" on the strength of it | X1, B5, and every figure sized from §4.3 | Corrected (§4.3). A noise row names an 8-bit ADC wherever it appears, and grx930's harness reports every run in that unit beside the one it was asked in |
+| The budget's rows stop adding with depth: version 0's cost 1.4 times their sum at eight hidden layers, and the rows that are cheap in a shallow network are not the ones that are cheap in a deep one | Any relaxation of §4.3 for a deep workload | Version 1 itself holds to eight layers. A relaxed set is priced jointly, at the depth it is for, as §4.3's depth tables do — not from the shallow menu |
 | Drift needs calibrating about every quarter hour at TFLT's fit to hold the gate's margin, not hourly as C1's sweep suggested | C3, the schedulers | C3(a) measured the hold curve ([`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) §8); the shadow scheduler has more idle windows to hide in than the c930 did (X2) |
 | TFLT dies not available in the volume or quality needed | B5, Track X | TFLN as the fallback, with calibration sized to its drift |
 | RISC-V support in Linux's CXL subsystem | L4, S1 | Firmware planned alongside L1, not after it |
@@ -1042,6 +1093,17 @@ among the bounds that bind.
    property and not a law: with one hidden layer a layer's error is the next
    layer's input once. The numbers in §4.3, and the adding, belong to this
    network until something deeper is run.
+
+   *Something deeper was run the same day, and the answer is: partly.* Version 1
+   holds at two, four and eight hidden layers. Version 0 costs twice as much at
+   eight as at one, its rows together cost 1.4 times their sum there, and the
+   rows that were cheap to relax are not the same ones (§4.3). So depth is a
+   second workload the budget survives and the menu does not. What has still
+   not been run is anything other than a stack of fully connected layers — a
+   convolution, a residual path, attention — or anything but MNIST, or a
+   network trained with the impairments in the loop, which may tolerate more.
+   Depth was the cheapest second workload to try and it changed which rows are
+   dear; another kind of network may do so again.
 8. **What kind of light source does the tile need?** Asked on 2026-10-03, about a
    quantum dot laser, and the answer turned out to rest on something this plan
    never decided. [`pta_shot_rate.py`](pta_shot_rate.py) §6 writes down what any
