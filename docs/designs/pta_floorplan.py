@@ -74,6 +74,8 @@ Assumed, and marked again where each is used:
 Not priced: the interface chip's own circuits.  Its converters, its weight
 store and its buffers need device figures this program does not hold, so the
 chip appears here only as the area it has to span to reach its pads.
+(pta_power.py has since priced the converters, the drive and the link from
+published parts.  The weight store and the buffers are still not.)
 
 Standard library only.  Run:  python3 docs/designs/pta_floorplan.py
 """
@@ -372,7 +374,7 @@ def main():
     print(f"  For comparison, and neither is a limit: Lightmatter reports a ring link")
     print(f"  stable above {RING_LINK_W_MM2} W/mm2, and the die the keep-out article fears is"
           f" {COMPUTE_W_MM2:.0f}.")
-    print("  The converters' power, which would sit on the same area, is not priced.")
+    print("  The converters' power sits on the same area, and pta_power.py has it.")
 
     findings()
     checks()
@@ -448,8 +450,9 @@ def findings():
     print("6. THE LIGHT IS NOT WHAT HEATS THE TILE.  Even all of a 20 dB laser absorbed")
     print(f"   on the densest die is {hi / (w25 + i25):.2f} W/mm2, a fifteenth of what a ring link is")
     print("   reported stable under.  The facet does not bind either: one fiber, or")
-    print(f"   {fibers(k, 16)} at sixteen lines each.  What is left unpriced is the same thing as")
-    print("   before, and it now has an address: the converters, on top of the tile.")
+    print(f"   {fibers(k, 16)} at sixteen lines each.  What this left unpriced was the same thing as")
+    print("   before, with an address: the converters, on top of the tile.  pta_power.py")
+    print("   has since priced them.")
     print()
 
 
