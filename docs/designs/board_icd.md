@@ -53,7 +53,7 @@ Four parties own the board between them:
 |---|---|---|---|---|---|---|
 | 1 | GRX930 ↔ GRX-G100 | CXL 2.0 (CXL.io, .cache, .mem) on the PCIe 5.0 PHY | x16, 32 GT/s a lane, about 64 GB/s a direction before overhead | grx930: root port, home agent, HDM decoders | grxgpu: Type-2 device | B1, B3; rate from X2 |
 | 2 | GRX-G100 ↔ PTA chiplet | UCIe-S, a streaming protocol in a FLIT format, with the adapter's CRC and retry | One x16 module at 32 GT/s is 57.6 GB/s a direction at X2's assumed 0.9 efficiency. **Module count follows the chiplet's geometry** (§7) | grxgpu: UCIe port, fed by a copy engine | Chiplet team: EIC | B4; rates and counts from X2 |
-| 3 | EIC ↔ PIC | Analog: DAC drive to the modulators, photocurrent back from the detectors | One drive line a weight cell, one detector a column. Counts follow the geometry (§7) | Chiplet team | Chiplet team | B4, B5; resolutions from X1 |
+| 3 | EIC ↔ PIC | Analog: DAC drive to the modulators, photocurrent back from the detectors | One drive line a weight cell and one an input modulator, one detector a column: `k·n + k + n` lines, 16,704 at 256 × 64. The geometry is still §7's | Chiplet team | Chiplet team | B4, B5; resolutions from X1 |
 | 4 | Laser module → PIC | Light, on polarization-maintaining fiber | Power, wavelength, noise and **kind** all **open** (board plan §8, question 8). For scale: a 64-column tile at 1 GS/s wants 0.66–6.6 W behind 10–20 dB of loss, set by the receiver's noise and not by X1's 30 photons an ADC LSB, and intensity noise within about −150 dB/Hz. This row used to say 0.16–1.6 W, which was sized from X1's version 0 | Board team | Chiplet team | B5, X1; figures from [`pta_shot_rate.py`](pta_shot_rate.py) §3 and §6 |
 | 5 | Board controller ↔ all | SMBus or I3C: rails, temperatures, the laser and its interlock | Rate **open**, with the controller (§7) | Board team | Each die's management pins | B7 |
 | 6 | GRX930 ↔ DDR5 | DDR5 (or LPDDR5) | Channels, width and speed grade **open**, with part selection | grx930 team | Board team | B2 |
@@ -78,12 +78,30 @@ CXL.io, so the GPU driver owns it, and
 [`pta_chiplet_regmap.md`](pta_chiplet_regmap.md) lays it out. The UCIe sideband
 carries link management only.
 
+*Its size, 2026-10-03.* By the UCIe Consortium's own tutorial figures (Hot
+Chips 2023), a standard-package x16 module's PHY at 32 GT/s is 571.5 µm of die
+edge by 1,540 µm deep, on bumps of 100 to 130 µm. X2's five modules are
+4.4 mm² and 2.9 mm of edge. In a stacked chiplet the interface chip sits on top
+of the photonic die, so this link comes down through the package to reach the
+substrate, at the package's pitch and not the PHY's
+([`pta_floorplan.py`](pta_floorplan.py) §5). That is a tutorial's summary and
+not the specification, so item 5 of §7 stands.
+
 **Link 3.** This is the only interface where the error budget is a wiring
 requirement rather than a protocol: X1's version 1 asks for 6-bit activation
 DACs, a 7-bit ADC, receiver noise within a quarter of an 8-bit ADC LSB, and
 programming error within one weight LSB. Crosstalk between neighbouring inputs
 must stay under 2%, which is as much a layout constraint on the PIC as an
 electrical one.
+
+*What the line count does to the package, 2026-10-03.* It decides how the two
+dies sit. The photonic die cannot hold a voltage, so every weight is a line of
+its own, and [`pta_floorplan.py`](pta_floorplan.py) puts 16,704 of them at
+251 mm of shared edge if the dies sit side by side on fan-out wiring. So they
+are stacked, with a pad a line, and the pad's pitch sizes both dies: 10 mm² at
+25 µm, 167 at 100. The drive voltage belongs to this link too. On TFLT it sets
+a modulator's length — 3.9 mm at 5 V, 19.6 at 1 V — which makes it a mechanical
+figure as well as an electrical one, and it is **open**.
 
 **Link 4.** The laser sits off the package (B5). The board owns the module, its
 driver, its temperature control and the interlock; the chiplet owns the fiber
