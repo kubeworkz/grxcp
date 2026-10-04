@@ -1067,7 +1067,9 @@ numbers do not, and the SoC's tile and the chiplet's are both different.
 Track S is complete with this. What is left that touches it is outside it: a way
 to configure the tile from grxcp (`cuda_mapping.md` 7.40), the activation stage
 that nothing reports (7.39), and the board plan's S3 and S4. (S4 waited on the
-board plan's X5, the chiplet's twin, which was built on 2026-10-04.)
+board plan's X5, the chiplet's twin, which was built on 2026-10-04. Both have
+moved since: S4 is built, and S3's model and predictions are in the board plan's
+§3.4, with the gate waiting on rev 0.)
 
 ---
 

@@ -449,7 +449,7 @@ chiplet.
 |---|---|---|---|
 | S1 | Enumeration over CXL: the GPU, and its PTA, found through configuration space | [`heterogeneous_devices.md`](heterogeneous_devices.md) §4's rule: a device that is not present is not enumerated | L4, X4 |
 | S2 | A coherent shared pool: pointers valid on both the CPU and the GPU, beside the per-device spaces of §4.1 | Each coherent allocation reported through a device property, and no pointer resolved to the wrong device | L1, L2 |
-| S3 | The dispatch cost model: the §2.1 model with X2's link terms and C1's accuracy, placing each GEMM on the PTA, the GPU or the NPU | Its predictions checked on rev 0 | X2, P2 |
+| S3 | **Predicted, below.** The dispatch cost model, [`pta_dispatch.py`](pta_dispatch.py): the §2.1 model with X2's link terms and C1's accuracy, placing each GEMM on the PTA, the GPU or the NPU | Its predictions checked on rev 0. Not met: there is no rev 0. What is below is what it will be checking | X2, P2 |
 | S4 | **Built, below.** The PTA reported through the PTA plan's D2 property — effective bits, seed, impairment mask — from the twin now and from silicon later. X5 found one thing this step had to add: on the chiplet a GEMM's seed is derived from `PTA_SEED` and the GEMM's index, so the property needs the index or it describes a run and not a result | `AGENTS.md` §3: every field sourced or reported unknown (−1) | X5 |
 
 **S4, built 2026-10-04.** The chiplet is a device grxcp can see, as B9 settles
@@ -486,9 +486,119 @@ What stands in, where a model is attached: the operands make a host round trip
 in place of the copy engine and the link. It is reachable only through the seam.
 
 What it leaves. S1, finding the chiplet through configuration space, which
-waits on L4. S3, which device a GEMM should go to. And a way to configure the
-tile from grxcp, which is `cuda_mapping.md` 7.40 for the chiplet as it was for
-the c930: the gate programs the registers behind the runtime's back.
+waits on L4. S3, which device a GEMM should go to, *predicted since and below*.
+And a way to configure the tile from grxcp, which is `cuda_mapping.md` 7.40 for
+the chiplet as it was for the c930: the gate programs the registers behind the
+runtime's back.
+
+**S3, predicted 2026-10-04.** [`pta_dispatch.py`](pta_dispatch.py) is the model:
+the CPU document's §2.1 for the NPU, X2's link and
+[`pta_shot_rate.py`](pta_shot_rate.py) §5's weight path for the chiplet, a GEMM
+rate grxgpu measured for the GPU, and §4.3's accuracy. A GEMM is one layer on one
+batch, `M` rows of `K` inputs against `K × N` weights. The step's gate is that
+its predictions are checked on rev 0, so it is not met; this is what rev 0 will
+have to check.
+
+The terms are not the same kind of number, and the model's first table says
+which is which:
+
+| Device | A MAC | Fixed, a GEMM | What the numbers are |
+|---|---|---|---|
+| NPU | 5.54 ns | 10.9 µs | **Measured in RTL.** F0's GEMM at `M = 64, N = 8, K = 256`, and F2's host share of a GEMM on the SoC |
+| GPU | 257 ps | 6.9 or 30.5 µs | **Measured in SimX** by grxgpu, in fp16, at two shapes that agree to 0.4%: 0.1028 cycles a MAC (`grxgpu/docs/proposals/grxgpu_tensor_engine.md` §8). The clock is **configured**, 400 MHz, and not measured. The launch is grxcp's own simx figure on other kernels ([`developer_interface.md`](developer_interface.md) §3), without and with a preamble that scales with occupancy: an indication |
+| PTA chiplet | 0.28 ps | not known | **Predicted.** 256 × 64 at 1 GS/s, two banks, one link module, on X2's 4096-square layer. There is no chiplet, and its command path is proposed and not built |
+
+Each GEMM with no fixed cost on either side, the chiplet as §4.3 has it:
+
+| GEMM, batch 64 | MACs | GPU's arithmetic | Chiplet | Ratio | Slack |
+|---|---|---|---|---|---|
+| D3's first layer, 784 → 100 | 5,017,600 | 1.29 ms | 3.25 µs | 397 | 1.29 ms |
+| D3's second, 100 → 10 | 64,000 | 16.5 µs | 496 ns | 33 | 16 µs |
+| §6.2's shape, 256 → 8 | 131,072 | 33.7 µs | 669 ns | 50 | 33 µs |
+| The SoC NPU's largest, 16 → 12 at batch 8 | 1,536 | 395 ns | 387 ns | 1.0 | 8 ns |
+| X2's layer, 4096 → 4096 | 1,073,741,824 | 276 ms | 296 µs | 933 | 276 ms |
+
+*Slack* is the GPU's arithmetic less the chiplet's whole time: how much more than
+a launch a command to the chiplet may cost before the GPU is the quicker of the
+two. Both are reached through the GPU's command processor, so whatever the two
+paths share cancels.
+
+Seven things follow.
+
+- **Above tens of thousands of MACs, time does not choose.** The chiplet is 33 to
+  933 times the GPU's arithmetic on the four layers, and its command may cost
+  16 µs to 276 ms more than a launch before that turns. What chooses is whether
+  the GEMM may go there at all: int8 operands, and a network whose loss at this
+  budget has been measured and accepted. That is one network, D3, at 0.81 points
+  with hourly calibration and 0.37 at six minutes (§4.3).
+- **At 1,536 MACs they are level.** The chiplet spends its time moving one padded
+  weight set, 16,384 bytes for a layer of 192 weights, and the GPU's arithmetic
+  takes as long.
+- **The chiplet's GEMM is its command.** D3's two layers at batch 64 are 3.74 µs
+  on the chiplet. The program has measured two costs of a command, and neither
+  is the chiplet's: 10.9 µs for the c930's MMIO path to its own NPU, and 30.5 µs
+  for a launch on the GPU in simx. Two commands at either are 5.8 or 16 times
+  the work they carry. The tile is half of its own GEMM only from a batch of 628
+  on D3's first layer and 6,063 on its second, at the smaller cost. So the speed
+  rev 0 can measure for the chiplet is its command path's, and the proposal to
+  grxgpu (§4.2) is where that is decided. That proposal asks for one command a
+  GEMM. A descriptor that carries a network's layers, as the GPU's draw
+  descriptor carries a pass's stages, is the obvious answer to this, and nobody
+  has proposed it.
+- **The link binds before the tile does**, at one module, on every shape, and
+  what crosses is weights. D3's first layer programs eight whole sets to use 60%
+  of them. X2 counts a set whole, padding and all; without the padding the
+  smallest shape turns tile-bound and the chiplet is 2.3 times the GPU there, so
+  that convention is worth up to 2.3 times on a small layer and nothing on X2's.
+  The batch is the lever, as X2 said: doubling it adds under 40% to D3's first
+  layer, because the weights cross once.
+- **The write path is worth as much as the shot rate.** A tenth of the shot rate
+  leaves D3's second layer 12 times the GPU. The c930's one-cell scan on one bank
+  leaves it level. §4.3's two banks and 256 cells a beat are what the chiplet's
+  column rests on.
+- **The NPU's share is not settled.** Its fixed cost is the host's and is
+  measured. The GPU's is the device's, and what the driver and link 1 add to a
+  launch has not been measured. The NPU keeps its largest command if a launch
+  costs more than 24.4 µs in all, 9,758 cycles at 400 MHz. The two launch figures
+  in hand are 6.9 and 30.5 µs, one on each side of it. Past a hundred thousand
+  MACs the GPU wins whichever is right, and the SoC's NPU takes 1,536.
+- **Placement is a rule and not a search.** The chiplet takes an int8 GEMM in a
+  network measured at this budget, batched. The NPU takes a GEMM it can be asked
+  for, if rev 0 puts a launch above 24.4 µs. The GPU takes everything else. The
+  rule is applied above grxBLAS, by whoever sets the device (B9): the library
+  runs a GEMM where it is told and does not fall back.
+
+D3 end to end, a batch of 64, fixed costs included:
+
+| Where | Time | Accuracy | |
+|---|---|---|---|
+| NPU | 29.3 ms | 97.45% | The array's rate. The SoC's NPU cannot be asked for either layer in one command |
+| GPU | 1.37 ms | 97.45% | Two launches at 30.5 µs, which is an indication |
+| Chiplet, hourly calibration | 3.74 µs and two commands | 96.64% | 25.6 to 64.7 µs with a command at the two measured costs |
+| Chiplet, calibrated every six minutes | the same | 97.08% | |
+
+An activation stage on the GPU would put a launch between the two GEMMs: 30.5 µs,
+eight times what the chiplet spends on both. B4's addendum put the stage on the
+chiplet for the link's sake, and this is the same answer from the time side. With
+one command queue on the GPU, which is what the host-path proposal would leave
+(§4.2), the launch and the GEMMs are serial and nothing overlaps to hide it.
+
+**What rev 0 can check, and what it cannot.** It can check the GPU's rate and
+its launch, the NPU's, the figure that separates them, and what a command to the
+PTA costs. It cannot check the chiplet's column: on rev 0 the PTA is the
+error-model tile (P2), and its time is whatever `PTA_TW` and `PTA_TS` are set to.
+
+**What it does not price.** Energy: [`pta_power.py`](pta_power.py) has the
+chiplet's watts and nothing in the three repositories has the GPU's. The GPU's
+int8 path: grxgpu's measurement is fp16 and stands in for it. And any network
+but D3: nothing else has an accuracy figure, and the model does not supply one.
+
+Every figure above is an assert in the model, and ten errors planted in its
+inputs and its arithmetic each fail it: the GPU's clock halved, one of its runs
+misquoted by 2%, the launch's preamble dropped, the NPU's host cost doubled, the
+write path narrowed to a cell a beat, the round trip left out, the link added to
+the tile instead of capping it, the weights sent without padding, D3's first
+layer mis-sized, and the NPU's read-ahead dropped.
 
 ---
 
@@ -534,7 +644,10 @@ the c930: the gate programs the registers behind the runtime's back.
     the queue, the depth X4 leaves open (its §7, item 3) would not be a number
     anyone needs, and BUSY would mean running.
   - **A launch and a GEMM on the chiplet would be serial** while the GPU has one
-    command queue, which is its default. S3 has to price that.
+    command queue, which is its default. *S3 priced it* (§3.4): a launch between
+    D3's two GEMMs costs eight times what the chiplet spends on both, which is a
+    reason the activation stage is on the chiplet and not a reason to ask grxgpu
+    for a second queue.
 
 ### 4.3 To the PTA chiplet: EIC requirements
 
