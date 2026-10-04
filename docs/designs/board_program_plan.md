@@ -768,6 +768,97 @@ among the bounds that bind.
    paper arrived with closed by saying an NRZ geometry needs about half the lanes
    of a PAM4 one. The paper does not say so and its figures say the reverse: the
    same eight lanes carry 896 Gb/s as NRZ and 1.79 Tb/s as PAM4.
+
+   **Pitches, and what they do to that count, 2026-10-03.** A second batch of
+   sources came with pitches in it, so the connection count above has something
+   to be multiplied by. Each was read, or its abstract was. What each is, and is
+   not, is in the last column.
+
+   | Figure | Source | What it is |
+   |---|---|---|
+   | 100 µm pad pitch on modulators and detectors, so that bare logic dies flip-chip onto them | Y. Urino et al., *Proc. SPIE* 9010, 901006 (2014), doi:10.1117/12.2041418 | Designed and built: a silicon optical interposer, 20 Gb/s links, 30 Tb/s/cm² |
+   | 40 µm pitch: 37 grating couplers in a hexagon, under one multicore fiber | V. Kopp et al., *J. Lightwave Technol.* 33(3) (2015), doi:10.1109/JLT.2014.2364579 | Built, with 0.7 dB of spread across the channels. Only the abstract could be read, so the mean loss is not held here |
+   | 127 or 250 µm fiber pitch, 1 to 24 channels an array, two arrays a die on opposite edges; 150 µm wire-bond pitch and at most 120 pads; dies of 3 × 3 to 10 × 10 mm; an 8 W cooler holding ±0.01 °C | Europractice packaging design rules v1.7 (Tyndall, September 2024) | What a multi-project packaging service sells as standard: a floor on what can be bought, not a limit on what can be made |
+   | 25 × 25 µm² a cell, for a 64 × 64 weight bank | US 2024/0370050 A1 (University of Pittsburgh), a coherent crossbar array | **An assumption**, made once, to say that 400 such banks pass 10 cm². A pending application, whose built device is a single cell |
+   | 256 fibers on more than 4,000 mm², 8 lines a fiber; 16 lines a fiber on a stacked engine; a remote source of 16 lines | Lightmatter's M1000 and L200 and Ayar Labs' TeraPHY announcements, all of 2025-03-31 | Press releases for interconnect products. None states a die-to-die bond pitch, the engine's die size or a power |
+
+   **The bond pitch sizes the die, and the optics do not.** At least 16,384
+   connections at 256 × 64:
+
+   | Pitch of a connection | Area of the weights' pads alone | |
+   |---|---|---|
+   | 100 µm, the flip-chip pitch Urino's interposer was designed to | 164 mm², 12.8 mm square | More than the whole 9.5 × 13 mm package above, which is 124 mm² |
+   | 25 µm, the crossbar application's cell | 10.2 mm², 6.4 × 1.6 mm | A pad a cell means the bond pitch **is** the cell pitch |
+   | 150 µm wire bond, 120 pads | — | Out by two orders. A perimeter does not carry an area's worth of weights |
+
+   A factor of sixteen in area hangs on one number, the pitch at which the
+   interface chip bonds to the photonic die, and no source here states one: the
+   stacked products say "chip-on-wafer" and stop. That is the figure to ask a
+   packaging house for, ahead of anything optical. And 25 µm is nobody's
+   measurement: it is another topology's assumption, for a cell built round a
+   splitter and a pair of detectors that holds no weight. No source here sizes a
+   TFLT weight.
+
+   The bound is B4 and B5 together: a weight held on one die and applied on
+   another needs a way between them. A process with transistors beside the
+   optics has no such bound — the TeraPHY announcement calls its GlobalFoundries
+   process monolithic — but that process is silicon, which B5 turned down for
+   what holding a weight costs it.
+
+   **The fiber count, with edges on it.** The collision above stands.
+
+   - What a standard service attaches is two arrays of 24, and an edge-coupled
+     array gives four channels to alignment: 40 usable fibers, on a die of at
+     most 10 mm. A 127 µm pitch halves the facet a fiber takes, and 256 fibers
+     are still 32.5 mm of it.
+   - 256 fibers on one part does exist: on the M1000's 4,000 mm² and more of
+     interposer, thirty-two times the package above.
+   - Both other ways out have a built instance. Every one of the products
+     combines lines before they arrive, 8 or 16 to a fiber, and at 16 a fiber
+     256 lines are 16 fibers and 4 mm of facet. And a finer pitch exists in two
+     dimensions: 37 couplers at 40 µm under one multicore fiber is seven fibers
+     for 256 rows. Those are grating couplers, whose 1 dB bandwidth the
+     Europractice rules put at about 30 nm, so the lines a fiber carries have to
+     fit inside that.
+
+   **The thermal figures that came with these belong to the platform B5 turned
+   down.** Silicon microrings at 70 to 80 pm/°C is B5's own opening line. The
+   0.1 nm/°C quoted beside it is the same quantity rounded — the Europractice
+   rules give 1 nm for 10 °C — and 70 pm is the smaller number, not the stricter
+   one the summary called it. "A 4°C excursion ... isn't degradation, it's
+   outright system failure", control to ±0.1 to 0.2 °C and keep-outs "from the
+   first floorplan" are one contributed article's sentences, without citations,
+   about ring modulators on a link beside a compute die of over 200 W/cm² (A. S.
+   Chandrasekaran, *Semiconductor Digest*, 2026). Against them stands a vendor's
+   own report: Lightmatter has a ring link of 16 lines holding a raw error rate
+   under 10⁻⁹ through cycles from 25 to 105 °C, and through an "800 °C/s"
+   aggressor that was a laser swept at 50 nm/s and not a temperature.
+
+   None of it transfers as a number, for two reasons. This tile's weights are
+   held by a voltage and not by a heater, so P1 models bias drift and the
+   laser's wavelength (B5). And these are a **link's** tolerances: a link's ring
+   has to stay inside its linewidth, where a weight has to hold a level to an
+   LSB. If the tile is a ring bank (question 8) its rings move with temperature
+   too, by a coefficient nothing here gives for TFLT, and its allowance is
+   tighter than a link's by roughly the number of levels it holds — an estimate,
+   not a figure. What does transfer is where the heat comes from. The stacked
+   examples put the interface chip directly over the photonic die, so here the
+   converters would sit on the tile, and their power is the figure this question
+   still has not priced.
+
+   **The three assembled products are links.** They move bits and none of them
+   multiplies, so none is a candidate for the tile; and none is a link this board
+   has, since B1 keeps the PTA beside the GPU and inside UCIe-S's reach. What
+   they are precedent for is the tile's shell, and the TeraPHY is the nearest: a
+   photonic chiplet behind UCIe, lit by a remote source of several lines, which
+   is B4 and B5 as somebody else built them.
+
+   **Not used.** "HEXA-PHOTON" (Zenodo, 2026) was offered as a concrete example
+   of a 12 × 12 mesh on 12 wavelengths. It is a self-published design with
+   nothing built or simulated: by its own abstract every parameter is "derived
+   from the arithmetic functions of the perfect number n = 6", and its twelve is
+   the sum of 6's divisors. The summary's "34 chiplets" for the M1000 and "NRZ
+   with no FEC" for the TeraPHY are not in the announcements cited for them.
 2. **What does the development kit cost, and how many are built?** That settles
    B1 and B2 more than any technical argument does.
 3. **Does the GRX930's NPU keep a PTA of its own?** The c930 PTM work is built
@@ -813,6 +904,17 @@ among the bounds that bind.
    arrangement that turns B5's watt-class laser into milliwatt parts, at the same
    total light: 10 mW a row stands 15.9 dB of loss where 1.6 W in one laser stands
    13.9.
+
+   *Two figures on that device question, 2026-10-03,* from the sources question
+   1 now lists. Neither is a measurement of this tile. The Pittsburgh
+   application says the wavelength channels on one bus waveguide "can be limited
+   to k ≲ 56 based on crosstalk between nearest neighbors", of
+   wavelength-multiplexed banks as a class and with no derivation given. And
+   every source of many lines in those announcements carries 8 or 16. So 256
+   lines on one bus is four and a half times the only limit anyone states and
+   sixteen times the largest source. A ring bank at 256 inputs would then be
+   several buses that reuse a few lines, with each column summing across buses —
+   which changes who is whose neighbour in the error model's crosstalk term.
 
 ---
 
