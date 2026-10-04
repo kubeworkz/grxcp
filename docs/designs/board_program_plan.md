@@ -169,6 +169,13 @@ not weights on the D3 network and 75% on a four-layer block, and that share
 grows with depth and with weight residency — which is where this design is
 going. The cost is chiplet area and a nonlinearity fixed in silicon, which
 S_ACT has designed once already.
+*Addendum, 2026-10-03, once the floorplan had been bounded (§8, question 1):*
+stacked, for any tile past several hundred cells. The interface chip holds a
+voltage a weight and the photonic die has nothing to hold one with, so a
+256 × 64 tile has 16,704 lines between the two. Side by side they want 251 mm
+of shared edge at the finest wiring B2's packaging has, and a 13 mm edge
+carries 866. Stacked puts the converters directly over the tile, which is P1's
+to model.
 
 **B5 — The photonic platform, and the laser.** The strategy and motherboard
 documents assume silicon photonics tuned by heaters: ring resonators held on
@@ -254,7 +261,7 @@ UCIe sideband carries the link's own management. *Needed by:* X4. *Settled on
 | Step | What | Gate | Needs |
 |---|---|---|---|
 | P0 | **Drafted:** [`board_icd.md`](board_icd.md), with the block diagram, the nine links, power, clocks, resets and debug, and a list of what it cannot source yet | Review: every link has an owner on each side, and every number a source | B1–B7 |
-| P1 | Package study of the GPU package with the PTA chiplet: floorplan, UCIe-S on the organic substrate B2 chose, fiber attach, and a thermal co-simulation with TFLT's drift in place of heater terms. §8, question 1 holds one published package of the kind, for scale | The model predicts the PIC's temperature range under the GPU's power map, and C1's drift fits say what that costs in calibration | B1, B2, B5 |
+| P1 | Package study of the GPU package with the PTA chiplet: floorplan, UCIe-S on the organic substrate B2 chose, fiber attach, and a thermal co-simulation with TFLT's drift in place of heater terms. §8, question 1 holds one published package of the kind, for scale, and [`pta_floorplan.py`](pta_floorplan.py) bounds what has to go in it | The model predicts the PIC's temperature range under the GPU's power map, and C1's drift fits say what that costs in calibration | B1, B2, B5 |
 | P2 | Board rev 0, on B6's FPGA platform: the GPU partition as a CXL Type-2 device, and the PTA as the error-model tile | Linux on a CXL host enumerates the device, and the D3 network runs through the emulated PTA bit-identical to `pta_mnist`'s C reference | B6, L2, X4, X5 |
 | P3 | Board rev A, on silicon | Scoped after P1 and the silicon plans; no gate yet | P1, L1–L4 |
 
@@ -523,6 +530,18 @@ quadrupling of it quarters the write path.
 The converters are stated as a rate and no further: 64 ADCs at the shot rate is
 64 GS/s of 7-bit conversion at 1 GS/s. Turning that into watts needs a device
 figure this program does not hold.
+
+*What the floorplan asks, 2026-10-03.* Two things neither table has a row for
+([`pta_floorplan.py`](pta_floorplan.py)). **The swing.** On TFLT a modulator's
+length is 1.96 V·cm over the voltage its DAC swings, so the interface chip's
+drive voltage sets the photonic die's length: 3.9 mm at 5 V, 9.8 at 2 V, 19.6
+at 1 V. A 1 V chip and a 256 × 64 tile do not fit one standard die at any
+pitch. **The bond.** The chip reaches every weight through a pad of its own, so
+it spans the pad field whatever its circuits need — 10 mm² at a 25 µm pitch,
+167 at 100 — and for the tile to fit a standard die the pitch has to be 53 µm
+or finer at 5 V and 33 µm at 2 V. And the chip sits on the tile: its
+converters' power, unpriced above, is heat in the one place the weights are
+sensitive to it.
 
 ### 4.4 To the PTA program
 
@@ -859,6 +878,65 @@ among the bounds that bind.
    from the arithmetic functions of the perfect number n = 6", and its twelve is
    the sum of 6's divisors. The summary's "34 chiplets" for the M1000 and "NRZ
    with no FEC" for the TeraPHY are not in the announcements cited for them.
+
+   **The floorplan, bounded, 2026-10-03**
+   ([`pta_floorplan.py`](pta_floorplan.py)). The pitches above, UCIe's own
+   module dimensions and the one Pockels figure the program holds — TFLT's
+   1.96 V·cm (the CPU document, §4.4) — put together as a model of what has to
+   be on the photonic die and under the interface chip. It is a floorplan in the
+   sense P1 needs first and not a layout: every area is a lower bound. What is
+   on the die is read off the error model, not chosen: a Mach–Zehnder modulator
+   an input row (`MZM_NL`), a cell a weight, a detector a column. For 256 × 64:
+
+   | What takes room | How much | What sets it |
+   |---|---|---|
+   | The inputs, a modulator a row | 3.9 mm long at a 5 V swing, 9.8 at 2 V, 19.6 at 1 V. All 256 at 5 V: 25 mm² if they sit 25 µm apart, 100 mm² at 100 µm | The swing a DAC holds, which nothing has specified. The lateral pitch is swept, not known |
+   | The weights, if not resonant | As long as a modulator each: 1,606 mm² at 5 V and 25 µm, sixteen standard dies | The platform |
+   | The weights, if resonant | 10.2 mm² at 25 µm to 164 at 100 | The bond pitch, standing in for a ring nobody has sized |
+   | The lines between the dies | 16,704. Stacked, a pad each: 10.4 to 167 mm². Side by side, 251 mm of shared edge at 15 µm line and space | B4 and B5 together |
+   | The facet | One fiber, or 16 at sixteen lines each, which is 4 mm | Does not bind |
+   | The link | A UCIe-S module's PHY is 571.5 × 1,540 µm: 4.4 mm² and 2.9 mm of edge for X2's five. Brought down through the mold at 300 µm, 33 mm² | The package, not the PHY |
+   | The light, as heat | 0.19 W/mm² at most, were all of a 20 dB laser absorbed on the densest die | Does not bind |
+
+   Five things follow. The first two change what this section said a day ago.
+
+   - **On this platform the weights are resonant, or the tile is not a
+     chiplet.** A Pockels weight that attenuates by interference is as long as
+     a modulator, and 16,384 of those are 40% of the largest photonic part in
+     the references above. Short of a smaller tile, another material or a cell
+     no figure here describes, the weights sit on resonances. So that much of
+     question 8 is no longer open, and a level held on the side of a resonance
+     moves with temperature and with the laser's wavelength. The thermal
+     figures set aside above as belonging to "the platform B5 turned down"
+     therefore come back, as a kind of sensitivity if not as numbers: B5
+     escaped the heaters, not the rings. What a non-resonant tile can be is
+     about a thousand cells — of X2's candidates, 8 × 8 and 64 × 8.
+   - **The inputs are the largest optics on the die, not the weights.** "The
+     bond pitch sizes the die, and the optics do not", above, was written about
+     the weights and had not counted the inputs. At a 25 µm pitch the 256
+     modulators outweigh the weights at every swing, 25 mm² against 10.2 at
+     5 V, and the die is one modulator long whatever else is on it. If an input
+     is a ring and not a Mach–Zehnder this goes away, and `MZM_NL` is then the
+     wrong impairment in the error model.
+   - **Two numbers size the die: the bond pitch and the swing.** The tile fits
+     the largest die a standard service packages at a bond pitch of 53 µm or
+     finer with 5 V inputs, 33 µm with 2 V ones and 78 µm if the inputs are
+     resonant too. The first two are inside UCIe's advanced-package range of
+     25 to 55 µm, and none reaches the 100 µm of flip-chip. At 1 V the
+     modulator is 19.6 mm long and no pitch helps. So the voltage the interface
+     chip's DACs swing is a floorplan input, and §4.3 had no row for it.
+   - **"Stacked or side by side" is not open at this size**, within B2. B4's
+     addendum has it.
+   - **The module count is a package-area question before it is a signalling
+     one.** X2's five modules are small as PHYs and 33 mm² as vias, three times
+     the dense tile's weights, and B8's thirty have more bumps than a package
+     the reference one's size has C4 sites.
+
+   Not priced, and now more exactly located: the interface chip's own circuits,
+   which sit on top of the tile; and behind the resonant reading, a TFLT ring's
+   size, its linewidth and the swing that moves it by one. That a modulator's
+   lateral pitch can be the bond's, and that a cell is no smaller than its pad,
+   are assumptions the script marks where it uses them.
 2. **What does the development kit cost, and how many are built?** That settles
    B1 and B2 more than any technical argument does.
 3. **Does the GRX930's NPU keep a PTA of its own?** The c930 PTM work is built
@@ -915,6 +993,16 @@ among the bounds that bind.
    sixteen times the largest source. A ring bank at 256 inputs would then be
    several buses that reuse a few lines, with each column summing across buses —
    which changes who is whose neighbour in the error model's crosstalk term.
+
+   *Narrowed by area, 2026-10-03.* The floorplan model
+   ([`pta_floorplan.py`](pta_floorplan.py); question 1) gets half an answer by
+   another route. A TFLT weight that is not resonant is millimeters long and a
+   256 × 64 tile of them is not a chiplet, so the weights are resonant. That is
+   the half of the ring-bank hypothesis that concerns the cell, and it brings
+   the cell's sensitivities with it: to temperature and to the source's
+   wavelength, by figures nobody holds. The other half — that inputs are told
+   apart by wavelength, which is what decides the source's kind — area does not
+   reach, and it stays open here.
 
 ---
 

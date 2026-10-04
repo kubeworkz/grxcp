@@ -1984,6 +1984,12 @@ Recorded so the next reader knows what was considered and deliberately deferred.
    line an input; a mesh sums fields from one coherent line. The hypothesis
    therefore decides what kind of laser the chiplet is fed by, which is the
    board plan's §8, question 8.
+   *And area has since settled half of it, 2026-10-03.* On TFLT a weight that
+   is not resonant is as long as a modulator — 1.96 V·cm over its drive
+   voltage — and a chiplet-sized tile of those does not exist
+   ([`pta_floorplan.py`](pta_floorplan.py); the board plan's §8, question 1).
+   So the cell is resonant. Whether inputs are told apart by wavelength, which
+   is the part that sets the coupling matrix and the laser, is still open.
 6. **`PTA_CTRL.PF2_OFF` — built 2026-10-01, and it settled the question
    against the guess.** Bit 11 turns the cross-GEMM prefetch off without
    touching PF1, which `STAGE_A` cannot do: `P_STAGING` jumps straight to
