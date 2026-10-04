@@ -1043,6 +1043,12 @@ question: version 0's parts are each under 22% of the product's RMS and together
 32.6%, and somewhere between those a 784-100-10 MLP stops coping. Where, and
 whether it is a threshold, is measurable with the harness that exists.
 
+*Measured, 2026-10-03: there is no such place.* The harness's joint run had
+carried version 0's noise rows to a 6-bit ADC as the same numbers, which is four
+times the noise. At the same noise the rows cost 1.5 points together, as they do
+summed (the board plan's §4.3; grx930's design note, §5). The next paragraph had
+the cause in hand and did not follow it to the accuracy runs.
+
 **An LSB-denominated allowance is tied to its ADC.** Version 1's thermal sigma
 is a quarter of version 0's and its thermal error an eighth, because the 7-bit
 ADC's LSB is half the 6-bit one's. §4.3 of the board plan states every noise

@@ -61,7 +61,8 @@ the twin cannot yet give.
 row at zero, and each column reports that row's cell. One shot measures a whole
 row of cells across all `n` columns at once, so `k` shots measure the tile, and
 `k · m` shots measure it with `m`-fold averaging against the receiver noise X1
-budgets at a quarter of an 8-bit ADC LSB.
+budgets at half an 8-bit ADC LSB (a quarter of its 7-bit ADC's, which is how
+§8's runs set it).
 
 At a 256-row tile with 16-fold averaging that is 4,096 shots: 4 µs at one shot
 a nanosecond, for one bank, 8 µs for both. Against an hourly interval that is a

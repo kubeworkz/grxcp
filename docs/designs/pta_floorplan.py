@@ -446,7 +446,7 @@ def findings():
     print("   count is a package-area question before it is a signalling one.")
     print()
     print("6. THE LIGHT IS NOT WHAT HEATS THE TILE.  Even all of a 20 dB laser absorbed")
-    print(f"   on the densest die is {hi / (w25 + i25):.2f} W/mm2, a seventh of what a ring link is")
+    print(f"   on the densest die is {hi / (w25 + i25):.2f} W/mm2, a fifteenth of what a ring link is")
     print("   reported stable under.  The facet does not bind either: one fiber, or")
     print(f"   {fibers(k, 16)} at sixteen lines each.  What is left unpriced is the same thing as")
     print("   before, and it now has an address: the converters, on top of the tile.")
@@ -557,12 +557,14 @@ def checks():
     assert c4_sites == 1976
     assert B8_FLIP_MODULES * module_sites() > c4_sites > 5 * module_sites()
 
-    # 14. The light: at most 0.19 W/mm2 on the densest die, about a seventh of
-    #     the ring link's density, and less on every larger one.
+    # 14. The light: at most 0.09 W/mm2 on the densest die, about a fifteenth of
+    #     the ring link's density, and less on every larger one.  It was 0.19
+    #     and a seventh while pta_shot_rate.py read v1's receiver noise as a
+    #     quarter of an 8-bit LSB; it is half of one.
     hi = shot.laser_power(v1, shot.X2_FS, n, shot.LOSS_DB[1], 0.5)
     dense = sum(die_mm2(k, n, P_CELL, 5.0))
-    assert abs(hi / dense - 0.19) < 0.005, hi / dense
-    assert 7.0 < RING_LINK_W_MM2 / (hi / dense) < 8.0
+    assert abs(hi / dense - 0.093) < 0.001, hi / dense
+    assert 15.0 < RING_LINK_W_MM2 / (hi / dense) < 16.0
     for p, _ in BOND_PITCHES:
         assert hi / sum(die_mm2(k, n, p, 5.0)) <= hi / dense + 1e-12
 

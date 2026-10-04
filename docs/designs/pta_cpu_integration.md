@@ -1626,6 +1626,14 @@ network's accuracy answers to a larger error. That is a hypothesis this makes
 cheap to test, not a result: the accuracy runs were on another tile and another
 workload.
 
+*Tested, 2026-10-03, and it was neither.* grx930's `sim/pta_mnist.sh budget`
+reran the accuracy runs with the noise in one unit. Version 0's rows cost 1.5
+points together, which is what they sum to; the 12.8 was X1's joint run carrying
+the noise rows to a coarser ADC as the same numbers, four times the noise. That
+is the next paragraph's effect at full size. This gate's "version 0" point is
+that setting as it was run — four LSB of an 8-bit ADC, where the board plan's
+version 0 is one — and its measurements stand as measurements of that.
+
 **An allowance in ADC LSB is not an absolute allowance.** Version 1 quarters the
 thermal sigma, from 1 LSB to 0.25. The error falls eightfold, 18.6% to 2.3%,
 because version 1's ADC has another bit and the shift the clip rule gives it is

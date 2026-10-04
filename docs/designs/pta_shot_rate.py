@@ -27,7 +27,9 @@ Reused, not restated:
 
 From board_program_plan.md:
     section 4.3   v0 and v1 of the interface chip's requirements: ADC bits,
-                  receiver noise in LSB of an 8-bit ADC, photons per ADC LSB
+                  and receiver noise and photons in LSB of an 8-bit ADC -- which
+                  for v1 is half an LSB and 15 photons, not the 0.25 and 30 this
+                  model first read (see REQ)
     B5            the receiver it takes "for scale": about 1 uA rms of input
                   noise, 1 A/W, 1550 nm, 64 channels, 10 to 20 dB of loss
 
@@ -78,15 +80,21 @@ import pta_tpaqcn_measured as tpaqcn
 import pta_tw_sweep as sweep
 
 # ---- section 4.3: what the interface chip is held to ----------------------
-# v0 is each impairment on its own and "was never a budget"; v1 is all of them
-# together and is the requirement.  v0 is kept only because B5's laser figure was
-# computed from it, so reproducing that figure is how this model is checked.
+# v1 is the requirement.  v0 is the looser set B5's laser figure was computed
+# from, so reproducing that figure is how this model is checked; it costs 1.5
+# points on the D3 network where v1 costs a quarter of one.
+#
+# Both noise rows are in LSB OF AN 8-BIT ADC.  v0's were measured at one.  v1's
+# were not: X1 ran them as "--adcbits 7 --thermal 0.25 --photons 30", which is
+# in LSB of that 7-bit ADC, and one of those is two of an 8-bit one's.  So v1 is
+# half an 8-bit LSB of receiver noise and 15 photons per 8-bit LSB.  This model
+# first read "0.25 LSB" and "30" as 8-bit LSB, which made its laser twice too
+# large; grx930's `pta_mnist.sh budget` prints every run's noise in this unit
+# and is where the two figures come from.
 REQ = {
     "v0": dict(adc_bits=6, rx_noise_lsb=1.0, photons_per_lsb=3),
-    "v1": dict(adc_bits=7, rx_noise_lsb=0.25, photons_per_lsb=30),
+    "v1": dict(adc_bits=7, rx_noise_lsb=0.5, photons_per_lsb=15),
 }
-# v0's noise rows say "of an 8-bit ADC"; v1's say "0.25 LSB" and "30" in the same
-# columns and are READ here as the same unit.  B5 used 2^8 for v0.
 NOISE_LSB_BITS = 8
 
 # ---- B5: the receiver "for scale" -----------------------------------------
@@ -383,7 +391,7 @@ def main():
           f" {LOSS_DB[1]:.0f} dB.  Those are B5's figures.")
     p1 = detector_power(v1, X2_FS, 0.5)
     lo1, hi1 = (laser_power(v1, X2_FS, B5_CHANNELS, d, 0.5) for d in LOSS_DB)
-    print(f"  But v0 was never a budget.  v1 allows the receiver {v1['rx_noise_lsb']} LSB,"
+    print(f"  v1 allows the receiver {v1['rx_noise_lsb']} of that LSB,"
           f" not {v0['rx_noise_lsb']:.0f}:")
     print(f"  full scale {p1 * 1e3:.2f} mW a detector, and the laser {lo1:.2f} to"
           f" {hi1:.1f} W -- {lo1 / lo0:.0f}x B5's figure.")
@@ -549,7 +557,7 @@ def findings(mod_fs):
     print()
     print("1. THE MODULATOR IS NOT THE QUESTION.  It allows about"
           f" {mod_fs / 1e9:.0f} GS/s, and at")
-    print("   B5's order of laser the receiver never allows an eighth of that, so")
+    print("   B5's order of laser the receiver never allows half of that, so")
     print("   the modulator is never the bound that binds.  A modulator benchmark --")
     print("   a line rate least of all, since it is recovered by machinery an analog")
     print("   level does not have -- says nothing about how fast this tile fires.")
@@ -564,9 +572,9 @@ def findings(mod_fs):
     print(f"   this geometry (X2).  Holding a layer is a digital store of {wbytes / 1e6:.1f} MB")
     print("   for this one, which B4 does not list and nothing has sized.")
     print()
-    print("3. THE RECEIVER IS, AND B5's LASER IS FOUR TIMES TOO SMALL for the")
+    print("3. THE RECEIVER IS, AND B5's LASER IS HALF WHAT v1 NEEDS from the")
     print("   receiver it assumed.  B5 sized it from v0's allowance of one LSB of")
-    print("   receiver noise; section 4.3 has since held the chip to v1's quarter.")
+    print("   receiver noise; section 4.3 holds the chip to v1's half.")
     print(f"   At 1 GS/s the {k}x{n} tile needs {lo1:.2f} W behind 10 dB and {hi1:.1f} W")
     print("   behind 20, not 0.16 and 1.6.  Every figure here is linear in B5's")
     print("   assumed 1 uA of receiver noise, which makes that the most leveraged")
@@ -651,10 +659,14 @@ def checks():
     lo0, hi0 = (laser_power(v0, X2_FS, B5_CHANNELS, d, 0.5) for d in LOSS_DB)
     assert round(lo0, 2) == 0.16 and round(hi0, 1) == 1.6, (lo0, hi0)
 
-    # 6. v1 quadruples it, exactly, and at 1 GS/s the scaling law does not enter.
+    # 6. v1 doubles it, exactly, and at 1 GS/s the scaling law does not enter.
+    #    v1's two noise rows are X1's as run -- a quarter of a 7-bit LSB and 30
+    #    photons per 7-bit LSB -- restated in the 8-bit LSB every figure here uses.
+    assert v1["rx_noise_lsb"] == 0.25 * 2 ** (NOISE_LSB_BITS - v1["adc_bits"])
+    assert v1["photons_per_lsb"] == 30 / 2 ** (NOISE_LSB_BITS - v1["adc_bits"])
     for _, e in NOISE_LAWS:
         lo1 = laser_power(v1, X2_FS, B5_CHANNELS, LOSS_DB[0], e)
-        assert abs(lo1 / lo0 - 4.0) < 1e-9, (e, lo1 / lo0)
+        assert abs(lo1 / lo0 - 2.0) < 1e-9, (e, lo1 / lo0)
 
     # 7. Shot noise never becomes the limit: across four decades of rate and both
     #    laws the receiver asks for more light than the photon allowance does.
@@ -664,18 +676,18 @@ def checks():
 
     # 8. The modulator never binds at X2's tile: at every laser B5 planned on and
     #    every loss in its range, under either law, the receiver allows less than
-    #    an eighth of what the modulator does.
+    #    half of what the modulator does.
     mod_fs = modulator_rate(sweep.TFLN_BW_HZ, v1["adc_bits"])
     for w in LASERS_W:
         for d in LOSS_DB:
             for _, e in NOISE_LAWS:
-                assert receiver_rate(v1, w, n, d, e) * 8 < mod_fs, (w, d, e)
+                assert receiver_rate(v1, w, n, d, e) * 2 < mod_fs, (w, d, e)
 
     # 9. The loss ceiling for 1 GS/s at B5's largest laser sits INSIDE B5's loss
     #    range, which is reading 4: part of that range cannot reach X2's rate.
     ceil = loss_ceiling_db(v1, LASERS_W[-1], n, X2_FS, 0.5)
     assert LOSS_DB[0] < ceil < LOSS_DB[1], ceil
-    assert abs(ceil - 13.9) < 0.05, ceil
+    assert abs(ceil - 16.9) < 0.05, ceil
 
     # 10. receiver_rate() inverts laser_power(): a round trip returns the rate.
     for _, e in NOISE_LAWS:
@@ -727,19 +739,19 @@ def checks():
             assert abs(gk * each - laser_power(v1, X2_FS, gn, d, 0.5)) < 1e-12, (gk, gn, d)
 
     # 17. Ten times the emitter is ten decibels of loss, and a 10 mW emitter a row
-    #     at X2's tile stands 15.9 dB -- past the 13.9 that B5's largest single
+    #     at X2's tile stands 18.9 dB -- past the 16.9 that B5's largest single
     #     laser could.
     c1, c10, c100 = (emitter_loss_ceiling_db(v1, w, k, n, X2_FS, 0.5) for w in EMITTERS_W)
     assert abs((c10 - c1) - 10.0) < 1e-9 and abs((c100 - c10) - 10.0) < 1e-9
-    assert abs(c10 - 15.9) < 0.05, c10
+    assert abs(c10 - 18.9) < 0.05, c10
     assert c10 > ceil
 
-    # 18. The intensity-noise limit: about -150 dB/Hz at 1 GS/s under v1, exactly
-    #     10 dB a decade of rate, and 20 log10(4) looser under v0's allowance.
-    assert abs(rin_limit_db_hz(v1, X2_FS) + 150.2) < 0.05, rin_limit_db_hz(v1, X2_FS)
+    # 18. The intensity-noise limit: about -144 dB/Hz at 1 GS/s under v1, exactly
+    #     10 dB a decade of rate, and 20 log10(2) looser under v0's allowance.
+    assert abs(rin_limit_db_hz(v1, X2_FS) + 144.2) < 0.05, rin_limit_db_hz(v1, X2_FS)
     assert abs(rin_limit_db_hz(v1, 1e8) - rin_limit_db_hz(v1, 1e9) - 10.0) < 1e-9
     assert abs(rin_limit_db_hz(v0, X2_FS) - rin_limit_db_hz(v1, X2_FS)
-               - 20 * math.log10(4)) < 1e-9
+               - 20 * math.log10(2)) < 1e-9
 
     # 19. The participation count runs from 1 to the number of rows, which is
     #     the whole range of what an array can buy on noise.

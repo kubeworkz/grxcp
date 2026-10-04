@@ -208,17 +208,23 @@ noise, sets the laser power, by three orders of magnitude: 64 channels behind
 assumption until the chiplet is sized (§8), but a laser of that order is a
 board-level thermal and safety item. *Needed by:* P1 and X1.
 
-*Revisited 2026-10-03: for the same receiver it is four times that.* The
-arithmetic above uses C1's allowance of one LSB of receiver noise, which is
-§4.3's version 0, and §4.3 has since said version 0 was never a budget. Version 1
-holds the interface chip to a quarter of an LSB. A detector's full scale is then
-1.02 mW rather than 0.26, and 64 channels behind 10–20 dB need **0.66–6.6 W**
-at 1 GS/s. [`pta_shot_rate.py`](pta_shot_rate.py) reproduces the figures above
-from version 0 before it revises them, so the method is this paragraph's and
-only the allowance has moved. Every one of them is linear in the assumed 1 µA,
-which makes a measured receiver noise the first number worth having. What this
-does to the shot rate is §8, question 1, and what kind of source supplies it is
-question 8.
+*Revisited 2026-10-03: for the same receiver it is twice that.* The arithmetic
+above uses C1's allowance of one LSB of receiver noise, which is §4.3's version
+0. Version 1 holds the interface chip to half of that LSB. A detector's full
+scale is then 0.51 mW rather than 0.26, and 64 channels behind 10–20 dB need
+**0.33–3.3 W** at 1 GS/s. [`pta_shot_rate.py`](pta_shot_rate.py) reproduces the
+figures above from version 0 before it revises them, so the method is this
+paragraph's and only the allowance has moved. Every one of them is linear in
+the assumed 1 µA, which makes a measured receiver noise the first number worth
+having. What this does to the shot rate is §8, question 1, and what kind of
+source supplies it is question 8.
+
+*It said four times, and 0.66–6.6 W, until the unit was found.* That read
+version 1's "0.25 LSB" as a quarter of an **8-bit** LSB. It is a quarter of the
+7-bit ADC's that version 1 was run with, which is half of an 8-bit one's (§4.3,
+corrected the same day). Everything downstream moved with it — the loss ceiling
+from 13.9 dB to 16.9, the emitter powers, the intensity-noise limit — and is
+restated where it stands.
 
 **B6 — Silicon nodes, and the board before silicon.** grx930's manufacturing
 plan takes the SoC to SKY130 first, then to TSMC N28, and freezes the RTL now.
@@ -413,6 +419,31 @@ are used.
 
 ### 4.3 To the PTA chiplet: EIC requirements
 
+**Corrected 2026-10-03: version 0's rows add, and what "compounded" was the
+unit.** This section concluded from X1's joint runs that version 0's rows, each
+costing half a point or less alone, cost 11 to 13 points together — that
+"analog error does not add, it compounds" — and tightened every row about
+fourfold in response. The joint runs were not version 0's rows together. The
+harness's noise options are in LSB of whichever ADC a run configures. C1
+measured the two noise rows at an 8-bit ADC, and X1 ran them at version 0's
+6-bit ADC as the same numbers, which there is **four times the receiver noise
+and a quarter of the light**. grx930's `sim/pta_mnist.sh budget` reruns them in
+one unit (its `c930/doc/pta_error_model_design_note.md`, §5):
+
+| Setting | Accuracy | Loss |
+|---|---|---|
+| Version 0's five rows, one at a time, at the 8-bit ADC | 96.97 to 97.28 | 1.28 points summed |
+| All five at once, at that ADC | 96.04 | 1.38 |
+| All five at version 0's own 6-bit ADC, the same noise | 95.96 | 1.49, where the rows and the ADC's own 0.21 sum to 1.49 |
+| As X1 ran "v0 entire": receiver noise of 4 LSB of an 8-bit ADC, 0.75 photons per such LSB | 86.37 | 11.08 |
+| Version 1 as X1 ran it: 0.5 LSB, 15 photons | 97.20 | 0.25 |
+
+So on this network the rows **add**, to a tenth of a point, and version 0 is a
+budget: one that costs a point and a half before drift, and 2.6 after an hour
+of TFLT's. What follows is kept as it was written, with each claim that fell
+marked where it stands. The row-by-row prices that replace "fourfold" are at
+the end of the section.
+
 **Version 0** came from C1's sweep on the D3 network — a 784-100-10 MLP on
 MNIST, at 8-bit operands and 6-bit weights, 97.45% with nothing else impaired —
 in grx930's `c930/doc/pta_error_model_design_note.md` §5. Each row costs about
@@ -430,43 +461,52 @@ half a point or less **on its own**. The noise rows were measured with an
 | Crosstalk between neighbouring inputs | 10% | 0.16 |
 | Recalibration | about hourly at TFLT's drift fit; within minutes at TFLN's | TFLT's fit costs 0.46 points in an hour, TFLN's 0.96 in six minutes |
 
-**Version 1, from X1's joint runs** (2026-09-22), is what happens when they are
-not on their own. `sim/pta_mnist.sh joint` runs every impairment at once on the
-same five networks, each on its own seed:
+**Version 1, from X1's joint runs** (2026-09-22). `sim/pta_mnist.sh joint`
+runs every impairment at once on the same five networks, each on its own seed.
+The settings' names are as they were written; the last column, added with the
+correction, is what each one was in the unit the rows were measured in:
 
-| Setting | Mean | Loss |
-|---|---|---|
-| v0's converters alone: 5 activation bits, 6-bit ADC | 97.00 | 0.45 |
-| v0 entire, no drift | 86.37 | 11.08 |
-| v0 entire, an hour of TFLT drift | 84.61 | 12.84 |
-| v0 entire, six minutes of it | 85.97 | 11.48 |
-| v0's noise halved, v0's converters, an hour | 93.88 | 3.57 |
-| v0's noise, 6 activation bits and a 7-bit ADC, an hour | 93.39 | 4.06 |
-| Both — noise halved, converters widened — an hour | 96.04 | 1.41 |
-| Noise quartered, 6 and 7 bits, an hour | 96.64 | 0.81 |
-| The same, recalibrated every six minutes | 97.08 | 0.37 |
+| Setting | Mean | Loss | Receiver noise and photons, in LSB of an 8-bit ADC |
+|---|---|---|---|
+| v0's converters alone: 5 activation bits, 6-bit ADC | 97.00 | 0.45 | none |
+| v0 entire, no drift | 86.37 | 11.08 | 4, 0.75 — v0's rows are 1 and 3 |
+| v0 entire, an hour of TFLT drift | 84.61 | 12.84 | 4, 0.75 |
+| v0 entire, six minutes of it | 85.97 | 11.48 | 4, 0.75 |
+| v0's noise halved, v0's converters, an hour | 93.88 | 3.57 | 2, 2.5 |
+| v0's noise, 6 activation bits and a 7-bit ADC, an hour | 93.39 | 4.06 | 2, 1.5 |
+| Both — noise halved, converters widened — an hour | 96.04 | 1.41 | 1, 5 |
+| Noise quartered, 6 and 7 bits, an hour | 96.64 | 0.81 | 0.5, 15 |
+| The same, recalibrated every six minutes | 97.08 | 0.37 | 0.5, 15 |
 
-**Version 0 was never a budget.** Its items cost at most 0.45 points each, and
-about two points summed; together they cost 12.8. Analog error does not add, it
-compounds, and a network's slack is spent once. So the interface chip is held
-to this instead:
+No row of it is version 0. The nearest is "both", which has version 0's
+receiver noise exactly, with more light, half its programming error and half
+its crosstalk, at version 1's converters and after an hour of drift.
+
+~~**Version 0 was never a budget.**~~ *Withdrawn.* This paragraph said that
+version 0's items cost about two points summed and 12.8 together, that analog
+error does not add but compounds, and that a network's slack is spent once. The
+12.8 was four times the noise, and none of the three stands. The interface chip
+is still held to version 1 below, which is the set C3's and X3's measurements
+were made at — as one point on a priced menu, and no longer as the only set
+that works:
 
 | Parameter | v0, each alone | v1, all together |
 |---|---|---|
 | Activation DAC | 5 bits | 6 bits |
 | ADC | 6 bits | 7 bits |
 | Weight resolution | 6 bits | 6 bits, where the networks are trained. The DAC wants two bits below the code for trimming — measured worth 0.16 points, not the precondition X3 first called it ([`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) §8) |
-| Receiver noise | 1 LSB of an 8-bit ADC, rms | 0.25 LSB |
-| Light at each detector | 3 photons per ADC LSB | 30 |
+| Receiver noise | 1 LSB of an 8-bit ADC, rms | 0.5 LSB of an 8-bit ADC. X1 ran a quarter of its 7-bit ADC's LSB, and this cell read "0.25 LSB" until 2026-10-03 |
+| Light at each detector | 3 photons per LSB of an 8-bit ADC | 15 per such LSB, which is the 30 per 7-bit LSB that was run. Not a requirement in practice: see the end of the section |
 | Weight programming error | 4 LSB of an 8-bit weight, rms | 1 LSB |
 | Crosstalk between neighbouring inputs | 10% | 2% |
 | Recalibration | about hourly at TFLT's fit | hourly costs 0.81 points, six minutes 0.37 |
 
 v1 costs 0.81 points on the D3 network at hourly calibration, and 0.37 if the
 schedulers can recalibrate every six minutes — which is what C3 had to price.
-It is still one small network (§8), so the shape of this result — that error
-compounds, and that every allowance tightens about fourfold — travels further
-than its numbers do.
+It is still one small network (§8). This paragraph went on to say that the
+shape of the result — error compounds, every allowance tightens fourfold —
+would travel further than its numbers. It was the numbers that were wrong, and
+the shape went with them.
 
 *What the two versions are on a single GEMM, 2026-10-03.* The PTA plan's S2
 measured the error of one GEMM against the exact product, at these two sets of
@@ -483,9 +523,13 @@ product's RMS:
 | Crosstalk | 12.4% | 2.4% |
 | All together | 32.6%, 9.7 dB | 7.1%, 23.0 dB |
 
+*Read this with the correction at the head of the section.* Its "v0" column is
+X1's setting as it was run, four LSB of an 8-bit ADC and 0.75 photons, and not
+version 0's rows.
+
 Two things in it bear on this section. **On a GEMM the parts add**, in
-quadrature, to within 1%: the compounding above is in the network's accuracy, not
-in the tile's sums. And **the noise rows are in ADC LSB, which is not a fixed
+quadrature, to within 1%: the compounding above was not in the tile's sums, and
+has since turned out not to be in the network's accuracy either. And **the noise rows are in ADC LSB, which is not a fixed
 quantity**: v1's receiver noise is a quarter of v0's in LSB and an eighth in the
 product's units, because v1's ADC has another bit and so half the LSB. A receiver
 is designed to volts, so the row it is held to has to name the ADC it stands
@@ -542,6 +586,48 @@ it spans the pad field whatever its circuits need — 10 mm² at a 25 µm pitch,
 or finer at 5 V and 33 µm at 2 V. And the chip sits on the tile: its
 converters' power, unpriced above, is heat in the one place the weights are
 sensitive to it.
+
+*What each row is worth, 2026-10-03.* With the unit fixed the two versions are
+1.24 points apart on the D3 network, and grx930's budget run prices the six
+rows between them one at a time, from both ends:
+
+| Row | v0 → v1 | Buys, tightened from v0 | Costs, relaxed from v1 | What it costs to build |
+|---|---|---|---|---|
+| Activation DAC | 5 → 6 bits | 0.10 | 0.10 | A bit on every input's DAC |
+| ADC | 6 → 7 bits | 0.09 | 0.12 | A bit on every column's converter, at the shot rate. Unpriced, and it sits on the tile (§8, question 1) |
+| Receiver noise | 1 → 0.5 LSB of an 8-bit ADC | 0.18 | 0.19 | **Twice the laser**: 0.33–3.3 W in place of 0.16–1.6 (B5) |
+| Light at each detector | 3 → 15 photons per such LSB | 0.34 | 0.34 | Nothing: see below |
+| Weight programming error | 4 → 1 LSB of an 8-bit weight | 0.42 | 0.33 | The weight DAC's precision, or C3's trim |
+| Crosstalk | 10% → 2% | 0.08 | 0.16 | Layout on the photonic die |
+| All six | | 1.21 | 1.24 | |
+
+Three things in it.
+
+- **The rows add, so the budget is a menu.** Two settings were predicted by
+  adding these before they were run, and came in at 96.97 for 96.98 and 96.65
+  for 96.72. A row can be bought or left at its own price. §7's "stated
+  jointly, never item by item" was the response to an effect that was not there.
+- **The light row is not a requirement.** By B5's own arithmetic the receiver
+  row asks for over a thousand times the light the photon row does, so no tile
+  that meets the first is anywhere near the second: at B5's receiver an 8-bit
+  LSB is some 6,000 electrons a shot under version 0 and twice that under
+  version 1. The 0.34 points this row costs at 3 photons are points a real tile
+  does not lose. With no shot noise at all version 0 is 96.30 and version 1 is
+  97.29. The row can go, and with it the largest term in the single-GEMM table
+  above.
+- **Crosstalk is cheap, and it is not noise.** Ten per cent of it puts 26% of
+  error on the network's outputs and costs 0.16 points, where thermal noise of
+  that size costs about three. Most of it is a gain, which an argmax does not
+  see. So an error fraction overstates it, and the single-GEMM table's 12.4%
+  for crosstalk is not comparable with the rows beside it.
+
+What this leaves to decide is which rows to buy. Version 1 buys all six for a
+quarter of a point. The two whose cost this plan can name are the receiver
+noise, which is the laser, and the ADC's bit, which is power on top of the
+tile; each is worth under a fifth of a point here. That is one network's
+answer (§8, question 7). A deeper network is where a layer's error really is
+the next layer's input many times over, and where "compounds" could yet be
+true.
 
 ### 4.4 To the PTA program
 
@@ -620,7 +706,7 @@ Each lands when its decision settles, in its own document's repository.
 |---|---|---|
 | UCIe and PCIe 5.0-class PHY IP: which nodes, availability, license cost | B6, L1–L3 | Source it early, and prototype on FPGA hard IP first |
 | Advanced-packaging capacity and cost | B2, P3 | Settled for rev A by B2: organic substrates, GDDR6 and DDR5, with HBM left to the Phase 2 module |
-| Analog error compounds: v0's per-item allowances cost 12.8 points together, not the two they sum to | X1, the chiplet | v1's budget (§4.3), and every later specification stated jointly, never item by item |
+| A requirement in LSB of an ADC it does not name. X1's joint runs carried C1's noise rows from an 8-bit ADC to a 6-bit one as the same numbers, which is four times the noise, and until 2026-10-03 this row read "analog error compounds" on the strength of it | X1, B5, and every figure sized from §4.3 | Corrected (§4.3). A noise row names an 8-bit ADC wherever it appears, and grx930's harness reports every run in that unit beside the one it was asked in |
 | Drift needs calibrating about every quarter hour at TFLT's fit to hold the gate's margin, not hourly as C1's sweep suggested | C3, the schedulers | C3(a) measured the hold curve ([`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) §8); the shadow scheduler has more idle windows to hide in than the c930 did (X2) |
 | TFLT dies not available in the volume or quality needed | B5, Track X | TFLN as the fallback, with calibration sized to its drift |
 | RISC-V support in Linux's CXL subsystem | L4, S1 | Firmware planned alongside L1, not after it |
@@ -697,17 +783,19 @@ among the bounds that bind.
 
    | Bound | What it allows | Does it bind |
    |---|---|---|
-   | The modulator, settling to half an LSB | 51 GS/s at the 45 GHz TFLN anchor | Never. The receiver allows under an eighth of it at any laser B5 planned on |
+   | The modulator, settling to half an LSB | 51 GS/s at the 45 GHz TFLN anchor | Never. The receiver allows under half of it at any laser B5 planned on |
    | The feed, weights re-sent with each batch | 0.22 GS/s a module: 1.1 at X2's five, 6.6 at the thirty where B8 reopens | Only with loss near 10 dB and the laser at the top of B5's range |
-   | The feed, weights resident on the interface chip | 3.6 GS/s a module, and it is the outbound direction that limits | No — if the chip has the 16.8 MB a layer like this one needs. That is a digital store, not the DAC-held residency B4 lists, and nothing has sized it |
-   | The receiver | 1 GS/s needs 0.66 W of laser behind 10 dB of loss and 6.6 W behind 20 | Yes, in every case except weights re-sent with the loss near 10 dB and the laser at the top of B5's range |
+   | The feed, weights resident on the interface chip | 3.6 GS/s a module, and it is the outbound direction that limits | Hardly: only at the top of B5's laser range with loss near 10 dB, and then only under the kinder noise law. And it needs the 16.8 MB a layer like this one holds, which is a digital store, not the DAC-held residency B4 lists, and nothing has sized it |
+   | The receiver | 1 GS/s needs 0.33 W of laser behind 10 dB of loss and 3.3 W behind 20 | Yes, in every case except the laser at the top of B5's range with the loss near 10 dB |
 
    So the question has changed shape. It is no longer how fast the tile is but
    **how much light reaches each detector**. With the largest laser B5 planned
    on, 1.6 W, X2's 1 GS/s holds only if laser-to-detector loss stays under
-   **13.9 dB**, and B5's own range runs to 20. Past that each 3 dB costs between
+   **16.9 dB**, and B5's own range runs to 20. Past that each 3 dB costs between
    1.6× and 4× in rate, depending on a receiver nobody has designed: at 20 dB
-   the same laser gives 0.06 to 0.4 GS/s. The number to ask a foundry for is the
+   the same laser gives 0.24 to 0.62 GS/s. (These read 13.9 dB, 0.06 to 0.4,
+   an eighth and 0.66–6.6 W until version 1's receiver noise was restated in the
+   unit it was run in; §4.3.) The number to ask a foundry for is the
    loss budget, and the number to measure is the receiver's noise, which B5
    assumed at 1 µA and every figure here is linear in. Geometry is still open
    and moves this directly — a 256 × 128 tile has twice the detectors and wants
@@ -754,7 +842,7 @@ among the bounds that bind.
 
    - **The loss budget has its first sourced term.** The tile's light crosses
      one facet on the way in and, with the detectors on the die, none on the way
-     out. Under 2 dB of the 13.9 dB ceiling above leaves about 12 for the fiber,
+     out. Under 2 dB of the 16.9 dB ceiling above leaves about 15 for the fiber,
      the excess loss of the split to the rows, the modulators and the tile. What
      the measurement supports is that molding a die into a package cost its
      coupler nothing. It is a silicon spot-size converter: it is not what a TFLT
@@ -896,7 +984,7 @@ among the bounds that bind.
    | The lines between the dies | 16,704. Stacked, a pad each: 10.4 to 167 mm². Side by side, 251 mm of shared edge at 15 µm line and space | B4 and B5 together |
    | The facet | One fiber, or 16 at sixteen lines each, which is 4 mm | Does not bind |
    | The link | A UCIe-S module's PHY is 571.5 × 1,540 µm: 4.4 mm² and 2.9 mm of edge for X2's five. Brought down through the mold at 300 µm, 33 mm² | The package, not the PHY |
-   | The light, as heat | 0.19 W/mm² at most, were all of a 20 dB laser absorbed on the densest die | Does not bind |
+   | The light, as heat | 0.09 W/mm² at most, were all of a 20 dB laser absorbed on the densest die | Does not bind |
 
    Five things follow. The first two change what this section said a day ago.
 
@@ -948,8 +1036,12 @@ among the bounds that bind.
    one; the part, its CXL IP and whether that IP can act as a host rather than
    a device are P2's first question.
 7. **Does X1's budget hold on a second workload?** It is one 784-100-10 MLP.
-   That error compounds is a property of analog sums, not of this network, but
-   the numbers in §4.3 belong to it until something else is run.
+   This question used to say that compounding was a property of analog sums and
+   not of this network. It was a property of a unit (§4.3). What the corrected
+   runs show is that on this network the rows **add**, and that is the network's
+   property and not a law: with one hidden layer a layer's error is the next
+   layer's input once. The numbers in §4.3, and the adding, belong to this
+   network until something deeper is run.
 8. **What kind of light source does the tile need?** Asked on 2026-10-03, about a
    quantum dot laser, and the answer turned out to rest on something this plan
    never decided. [`pta_shot_rate.py`](pta_shot_rate.py) §6 writes down what any
@@ -957,8 +1049,8 @@ among the bounds that bind.
 
    | | What the tile asks | Where it comes from |
    |---|---|---|
-   | Power | 0.66–6.6 W at 1 GS/s for 256 × 64, as one laser or as 2.6–25.6 mW from each of 256 emitters | B5's method at §4.3's version 1 |
-   | Noise | Intensity noise within about −150 dB/Hz at 1 GS/s, ten tighter a decade of rate | The receiver's allowance, applied to the source. **Assumed**: §4.3 has no row for it |
+   | Power | 0.33–3.3 W at 1 GS/s for 256 × 64, as one laser or as 1.3–12.8 mW from each of 256 emitters | B5's method at §4.3's version 1 |
+   | Noise | Intensity noise within about −144 dB/Hz at 1 GS/s, ten tighter a decade of rate | The receiver's allowance, applied to the source. **Assumed**: §4.3 has no row for it |
    | Wavelength | 18% more light at 1310 nm than at 1550; within 2.4 nm of 1550 if the all-optical branch reopens | The detector's quantum efficiency; the TPA-QCN device's 12 nm of phase matching |
    | Kind | A line an input if a column sums powers; one coherent line if it sums fields | The tile's topology, below |
 
@@ -980,8 +1072,9 @@ among the bounds that bind.
    the signal from outside the tile. B5's placement, off the package on one
    fiber, was decided for one laser. And an emitter an input row is the one
    arrangement that turns B5's watt-class laser into milliwatt parts, at the same
-   total light: 10 mW a row stands 15.9 dB of loss where 1.6 W in one laser stands
-   13.9.
+   total light: 10 mW a row stands 18.9 dB of loss where 1.6 W in one laser stands
+   16.9. (The power and noise rows above were twice and 6 dB tighter, and these
+   two ceilings 3 dB lower, until §4.3's correction.)
 
    *Two figures on that device question, 2026-10-03,* from the sources question
    1 now lists. Neither is a measurement of this tile. The Pittsburgh
