@@ -593,7 +593,7 @@ not from a design. For 256 × 64 at 1 GS/s under version 1:
 | On the interface chip | Watts | From |
 |---|---|---|
 | 64 receivers | 0.26 | A measured 40 nm amplifier, 4.1 mW |
-| 64 ADCs at 7 bits | 0.14–0.33 | The survey of published converters, near 1 GS/s: 17 to 40 fJ a conversion step (below) |
+| 64 ADCs at 7 bits | 0.07–0.20 | The survey of published converters: the best and the fifth-best of the 70 that do 7 bits at 1 GS/s or faster, 1.1 to 3.1 pJ a sample (below) |
 | Driving 256 input modulators | 0.08–1.5 at a 2 V swing, 0.21–3.8 at 5 V | TFLT's 1.96 V·cm, and an electrode capacitance that is **assumed** and swept |
 | Rewriting 16,384 weights a batch | 0.002–0.32 | A cell capacitance that is **assumed** and swept |
 | The link, weights re-sent with each batch | 1.8–3.1 | UCIe's own target of 0.75–1.25 pJ a bit, both ends |
@@ -602,8 +602,11 @@ not from a design. For 256 × 64 at 1 GS/s under version 1:
 
 Four things in it.
 
-- **The converters are 0.4 to 0.6 W**, and the ADC's seventh bit is as much
-  again as the first six.
+- **The converters are 0.33 to 0.46 W, and most of that is the receivers.**
+  The ADCs are priced from every published converter that can do the job and
+  the receiver from one paper, so the larger figure is now the less well
+  founded. The ADC's seventh bit is nearly free at the head of the field and
+  doubles the ADCs behind it (below).
 - **Two things can each cost more than all the converters.** The link, if the
   weights are re-sent with every batch, and the inputs' drive at a high swing.
   Residency is worth nearly fourteen times the link's power, as it was worth sixteen
@@ -613,7 +616,7 @@ Four things in it.
   as its swing rises and draws more by the same factor. The floorplan's "a 1 V
   chip does not fit" has its other half here: a 5 V chip pays five times a 1 V
   one's drive.
-- **With the laser it comes to 43 to 530 fJ a multiply-accumulate.** For
+- **With the laser it comes to 39 to 520 fJ a multiply-accumulate.** For
   comparison only: a microring design's estimate of itself at four bits is
   28 fJ, and the same paper puts a 7 nm digital part at 1,140 fJ at eight (T.-C.
   Hsueh, Y. Fainman and B. Lin, arXiv:2402.08192). Neither is a measurement of
@@ -621,34 +624,66 @@ Four things in it.
 
 *The ADCs, widened to the survey the same day.* The table first priced them
 from three converters read one at a time from their papers, at 34 to 72 fJ a
-step: 0.28–0.59 W. [`pta_adc_survey.py`](pta_adc_survey.py) replaces the three
-with B. Murmann's ADC Performance Survey, every converter published at ISSCC
-and the VLSI symposium from 1997 to 2021, as his ISSCC 2022 short course plots
-it. The plots are vector drawings, so the points were read from the file and
-not by eye: three slides show the same converters on different axes, and 546 of
-them agree across all three. Two of those are parts the first pricing already
-held, and the plots return what their papers say — 3.06 mW for Kull's 3.1, and
-2.60 for Verbruggen's 2.6.
+step: 0.28–0.59 W. None of the three reaches 7 effective bits.
+[`pta_adc_survey.py`](pta_adc_survey.py) replaces them with B. Murmann's ADC
+Performance Survey, every converter published at ISSCC and the VLSI Symposium
+from 1997 to 2026: 763 operating points, from the spreadsheet its author keeps
+(github.com/bmurmann/ADC-survey).
 
-| Near | Published parts, 30–50 dB | Best | The leading quarter | 64 converters at 7 bits |
-|---|---|---|---|---|
-| 0.1 GS/s | 16 | 3.7 fJ a step | 92 | 3–75 mW |
-| 1 GS/s | 34 | 16.6 | 40 | 0.14–0.33 W |
-| 10 GS/s | 20 | 26.7 | 62 | 2.2–5.0 W |
+A column needs a converter of at least so many effective bits, at the shot rate
+or faster. Any published part that does both can do the job and no other can,
+so the price is taken from those parts, by the energy each spends on a sample:
 
-Three things in it. **Version 1's converter exists as a part**: the best near
-1 GS/s is 45.5 dB — 7.3 effective bits — at 1.00 GS/s for 2.55 mW. **The first
-pricing was twice too dear**, because the best published converter is twice as
-good as the best of the three. And **the shot rate is paid for in converters
-faster than it is earned**: ten times the rate is fifteen to sixteen times the
-ADCs' power, so at 10 GS/s they alone are 2 to 5 W. The modulator allowed 51
-GS/s and the receiver under half of that (§8, question 1). Neither of those
-bounds says what the rate costs, and this one does.
+| 64 converters of | at | Published parts that can | Best, a sample | Fifth-best | The 64 |
+|---|---|---|---|---|---|
+| 6 bits (version 0) | 1 GS/s | 89 | 1.06 pJ | 1.48 | 68–95 mW |
+| 7 bits (version 1) | 0.1 GS/s | 193 | 1.11 | 2.42 | 7–15 mW |
+| 7 bits | 1 GS/s | 70 | 1.11 | 3.14 | **71–201 mW** |
+| 7 bits | 10 GS/s | 11 | 5.89 | 35.0 | 3.8–22 W |
+| 8 bits | 1 GS/s | 47 | 4.19 | 5.35 | 0.27–0.34 W |
 
-The slides' plots carry no names, so a row of that script's table is a
-converter and not a citation, and they carry no year: the median near 1 GS/s
-is 280 fJ and is a history of the field, which is why only the leading quarter
-is used.
+A part faster than the shot rate is priced at the shot rate, which **assumes**
+its power follows its clock down. Five is the number of points the survey draws
+its own envelope through.
+
+Four things in it.
+
+- **Version 1's converter exists as a part.** 45.5 dB — 7.3 effective bits —
+  at exactly 1.00 GS/s for 2.55 mW as measured (D.-R. Oh et al., VLSI 2020,
+  28 nm): inside the range above, with nothing assumed. Three cheaper ones
+  have been published since, the best of them 3.0 mW at 2.7 GS/s (J.-C. Wang
+  and T.-H. Kuo, ISSCC 2023, 28 nm).
+- **The seventh bit is nearly free at the head of the field, and doubles the
+  ADCs behind it**: 3 to 106 mW for the 64. The cheapest converters at this
+  rate are 8-bit designs that reach 7, and the cheapest 6-bit part is within
+  5% of them. An eighth bit is not free anywhere: 0.14 to 0.20 W more.
+- **The ADCs follow the shot rate to 2.7 GS/s and not past 5.** The best part
+  is the same one up to 2.7 GS/s, and the energy a sample is within half as
+  much again to 4.8. At 10 GS/s it is five times as much, which is over fifty
+  times the power for ten times the rate: the 64 would be 4 to 22 W, and only
+  eleven published converters do 7 bits at 10 GS/s at all. The modulator
+  allowed 51 GS/s and the receiver under half of that (§8, question 1).
+  Neither of those bounds says what the rate costs, and this one does.
+- **The receivers are now the larger half of the converters**: 0.26 W from one
+  paper's amplifier, against ADCs priced from seventy.
+
+The survey has been read here twice. Before the spreadsheet was to hand it was
+read from the plots of its author's ISSCC 2022 short course, whose markers are
+vector drawings: 546 converters matched across three plots. Held to the
+spreadsheet, 541 are rows of it, to 0.04 dB and 0.1% in power, and the other
+five are chance agreements of three different parts' markers, none of them in
+the tile's corner. The pricing that reading gave does not stand, all the same.
+It said 0.14–0.33 W, a seventh bit as dear as the first six, and fifteen to
+sixteen times the power for ten times the rate. The plots stop at 2021, and
+three of the four cheapest 7-bit converters are later. The least efficient
+parts were off one plot's axis, so its "leading quarter" was a count of what
+was missing: 40 fJ a step, where the whole record says 86. And it priced by
+the parts *near* a rate, scaled to seven bits by a figure of merit — where a
+4.8 GS/s part is near 10 GS/s and cannot sample at it.
+
+The power is each paper's own, which usually leaves out the reference, the
+clock and whatever drives the input. These are conference papers, each the
+best its authors could show, and not parts that can be bought.
 
 *What the floorplan asks, 2026-10-03.* Two things neither table has a row for
 ([`pta_floorplan.py`](pta_floorplan.py)). **The swing.** On TFLT a modulator's
@@ -669,7 +704,7 @@ rows between them one at a time, from both ends:
 | Row | v0 → v1 | Buys, tightened from v0 | Costs, relaxed from v1 | What it costs to build |
 |---|---|---|---|---|
 | Activation DAC | 5 → 6 bits | 0.10 | 0.10 | A bit on every input's DAC |
-| ADC | 6 → 7 bits | 0.09 | 0.12 | A bit on every column's converter, at the shot rate: **0.07–0.17 W** for the 64, on the tile (priced above from the survey, 2026-10-04) |
+| ADC | 6 → 7 bits | 0.09 | 0.12 | A bit on every column's converter, at the shot rate: **3 to 106 mW** for the 64, on the tile. Nearly nothing if the converter is one of the best published, and as much again as the six if it is not (priced above from the survey, 2026-10-04) |
 | Receiver noise | 1 → 0.5 LSB of an 8-bit ADC | 0.18 | 0.19 | **Twice the laser**: 0.33–3.3 W in place of 0.16–1.6 at the receiver B5 assumed, 0.09–0.88 in place of 0.04–0.44 at a measured one (B5) |
 | Light at each detector | 3 → 15 photons per such LSB | 0.34 | 0.34 | Nothing: see below |
 | Weight programming error | 4 → 1 LSB of an 8-bit weight | 0.42 | 0.33 | The weight DAC's precision, or C3's trim |
@@ -753,6 +788,13 @@ relaxed for the sake of the laser, or of the converters that sit on the tile,
 those two are the rows at every depth tried, and the two DACs are the rows to
 leave alone. It is still fully connected layers on MNIST, and networks trained
 without the impairments in the loop (§8, question 7).
+
+*The ADC's row, since the survey (2026-10-04).* Relaxing it saves 3 to 106 mW,
+and the low end is the published state of the art: the cheapest converters that
+sample this fast already have the seventh bit. So of the two rows, relaxing the
+receiver's saves 0.04 to 0.44 W of laser at a measured receiver whatever
+converter is built. Relaxing the ADC's saves 0.1 W if the converter built is
+the fifth-best published, and next to nothing if it is the best.
 
 ### 4.4 To the PTA program
 
@@ -945,9 +987,11 @@ among the bounds that bind.
    requirement on the interface chip rather than an unknown: two weight banks
    and a write path `k×n / batch` cells wide (§4.3). This paragraph ended
    "still not priced is the converters' power, which needs a device figure"
-   until 2026-10-04. It has been priced from published parts, in §4.3: 0.4 to
-   0.6 W at 1 GS/s, and not the largest thing on the chip. At 10 GS/s it would
-   be: the same converters are 2 to 5 W there.
+   until 2026-10-04. It has been priced from published parts, in §4.3: 0.33 to
+   0.46 W at 1 GS/s, and not the largest thing on the chip. The ADCs' share of
+   it follows the shot rate to 2.7 GS/s and stops following it at about 5: at
+   10 GS/s they alone are 4 to 22 W, where the drive and the link only scale
+   with the rate.
 
    **A package with millimeters on it, 2026-10-03.** Nothing above has a length
    in it. One published package does: X. Li et al., "1.6 Tbps FOWLP-Based
