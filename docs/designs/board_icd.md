@@ -197,7 +197,7 @@ rail is large and what makes it so, not what regulator it needs.
 | 100 MHz reference | The PCIe 5.0 PHYs at both ends of link 1 | PCIe. Whether the two packages share it or run separately, with the spread-spectrum arrangement that implies, is **open** |
 | Forwarded, inside link 2 | The UCIe module | UCIe, which also fixes how many lanes carry clock, valid and sideband — **not read out here** |
 | Memory clocks | Links 6 and 7 | Each die's PLL from a board reference; frequencies **open** with the parts |
-| Shot clock | The tile's shots, and so the ADCs | The chiplet. X2 sized the link at 0.1 and 1 GS/s as candidates; the rate is **open** (§7) |
+| Shot clock | The tile's shots, and so the ADCs | The chiplet. **1 GHz**: the working shot rate, 1 GS/s (the board plan's B11). X2 sized the link at 0.1 and 1 GS/s as candidates |
 | Controller | The board controller | Its own oscillator |
 
 ---
@@ -242,13 +242,15 @@ board plan's §8 holds the ones that are questions rather than gaps.
 
 1. **The chiplet team and the board team are not named.** Every link with an
    *open* owner in §2 waits on that.
-2. ~~**The chiplet's geometry**~~ **and shot rate** — inputs, outputs, GS/s —
+2. ~~**The chiplet's geometry and shot rate**~~ — inputs, outputs, GS/s —
    which set link 2's module count, link 3's line count, link 4's laser power
    and the shot clock. Board plan §8, question 1. *The geometry was settled as a
    working one on 2026-10-05:* 256 inputs by 64 outputs, the board plan's B10,
-   and §2's rows for links 2 and 3 now carry its counts. The shot rate is still
-   open, and with it the shot clock and how far up its range link 4's laser has
-   to be.
+   and §2's rows for links 2 and 3 now carry its counts. *The shot rate was
+   settled as a working one the same day:* 1 GS/s, the board plan's B11, so the
+   shot clock in §4 is 1 GHz and link 4's "for scale" figures in §2 are at the
+   working rate. How far up its range link 4's laser has to be is still the
+   loss budget's to say.
    **And the kind of source link 4 carries** — one line or one an input — which
    follows from how a column sums. Board plan §8, question 8.
 3. **Part selection** for DDR5, GDDR6, the controller, the laser module and the
@@ -279,6 +281,6 @@ P0 asks that every link have an owner on each side and every number a source.
   and the telemetry each party reads.
 
 What this document cannot close is §7. P1 and part selection close most of it;
-the chiplet's shot rate and its topology close the rest — the topology because
-it decides what link 4 carries. Its geometry was the third of those and is a
-working one since the board plan's B10.
+the chiplet's topology closes the rest, because it decides what link 4
+carries. Its geometry and its shot rate were the other two of those, and are
+working ones since the board plan's B10 and B11.

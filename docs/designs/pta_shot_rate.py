@@ -135,7 +135,8 @@ PM_HALF_ARG = 1.3915574     # sinc^2(x) = 1/2 at this x; its FWHM is 2.783
 
 # ---- X2's working point ---------------------------------------------------
 X2_TILE = (256, 64)
-X2_FS = 1e9                 # the shot rate X2's tables are quoted at
+X2_FS = 1e9                 # the shot rate X2's tables are quoted at, and since
+                            # 2026-10-05 the working rate: the board plan's B11
 X2_MODULES = 5              # what its 256x64 tile needs at 1 GS/s, batch 64
 B8_FLIP_MODULES = 30        # where B8 says its own decision reopens
 

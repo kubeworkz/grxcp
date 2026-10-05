@@ -362,12 +362,14 @@ it to the twin's.
 
 ## 7. Open
 
-1. ~~**The geometry**~~ **and shot rate** that `PTA_CAPS0` and `PTA_CAPS2`
+1. ~~**The geometry and shot rate**~~ that `PTA_CAPS0` and `PTA_CAPS2`
    report. Board plan §8, question 1. *The geometry is a working one since
    2026-10-05:* 256 rows and 64 columns, the board plan's B10, so `PTA_CAPS0`
    reads those on a chiplet built to the plan. `DIN_W` and `ACC_W` in the same
-   register are not part of that decision, and the shot rate in `PTA_CAPS2` is
-   still open.
+   register are not part of that decision. *The shot rate is a working one
+   since the same day:* 1 GS/s, the board plan's B11, so `PTA_CAPS2[15:0]`
+   reads 1,000 on such a chiplet. It still reads zero on an emulated tile (§2),
+   and the twin still has no rate of its own.
 2. **Whether `PTA_TW` and `PTA_TS` mean anything on silicon**, or stay the
    twin's.
 3. **The chiplet's command queue depth**, which the GPU's dispatcher has to

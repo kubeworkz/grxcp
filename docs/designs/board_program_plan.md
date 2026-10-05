@@ -10,10 +10,10 @@
 
 **Status: PLAN, drafted 2026-09-21. All seven decisions of §2 are settled, each
 as recommended: B1 and B3 that day, and B2, B4, B5, B6 and B7 on 2026-09-22.
-Three more were raised and settled later and are in §7: B8, B9, and on
-2026-10-05 B10, the chiplet's working geometry, 256 × 64. A reading of
-published rings the same day puts that tile past a standard die. Asked, the
-program let B10 stand.
+Four more were raised and settled later and are in §7: B8, B9, and on
+2026-10-05 B10, the chiplet's working geometry, 256 × 64, and B11, its working
+shot rate, 1 GS/s. A reading of published rings the same day puts that tile
+past a standard die. Asked, the program let B10 stand.
 X2 has made its predictions (§3.3), X1 its budget (§4.3), and P0, X3 and X4
 are drafted as [`board_icd.md`](board_icd.md),
 [`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) and
@@ -1404,8 +1404,8 @@ tile a MAC.
 
 **What it does not settle.** The shot rate, the other half of the question,
 which stays at X2's 1 GS/s as a planning figure (and has since been put in one
-table, [`pta_rate.py`](pta_rate.py): §8, question 1). The kind of light source
-(§8, question 8). And whether a weight cell is resonant, which decides whether a tile
+table, [`pta_rate.py`](pta_rate.py), and settled there: B11). The kind of light
+source (§8, question 8). And whether a weight cell is resonant, which decides whether a tile
 this size fits a die at all (§8, question 1, the floorplan).
 
 *The last of those was worked the same day, and it bears on this decision*
@@ -1437,14 +1437,66 @@ light 64 columns; or a weight cell that is not resonant. *A fourth, since
 [`pta_ring.py`](pta_ring.py):* a photonic die held to what a standard packaging
 service takes. *Needed by:* P1, L3, X2's module count and S3.
 
+**B11 — The chiplet's working shot rate: 1 GS/s.** *Settled 2026-10-05.*
+
+B10 fixed the tile and left the rate at X2's 1 GS/s "as a planning figure".
+[`pta_rate.py`](pta_rate.py) asked six models at five rates (§8, question 1).
+It leaves three candidates, 0.5, 1 and 2 GS/s, and it found a bound nobody had
+priced: a weight ring passes a level no faster than its line is wide, so the
+rate, the voltage a weight needs, how still its ring has to hold and how many
+lines share a bus are one trade.
+
+*Recommended, and settled as recommended:* **1 GS/s is the working shot rate.**
+It is the fastest of the three that both measured parts stand behind: the one
+receiver with a measurement settles a tile up to 1.7 GS/s, and the converter
+that sets the best price runs at 2.7. Most of what a faster tile saves a MAC is
+had by it. And it is the rate every model here was already run at.
+
+What it fixes, each from a model and none from a device:
+
+| | At 1 GS/s | From |
+|---|---|---|
+| Shot clock | 1 GHz. `PTA_CAPS2[15:0]` reads 1,000 | P0, X4 |
+| Converters | 64 GS/s of 7-bit conversion in all. 70 published parts can do a column's, at 1.11 to 3.14 pJ a sample | The ADC survey |
+| Receivers | 0.88 GHz of bandwidth a column. The one measured has 1.5 | Published |
+| Link 2 | Five modules with the weights re-sent, one with them held on the interface chip: B10's count, now at a settled rate | X2 |
+| Interface chip | 0.55 to 7.6 W | Published parts |
+| Laser | 0.09 to 0.88 W at the measured receiver, behind 10 to 20 dB of loss | B5's method |
+| A MAC, every cell in use | 39 to 518 fJ | The two rows above over the rate |
+| The weight path | 256 G cells a second, 256 cells a beat, each DAC rewritten at 15.6 MHz | §4.3 |
+| **The weight ring** | A Q of 97,000 at most and a swing of 2.3 V at least. A weight's LSB is 0.19 pm of resonance | Derived, [`pta_rate.py`](pta_rate.py) |
+| Buses | Three or more for 256 inputs: 102 lines a bus at most, on the smallest ring read | Derived |
+| The source's intensity noise | −144 dB/Hz at most | The receiver's allowance, applied to the source: assumed |
+
+**What it costs** over 0.5 GS/s: five link modules for three, 0.15 to 3.7 W on
+the interface chip, 0.03 to 0.26 W of laser, a weight swing of 2.3 V where
+1.1 would do, and three buses for two. **What it buys:** half the time on a
+wide layer, a MAC at 39 to 518 fJ where 0.5 GS/s has 57 to 554, and a ring half
+as hard to hold still.
+
+**What it closes.** Of the floorplan's three swings, a weight ring carries this
+rate only at 5 V. The 1 V and 2 V rows stay open to the inputs, which are
+modulators and not rings.
+
+**What it does not settle.** The kind of light source (§8, question 8), which
+this narrows: 102 lines a bus or fewer, on three buses or more. Whether the
+tile is a ring bank at all. And whose ring: every ring figure here is derived
+from five papers and one tuning efficiency.
+
+**It is a working rate and not a clock specification.** Four things would
+reopen it: a weight driver that cannot swing 2.3 V; a ring whose measured
+tuning is far from the 7.0 pm/V assumed, which moves that swing in inverse
+proportion; a link held under five modules with no store on the interface chip
+for a layer's weights; or a loss budget past 20 dB behind a laser under 0.88 W.
+*Needed by:* P0's shot clock, X4's `PTA_CAPS2`, L3, X2's module count and S3.
+
 ---
 
 ## 8. Open questions
 
-1. **How big is the PTA chiplet, and how fast?** *The first half was settled on
-   2026-10-05: B10, 256 × 64 as the working geometry (§7). The second half, the
-   shot rate, is open, and is one table in the last block of this question.
-   What follows is how the question was worked, and reads as it was written.* Its inputs, outputs and
+1. **How big is the PTA chiplet, and how fast?** *Both halves were settled on
+   2026-10-05, as working figures: B10, 256 × 64, and B11, 1 GS/s (§7). What
+   follows is how the question was worked, and reads as it was written.* Its inputs, outputs and
    **optical** shot rate set X2, the laser (B5) and the EIC's area. Nothing here
    fixes them, and X2 sweeps candidate geometries rather than claiming one
    because of it. The *link's* signalling is no longer part of this question:
@@ -1901,6 +1953,7 @@ service takes. *Needed by:* P1, L3, X2's module count and S3.
      0.5 GS/s takes three modules for five and lets a ring swing on 1.1 V, for
      twice the time and a ring twice as hard to hold. 2 GS/s halves the time,
      for twice the modules, six buses and a receiver nobody has measured.
+     *Answered the same day: 1 GS/s, as the working rate (B11, §7).*
 
    It does not weigh a watt against a microsecond, and it does not choose: that
    is the program's. Every ring figure rests on [`pta_ring.py`](pta_ring.py)'s

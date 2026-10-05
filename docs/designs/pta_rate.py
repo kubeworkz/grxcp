@@ -68,6 +68,9 @@ There is no chiplet, and none of this is a measurement of one.
 WHAT IT DOES NOT DO.  It does not weigh the rows against each other, and it
 does not choose.  It says what each rate asks for and what it buys.
 
+THE CHOICE WAS MADE ON 2026-10-05: 1 GS/s is the working shot rate, the plan's
+B11.  This file is what it was made from, and is kept as it was run.
+
 Standard library only.  Run:  python3 docs/designs/pta_rate.py
 """
 import math
@@ -481,6 +484,18 @@ def checks():
     assert -(-K // ring.lines_a_bus(ring.K30["fsr_nm"], qb, ring.XTALK["v1"])) == 2
     assert buses(WORKING) == 3 and -(-K // ring.lines_a_bus(ring.K30["fsr_nm"], q5, ring.XTALK["v1"])) == 6
     assert ring_rate(q5) > WORKING
+
+    # 8. B11's own figures: what the working rate costs over half of it.
+    half = RATES[1]
+    dc = [a - b for a, b in zip(chip_w(WORKING), chip_w(half))]
+    dl = [a - b for a, b in zip(laser_w(WORKING), laser_w(half))]
+    assert [round(x, 2) for x in dc] == [0.15, 3.69] and [round(x, 2) for x in dl] == [0.03, 0.26]
+    assert (modules(WORKING), modules(half)) == (5, 3) and (buses(WORKING), buses(half)) == (3, 2)
+    assert abs(swing_floor_v(WORKING) / swing_floor_v(half) - 2.0) < 1e-9
+    assert [round(x) for x in fj_mac(half)] == [57, 554] and [round(x) for x in fj_mac(WORKING)] == [39, 518]
+    assert abs(shot.weight_updates_per_s(K, N, BATCH, WORKING) - 256e9) < 1 and WORKING / BATCH == 15.625e6
+    assert shot.per_beat_two_banks(K, N, BATCH) == 256 and N * WORKING == 64e9
+    assert adc_parts(WORKING) == 70 and abs(adc_j(WORKING)[1] * 1e12 - 3.14) < 0.005
 
     print()
     print("All checks pass.")
