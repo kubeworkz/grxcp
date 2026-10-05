@@ -41,6 +41,15 @@ less from being large, and nothing measured says how much less. So this
 document's intervals are not relaxed. What changes is what they are: sized on
 the worst tile there is, and on the safe side for any other.
 
+*And they are a modulator's, 2026-10-05.* The drift fits behind every interval
+here are a Mach-Zehnder's bias drifting (grx930's design note, §7). At the
+working geometry the weight cells are rings (the board plan's B10 and §8,
+question 1), and a ring turns the same change of index into a weight error in
+proportion to its Q: a weight's LSB is 0.42 pm of resonance on a ring that
+needs 5 V and 0.084 on one that needs 1 V
+([`pta_ring.py`](pta_ring.py)). Nothing has refitted drift for a ring. Until
+something does, these intervals describe a tile of modulators.
+
 So the question is not whether to calibrate but how often, how long it takes,
 and what it can actually undo.
 

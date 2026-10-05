@@ -27,6 +27,11 @@ WHAT KIND OF NUMBER EACH COLUMN IS, because they differ:
                     for another topology, with a 5 V Mach-Zehnder a row.  Not a
                     layout.  A non-resonant tile of any candidate past 64 x 8
                     does not fit a die at all (pta_floorplan.py section 2).
+                    AND TOO SMALL: pta_ring.py has since read published rings,
+                    and at the smallest of them a 256 x 64 tile is 124 mm2
+                    where this column has 39.7.  The column is kept as it was
+                    run, and "fits a standard die" in section 1 is this bound's
+                    answer and not a published ring's.
   link modules      PREDICTED by X2 for a 4096-square layer at a batch of 64
                     and 1 GS/s, weights re-sent with every batch.
   watts             FROM PUBLISHED PARTS, as a range: the converters from the
