@@ -290,14 +290,12 @@ beside it and in tier 1 of `ci/build_mock.sh`. It is a register file, the
 chiplet's own command queue, a clock and the calibration contract, in front of
 grx930's `pta_gemm()` and `pta_cal_bank()`. None of the tile's arithmetic is
 written there. Its geometry is the caller's to name. That was because §7's
-first question was open, and it stays so because the gate runs three tiles. The
-working geometry was 256 × 64 when this was written, and that is one of them.
-It is 128 × 64 since the board plan revised B10 on 2026-10-05, and that is
-not. The twin has been held to grx930's harness at 128 × 64, in the sweep the
-backend's README records, but no build of that size is in the gate yet.
+first question was open, and it stays so because the gate runs four tiles. The
+working geometry, 128 × 64 (the board plan's B10, as revised on 2026-10-05),
+is one of them, and so is the 256 × 64 it was first settled at.
 
-**What the gate holds**, in 201 checks at 4 × 4, 8 × 8 and 256 × 64, of which 45
-are the activation stage's (§8):
+**What the gate holds**, in 237 checks at 4 × 4, 8 × 8, 128 × 64 and 256 × 64,
+of which 55 are the activation stage's (§8):
 
 - *The map.* Every section above: identity, the seed and its counter, 64-bit
   counters with a latched upper half, interrupts, the engine's three words, the
@@ -497,7 +495,8 @@ left of somebody else's network.
 **What it is held to.** The twin's gate holds the function to fifteen cases
 worked by hand and 20,000 draws against the harness's three lines, and holds a
 network kept on the chiplet to the same network brought out at every layer: on
-an 8 × 8 tile through three layers and on a 256 × 64 tile at D3's shape, with
+an 8 × 8 tile through three layers and on 128 × 64 and 256 × 64 tiles at D3's
+shape, with
 every impairment the tile builds enabled, the last layer's sums agree element
 for element with each other and with a device the twins never see. Two twins
 that are each wrong in one way fail it: one whose shift truncates, and one

@@ -526,7 +526,8 @@ the twin runs it. Five things.
   start takes or discards them, a calibration between two layers does not, and a
   layer that was refused leaves nothing behind.
 - **Held, a network is the network brought out at every layer.** The twin's gate
-  grew from 156 checks to 201. On an 8 × 8 tile through three layers and a
+  grew from 156 checks to 201 (and to 237 on 2026-10-05, when it took a
+  128 × 64 build for B10's revision). On an 8 × 8 tile through three layers and a
   256 × 64 tile at D3's shape, with every impairment the tile builds enabled, the
   last layer's sums agree element for element: held, brought out with the step
   taken by the test, and on a device the twins never see. Two more twins that are
@@ -1569,6 +1570,11 @@ away. It has gone from certain to possible.
 **What would reopen it now:** a workload for which a wide layer's time is the
 constraint; a ring that cannot be made near 30 µm; or a loss budget that makes
 0.7 to 7 W as hard as 1.4 to 14.
+
+The twin's gate runs a build of this size since the same day, beside the
+256 × 64 it already ran: 237 checks where it had 201, every GEMM equal to
+grx930's model on a device the twin never sees, and D3's shape held on the
+chiplet equal to the same network brought out at every layer.
 
 *As first settled, at 256 × 64, and kept as it was written:*
 
