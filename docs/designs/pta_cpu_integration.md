@@ -2016,6 +2016,11 @@ Recorded so the next reader knows what was considered and deliberately deferred.
    line an input; a mesh sums fields from one coherent line. The hypothesis
    therefore decides what kind of laser the chiplet is fed by, which is the
    board plan's §8, question 8.
+   *And the board has taken it as its working topology, 2026-10-05:* the board
+   plan's B12, a ring bank on four buses lit by a comb. That is a choice made
+   with a price on each alternative ([`pta_source.py`](pta_source.py)) and
+   still not a measurement. The coupling this model carries stands as written:
+   nearest neighbours within a bank, which on four buses is four chains of 64.
    *And area has since settled half of it, 2026-10-03.* On TFLT a weight that
    is not resonant is as long as a modulator — 1.96 V·cm over its drive
    voltage — and a chiplet-sized tile of those does not exist

@@ -10,10 +10,11 @@
 
 **Status: PLAN, drafted 2026-09-21. All seven decisions of §2 are settled, each
 as recommended: B1 and B3 that day, and B2, B4, B5, B6 and B7 on 2026-09-22.
-Four more were raised and settled later and are in §7: B8, B9, and on
-2026-10-05 B10, the chiplet's working geometry, 256 × 64, and B11, its working
-shot rate, 1 GS/s. A reading of published rings the same day puts that tile
-past a standard die. Asked, the program let B10 stand.
+Five more were raised and settled later and are in §7: B8, B9, and on
+2026-10-05 B10, the chiplet's working geometry, 256 × 64, B11, its working shot
+rate, 1 GS/s, and B12, its topology, a ring bank lit by a comb. A reading of
+published rings the same day puts that tile past a standard die. Asked, the
+program let B10 stand.
 X2 has made its predictions (§3.3), X1 its budget (§4.3), and P0, X3 and X4
 are drafted as [`board_icd.md`](board_icd.md),
 [`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) and
@@ -1210,6 +1211,19 @@ receiver's saves 0.04 to 0.44 W of laser at a measured receiver whatever
 converter is built. Relaxing the ADC's saves 0.1 W if the converter built is
 the fifth-best published, and next to nothing if it is the best.
 
+*What B12 adds to this section, 2026-10-05.* The tile is a ring bank on four
+buses, and two requirements here were written for something simpler. **A
+receiver's input is four photodiodes and not one**, a bus's each, because buses
+that reuse lines cannot share one. The interface chip still has 64 receivers
+and 64 converters, and what four photodiodes do to a receiver's noise is not
+priced. **And a receiver has to reject the beat between lines**, 11 GHz from
+the signal at the working grid, which the single pole every figure above
+assumes passes 8% of, against half an LSB's 0.4%. One that averages over
+exactly one shot passes none of it when the grid is locked to the shot clock.
+Its noise bandwidth is also narrower than the single pole's, which bears on the
+laser and has not been run. Neither is a row of the budget yet: the error model
+has no term for a beat, or for the source.
+
 ### 4.4 To the PTA program
 
 - ~~C3, the calibration engine, continues, and becomes X3.~~ **Done**, both
@@ -1405,7 +1419,7 @@ tile a MAC.
 **What it does not settle.** The shot rate, the other half of the question,
 which stays at X2's 1 GS/s as a planning figure (and has since been put in one
 table, [`pta_rate.py`](pta_rate.py), and settled there: B11). The kind of light
-source (§8, question 8). And whether a weight cell is resonant, which decides whether a tile
+source (§8, question 8; settled since, with the topology: B12). And whether a weight cell is resonant, which decides whether a tile
 this size fits a die at all (§8, question 1, the floorplan).
 
 *The last of those was worked the same day, and it bears on this decision*
@@ -1481,7 +1495,8 @@ modulators and not rings.
 **What it does not settle.** The kind of light source (§8, question 8), which
 this narrows: 102 lines a bus or fewer, on three buses or more. Whether the
 tile is a ring bank at all. And whose ring: every ring figure here is derived
-from five papers and one tuning efficiency.
+from five papers and one tuning efficiency. *The first two were settled the
+same day, as a working topology: B12.*
 
 **It is a working rate and not a clock specification.** Four things would
 reopen it: a weight driver that cannot swing 2.3 V; a ring whose measured
@@ -1489,6 +1504,64 @@ tuning is far from the 7.0 pm/V assumed, which moves that swing in inverse
 proportion; a link held under five modules with no store on the interface chip
 for a layer's weights; or a loss budget past 20 dB behind a laser under 0.88 W.
 *Needed by:* P0's shot clock, X4's `PTA_CAPS2`, L3, X2's module count and S3.
+
+**B12 — The tile's topology: a ring bank, lit by a comb.** *Settled 2026-10-05.*
+
+§8's question 8 asked what kind of light source the tile needs, and found the
+answer rested on something this plan never decided: how a column adds its
+inputs. The CPU document's error model assumed a ring bank and called that a
+hypothesis with no ground truth. [`pta_source.py`](pta_source.py) followed each
+reading to its source. A ring bank wants a comb. One line added as fields wants
+a second element in every cell. One line and a photodiode in every cell wants
+16,384 photodiodes.
+
+*Recommended, and settled as recommended:* **the tile is a ring bank.** Each
+input rides its own line, a ring weighs it, and a column adds powers. It is the
+one reading whose cell is a ring and nothing else. It is what the error model,
+the crosstalk row and every bus count here were written for. And it is the one
+with a published analysis behind it. *The working count that came with the
+recommendation is four buses,* the fewest that hold across the published range
+of line spacings.
+
+What it fixes, each from a model and none from a device:
+
+| | A ring bank on four buses | From |
+|---|---|---|
+| Lines | 64 on a bus, and the same 64 on all four | [`pta_source.py`](pta_source.py) |
+| Grid | 11 GHz at the widest: eleven times the shot clock, and locked to it. 10 GHz, where a comb has been published, fits too | Derived |
+| Span | Inside 5.7 nm, one free spectral range of the ring read | [`pta_ring.py`](pta_ring.py) |
+| The weight ring | A Q of 62,000 to 97,000 and a swing of 2.3 to 3.6 V. From 81,000 at the published worst spacing | Derived |
+| The source | One comb, a pump before it and an amplifier after: 0.09 to 0.88 W in all, 1.4 to 14 mW a line, on B5's one fiber | [`pta_rate.py`](pta_rate.py) |
+| Photodiodes | 256, one a bus a column. Still 64 receivers and 64 converters | Derived |
+| The receiver | One that averages over a shot, or one steeper than a single pole | Derived |
+| A weight's LSB | 24 to 38 MHz of a line's position against its ring | Derived |
+| The error model's crosstalk | The nearest-neighbour chain it already has, as four chains of 64: 252 pairs of neighbours a column where it has 255 | The CPU document, §4.3 |
+
+**What it costs** against one laser: a comb at a spacing nobody has published
+on the plan's own material, where the one read is about 30 GHz; an amplifier; a
+filter that picks one line for one input, 64 of them; four photodiodes a column
+for one; and a second clock on the board, the comb's drive, locked to the
+first.
+
+**What it closes.** The one-laser readings. B5's single laser as the source's
+kind, though not its placement: a comb is many lines on one fiber. And the CPU
+document's hypothesis, as far as the board goes: it is the working topology
+and still not a measured one.
+
+**What it does not settle.** Whose comb. The amplifier and its noise: §4.3's
+error model still has no term for the source. How large the beat between lines
+is. How the tile signs a weight. Where a column's four currents are added, on
+the photonic die or after the bond, which is 64 lines between the dies or 256.
+And whether four is the count: three hold at the kind end of the published
+range, and more are always allowed, at a photodiode a column each.
+
+**It is a working topology and not a device.** Four things would reopen it: a
+comb that cannot be had near the grid, at the power, on any material; a beat
+that neither a clocked grid nor a steeper receiver removes; a detector that
+makes a photodiode a cell cheap, which is the one-laser reading that needs no
+second optical element; or a ring that cannot be put on its line and kept
+there, since the drift this program fits is still a modulator's (§8,
+question 1). *Needed by:* L3, P1, P0's link 4, X1's error model and X3.
 
 ---
 
@@ -1987,7 +2060,10 @@ for a layer's weights; or a loss budget past 20 dB behind a laser under 0.88 W.
    network trained with the impairments in the loop, which may tolerate more.
    Depth was the cheapest second workload to try and it changed which rows are
    dear; another kind of network may do so again.
-8. **What kind of light source does the tile need?** Asked on 2026-10-03, about a
+8. **What kind of light source does the tile need?** *Settled on 2026-10-05, as
+   a working topology: a ring bank, lit by a comb (B12, §7). What follows is
+   how the question was worked, and reads as it was written.* Asked on
+   2026-10-03, about a
    quantum dot laser, and the answer turned out to rest on something this plan
    never decided. [`pta_shot_rate.py`](pta_shot_rate.py) §6 writes down what any
    source is held to, as requirements and not as a choice of part:
@@ -2171,7 +2247,8 @@ for a layer's weights; or a loss budget past 20 dB behind a laser under 0.88 W.
    priced in any of them: the amplifier and its noise, whatever picks one line
    off a comb for one input, what puts a ring on its line in the first place,
    how the tile signs a weight, and a receiver with more than one photodiode on
-   its input.
+   its input. *Answered the same day: a ring bank, on four buses as the working
+   count (B12, §7).*
 
 ---
 
