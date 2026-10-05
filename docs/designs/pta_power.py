@@ -177,35 +177,38 @@ def weight_drive_w(k, n, volts, c_cell_f, activity, fs=FS, mb=MB):
 
 
 # ---- 6. the link ------------------------------------------------------------------
-def link_bits_s(k, n, resident):
+def link_bits_s(k, n, resident, fs=None):
     """Bits a second on the lanes, both directions, at the shot rate."""
+    fs = FS if fs is None else fs
     into, out = shot.bytes_per_shot(k=k, n=n, resident=resident, **link.BIG)
-    return (into + out) * FS * 8 / link.LINK_EFF
+    return (into + out) * fs * 8 / link.LINK_EFF
 
 
-def link_w(k, n, resident):
-    b = link_bits_s(k, n, resident)
+def link_w(k, n, resident, fs=None):
+    b = link_bits_s(k, n, resident, fs)
     return b * UCIE_J_BIT[0], b * UCIE_J_BIT[1]
 
 
 # ---- the sum ----------------------------------------------------------------------
-def chip_w(k, n, bits, volts, resident):
-    """(low, high) watts on the interface chip, and the parts, each a (low, high)."""
-    a_lo, a_hi = adc_w(bits)
+def chip_w(k, n, bits, volts, resident, fs=None):
+    """(low, high) watts on the interface chip, and the parts, each a (low, high).
+    At the plan's shot rate unless another is given (pta_rate.py asks)."""
+    fs = FS if fs is None else fs
+    a_lo, a_hi = adc_w(bits, fs)
     parts = {
         "receivers": (n * TIA_W, n * TIA_W),
         "ADCs": (n * a_lo, n * a_hi),
-        "input drive": (k * input_drive_w(volts, C_LINE_F_CM[0], ACTIVITY[0]),
-                        k * input_drive_w(volts, C_LINE_F_CM[-1], ACTIVITY[1])),
-        "weight drive": (weight_drive_w(k, n, volts, C_CELL_F[0], ACTIVITY[0]),
-                         weight_drive_w(k, n, volts, C_CELL_F[1], ACTIVITY[1])),
-        "link": link_w(k, n, resident),
+        "input drive": (k * input_drive_w(volts, C_LINE_F_CM[0], ACTIVITY[0], fs),
+                        k * input_drive_w(volts, C_LINE_F_CM[-1], ACTIVITY[1], fs)),
+        "weight drive": (weight_drive_w(k, n, volts, C_CELL_F[0], ACTIVITY[0], fs),
+                         weight_drive_w(k, n, volts, C_CELL_F[1], ACTIVITY[1], fs)),
+        "link": link_w(k, n, resident, fs),
     }
     return (sum(p[0] for p in parts.values()), sum(p[1] for p in parts.values())), parts
 
 
-def mac_s(k, n):
-    return k * n * FS
+def mac_s(k, n, fs=None):
+    return k * n * (FS if fs is None else fs)
 
 
 def section(title):
