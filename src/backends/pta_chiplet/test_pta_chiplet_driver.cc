@@ -53,11 +53,12 @@ static_assert(PTA_CHIPLET_CMD_PENDING == PTA_TWIN_PENDING && PTA_CHIPLET_CMD_DON
 namespace {
 
 int g_fail = 0, g_checks = 0;
+char g_tile[16] = "";   // the build the checks are running on, at the head of each line
 
 void check(const char* name, bool ok) {
   ++g_checks;
   if (!ok) ++g_fail;
-  std::printf("  %s  %s\n", ok ? "ok  " : "FAIL", name);
+  std::printf("  %s  %s%s\n", ok ? "ok  " : "FAIL", g_tile, name);
 }
 void section(const char* title) { std::printf("\n%s\n", title); }
 
@@ -175,11 +176,31 @@ bool same_block(const pta_chiplet_analog_t& a, const npu_c930_analog_t& n) {
          a.accumulator_bits == n.accumulator_bits;
 }
 
-const pta_twin_build BUILD = {256, 64, 8, 48, 4, 0};
+// The chiplet's working geometry, the board plan's B10 as revised on 2026-10-05,
+// and the tile it was first settled at. Every check below runs on each.
+constexpr pta_twin_build B128x64 = {128, 64, 8, 48, 4, 0};
+constexpr pta_twin_build B256x64 = {256, 64, 8, 48, 4, 0};
 
-void program_v1(pta_twin* t) {
+// The shift version 1's 7-bit ADC takes on a build: the LSB that puts one K tile
+// inside its range. A K tile sums `rows` products of two DIN_W-bit operands,
+// each at most 2^(2 (DIN_W - 1)), and the ADC has 2^6 codes each way. So it
+// follows the rows, and a word written for one tile is not another's.
+constexpr uint32_t adc_shift_v1(const pta_twin_build& b) {
+  const int64_t span = static_cast<int64_t>(b.rows) << (2 * (b.din_w - 1));
+  uint32_t s = 0;
+  while ((static_cast<int64_t>(64) << s) < span) ++s;
+  return s;
+}
+static_assert(adc_shift_v1(B128x64) == 15 && adc_shift_v1(B256x64) == 16,
+              "an ADC LSB of 2^15 on 128 rows, and of 2^16 on 256");
+
+uint32_t bits_v1(const pta_twin_build& b) {
+  return 6u | (6u << 4) | (7u << 8) | (adc_shift_v1(b) << 12);
+}
+
+void program_v1(pta_twin* t, const pta_twin_build& b) {
   pta_twin_write32(t, PTA_TWIN_IMPAIR, PTA_QUANT | PTA_THERMAL | PTA_SHOT | PTA_PROG_ERR | PTA_XTALK);
-  pta_twin_write32(t, PTA_TWIN_BITS, 6u | (6u << 4) | (7u << 8) | (16u << 12));
+  pta_twin_write32(t, PTA_TWIN_BITS, bits_v1(b));
   pta_twin_write32(t, PTA_TWIN_SIGMA_TH, 0x0080u);   // half an LSB of that 7-bit ADC
   pta_twin_write32(t, PTA_TWIN_SIGMA_SH, 0x0030u);
   pta_twin_write32(t, PTA_TWIN_SIGMA_PR, 0x0100u);
@@ -187,7 +208,7 @@ void program_v1(pta_twin* t) {
 }
 
 // ---------------------------------------------------------------------------------
-void t_detect() {
+void t_detect(const pta_twin_build& b) {
   section("detection: a tile this driver knows, or nothing");
   pta_chiplet_device_t dev;
   std::memset(&dev, 0, sizeof dev);
@@ -209,7 +230,7 @@ void t_detect() {
                     dev.error == PTA_CHIPLET_ERR_NOT_PRESENT);
   }
 
-  pta_twin* t = pta_twin_new(&BUILD);
+  pta_twin* t = pta_twin_new(&b);
   pta_chiplet_attach_window(&dev, twin_read, twin_write, t);
   check("the twin is: the magic, map version 1, and a tile", pta_chiplet_detect(&dev) == 1 &&
         dev.present == 1 && dev.error == PTA_CHIPLET_OK);
@@ -221,9 +242,9 @@ void t_detect() {
   pta_twin_free(t);
 }
 
-void t_reader() {
+void t_reader(const pta_twin_build& b) {
   section("the reader: the c930 backend's, and what the chiplet adds");
-  pta_twin* t = pta_twin_new(&BUILD);
+  pta_twin* t = pta_twin_new(&b);
   pta_chiplet_device_t dev;
   pta_chiplet_attach_window(&dev, twin_read, twin_write, t);
   npu_c930_device_t c930;
@@ -241,18 +262,22 @@ void t_reader() {
   npu_c930_read_analog(&c930, &n);
   check("clear: field for field what the c930's reader gives through a change of base",
         same_block(a, n) && a.analog == 0 && a.tile_present == 1);
-  check("and the tile's own: 256 x 64, 8-bit operands, 48-bit sums, a model, GEMM 0 next",
-        a.tile_rows == 256 && a.tile_cols == 64 && a.operand_bits == 8 && a.accumulator_bits == 48 &&
-            a.is_model == 1 && a.gemm_index == 0);
+  char name[160];
+  std::snprintf(name, sizeof name,
+                "and the tile's own: %d x %d, 8-bit operands, 48-bit sums, a model, GEMM 0 next",
+                b.rows, b.cols);
+  check(name, a.tile_rows == b.rows && a.tile_cols == b.cols && a.operand_bits == 8 &&
+                  a.accumulator_bits == 48 && a.is_model == 1 && a.gemm_index == 0);
 
   pta_twin_write32(t, PTA_TWIN_SEED, 0xD00Du);
-  program_v1(t);
+  program_v1(t, b);
   pta_twin_write32(t, PTA_TWIN_DRIFT, 55u | (9u << 16));
   pta_twin_write32(t, PTA_TWIN_DRIFT_MAX, 8643u);
   pta_chiplet_read_analog(&dev, &a);
   npu_c930_read_analog(&c930, &n);
-  check("impaired: the same again, every sigma and the drift walk",
+  check("impaired: the same again, this tile's ADC shift, every sigma and the drift walk",
         same_block(a, n) && a.analog == 1 && a.seed == 0xD00D && a.sigma_thermal_q8 == 0x80 &&
+            a.adc_shift == static_cast<int>(adc_shift_v1(b)) &&
             a.drift_sigma_q8 == 55 && a.drift_log2_shots == 9 && a.drift_clamp_q8 == 8643);
 
   // An unbuilt bit is requested and reported, not hidden: it is what explains
@@ -264,17 +289,19 @@ void t_reader() {
   pta_twin_free(t);
 }
 
-void t_gemm() {
+void t_gemm(const pta_twin_build& b) {
   section("a GEMM through the driver is the model, from what the driver read");
-  pta_twin* t = pta_twin_new(&BUILD);
+  pta_twin* t = pta_twin_new(&b);
   pta_chiplet_device_t dev;
   pta_chiplet_attach_window(&dev, twin_read, twin_write, t);
   pta_chiplet_attach_link(&dev, twin_submit, t);
   pta_chiplet_detect(&dev);
   pta_twin_write32(t, PTA_TWIN_SEED, 0x51Du);
-  program_v1(t);
+  program_v1(t, b);
 
-  const int M = 4, N = 70, K = 300;
+  // Two tiles each way on either build, the second of each partial: 64 columns
+  // and 6 more, and one K tile of the build's rows and 44 rows of the next.
+  const int M = 4, N = b.cols + 6, K = b.rows + 44;
   const auto A = operands(1, static_cast<size_t>(M) * K);
   const auto B = operands(2, static_cast<size_t>(K) * N);
   pta_tile tile = {0, 0, 0, 0};
@@ -300,8 +327,17 @@ void t_gemm() {
     if (g == 0) first = C; else moved = moved && C != first;
   }
   pta_device_free(&ref);
-  check("three GEMMs, 4 x 70 x 300, each the model's from the reader's fields and its index", ok);
+  char name[160];
+  std::snprintf(name, sizeof name,
+                "three GEMMs, %d x %d x %d, each the model's from the reader's fields and its index",
+                M, N, K);
+  check(name, ok);
   check("PTA_GEMM_CT read 0, 1 and 2 before them, and each drew its own noise", counted && moved);
+  // The walk is the tile's to report, not this file's to assume: a K written
+  // for another build would be a different number of programmings.
+  check("and each was two tiles each way: the tile counts 12 programmings and 48 shots",
+        pta_twin_read32(t, PTA_TWIN_WLOAD_CT) == 3u * 4u &&
+            pta_twin_read32(t, PTA_TWIN_SHOT_CT) == 3u * 4u * static_cast<uint32_t>(M));
   check("the seed function is the twin's",
         pta_chiplet_gemm_seed(0x51Du, 2) == pta_twin_gemm_seed(0x51Du, 2) &&
             pta_chiplet_gemm_seed(1u, 0u) == 3291240986u);
@@ -320,13 +356,13 @@ void t_gemm() {
   pta_twin_free(t);
 }
 
-void t_failures() {
+void t_failures(const pta_twin_build& b) {
   section("when it cannot run, C is untouched and the error says why");
   const int M = 2, N = 8, K = 8;
   const auto A = operands(3, static_cast<size_t>(M) * K);
   const auto B = operands(4, static_cast<size_t>(K) * N);
   std::vector<int64_t> C(static_cast<size_t>(M) * N, POISON);
-  pta_twin* t = pta_twin_new(&BUILD);
+  pta_twin* t = pta_twin_new(&b);
   pta_chiplet_device_t dev;
 
   pta_chiplet_attach_window(&dev, twin_read, twin_write, t);
@@ -347,7 +383,7 @@ void t_failures() {
   rc = pta_chiplet_gemm(&dev, 0, M, N, K, A.data(), B.data(), C.data());
   check("an ADC shift of 41: REFUSED, and no impairment is blamed for it",
         rc == -1 && dev.error == PTA_CHIPLET_ERR_REFUSED && dev.refused_impairments == 0u && all_poison(C));
-  pta_twin_write32(t, PTA_TWIN_BITS, 6u | (6u << 4) | (7u << 8) | (16u << 12));
+  pta_twin_write32(t, PTA_TWIN_BITS, bits_v1(b));
   rc = pta_chiplet_gemm(&dev, 0, M, N, K, A.data(), B.data(), C.data());
   check("and with the register put right the same command runs",
         rc == 0 && dev.error == PTA_CHIPLET_OK && dev.refused_impairments == 0u && !all_poison(C));
@@ -392,10 +428,13 @@ void t_failures() {
 
 int main() {
   std::printf("PTA chiplet driver, against the digital twin. A model, not a chiplet.\n");
-  t_detect();
-  t_reader();
-  t_gemm();
-  t_failures();
+  for (const pta_twin_build* b : {&B128x64, &B256x64}) {
+    std::snprintf(g_tile, sizeof g_tile, "%3d x %-3d ", b->rows, b->cols);
+    t_detect(*b);
+    t_reader(*b);
+    t_gemm(*b);
+    t_failures(*b);
+  }
   std::printf("\n%d checks, %d failed\n", g_checks, g_fail);
   std::printf("%s\n", g_fail ? "FAILED" : "PASSED");
   return g_fail ? 1 : 0;

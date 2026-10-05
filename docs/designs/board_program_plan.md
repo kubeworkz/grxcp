@@ -583,7 +583,11 @@ seam, and the device says it is a model. Four things.
   `tests/libs/test_grxblas_pta_chiplet.cpp`: eight cases on a 256 × 64 tile,
   4,164 results through `grxSetDevice` and `grxblasGemmEx`, each equal to
   the model built from the property and nothing else. A reference built on the
-  seed alone, as a c930's would be, differs in 285 elements of 600.
+  seed alone, as a c930's would be, differs in 285 elements of 600. (Since
+  2026-10-05 it is run on a 128 × 64 tile as well, for B10's revision: the same
+  eight cases, with their ADC shifts and the K of those that walk two K tiles
+  derived for 128 rows, and 4,164 results again. There the reference on the
+  seed alone differs in 289 of 600.)
 - **X5's gate is met through the runtime.** "grxcp's backend gates pass against
   it, bitwise against the model" was met by X5 against the model called
   directly, and is now met through the same calls a program makes.
@@ -1575,6 +1579,17 @@ The twin's gate runs a build of this size since the same day, beside the
 256 × 64 it already ran: 237 checks where it had 201, every GEMM equal to
 grx930's model on a device the twin never sees, and D3's shape held on the
 chiplet equal to the same network brought out at every layer.
+
+So do the three gates behind it, which had run on 256 × 64 alone: the driver's,
+and S4's two, the device and its GEMM through the runtime (§3.4). The driver's
+has 54 checks where it had 26, 27 on each tile. S4's run once a tile, 44 checks
+and 49 where they had 44 and 48, and the GEMM's 4,164 results are compared on
+each. What follows a tile's rows was derived again for 128 and not carried over:
+the ADC shift that puts a K tile of int8 products inside the converter, 15 for
+the 7-bit one where 256 rows take 16, and the K that walks two K tiles, 172
+where it was 300. That shift is the bound for operands that fill their word,
+which is what those gates use. It is not the shift grx930's harness finds on
+D3, which is the same on both tiles (§8, question 1).
 
 *As first settled, at 256 × 64, and kept as it was written:*
 

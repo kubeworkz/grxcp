@@ -472,7 +472,9 @@ else
   # what a window and a link do: nothing behind the window, a tile that never
   # stops being busy, a link that will not take a command and one that loses
   # it. It is held to the model through the twin, and to the c930 backend's
-  # reader field for field. No runtime, so it runs here in tier 1.
+  # reader field for field. No runtime, so it runs here in tier 1, and on two
+  # builds in the one process: the chiplet's working geometry, 128 x 64 (the
+  # board plan's B10, as revised), and the 256 x 64 it was first settled at.
   $CXX -std=c++17 -Wall -Wextra -O1 -I"$TWIN_DIR" -I"$PTA_DIR" -I"$NPU_DIR" \
     "$TWIN_DIR/test_pta_chiplet_driver.cc" "$TWIN_DIR/pta_chiplet.cpp" \
     "$NPU_DIR/npu_c930.cpp" "$BUILD/test_pta_chiplet_twin.twin.o" \
@@ -482,7 +484,7 @@ else
     grep -E "^  FAIL" "$BUILD/pta_chiplet_driver.log" | head -12 | sed 's/^/      /'
     exit 1
   }
-  echo "  ok    the driver, against the twin:" \
+  echo "  ok    the driver, against the twin at 128 x 64 and at 256 x 64:" \
        "$(grep -E '^[0-9]+ checks, 0 failed$' "$BUILD/pta_chiplet_driver.log")"
 fi
 
@@ -711,17 +713,31 @@ else
   # the device property alone. A skip is a failure in this configuration: the
   # backend and the twin are both here, so exit 77 would mean a gate did not
   # run and nothing said so.
+  #
+  # EACH ON TWO TILES: the chiplet's working geometry, 128 x 64 (the board
+  # plan's B10, as revised), and the 256 x 64 it was first settled at. One run
+  # is one tile, because enumeration happens once in a process, so the tile is
+  # the gate's argument. Which tile a run was ON is then read back out of its
+  # log, from the line the gate prints off the device property: a gate that
+  # ignored its argument would run one tile twice and be reported as both.
   for gate in "unit:test_pta_chiplet_device" "libs:test_grxblas_pta_chiplet"; do
     dir="${gate%%:*}"; name="${gate##*:}"
-    if ( cd "$ROOT/tests/$dir" && "$BUILD/cmake-pta/tests/$name" ) \
-         > "$BUILD/$name.log" 2>&1; then rc=0; else rc=$?; fi
-    grep -E '^  (ok|FAIL|note) ' "$BUILD/$name.log" | sed 's/^/  /'
-    if [[ $rc -ne 0 ]]; then
-      [[ $rc -eq 77 ]] && echo "  FAIL  $name SKIPPED. A PTA build has the backend and the twin; it must run."
-      echo "FAILED: $name (exit $rc)"
-      exit 1
-    fi
-    tail -1 "$BUILD/$name.log"
+    for tile in 128x64 256x64; do
+      echo "--- $name, on a $tile tile"
+      if ( cd "$ROOT/tests/$dir" && "$BUILD/cmake-pta/tests/$name" "$tile" ) \
+           > "$BUILD/$name.$tile.log" 2>&1; then rc=0; else rc=$?; fi
+      grep -E '^  (ok|FAIL|note) ' "$BUILD/$name.$tile.log" | sed 's/^/  /'
+      if [[ $rc -ne 0 ]]; then
+        [[ $rc -eq 77 ]] && echo "  FAIL  $name SKIPPED. A PTA build has the backend and the twin; it must run."
+        echo "FAILED: $name on a $tile tile (exit $rc)"
+        exit 1
+      fi
+      if ! grep -qE "^  note  tile $tile, " "$BUILD/$name.$tile.log"; then
+        echo "  FAIL  $name was asked for a $tile tile, and its device does not report one."
+        exit 1
+      fi
+      tail -1 "$BUILD/$name.$tile.log"
+    done
   done
 fi
 

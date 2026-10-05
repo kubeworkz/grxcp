@@ -26,6 +26,12 @@
 // and each column of B is a shot. One library, two tiles, one answer, and the
 // "weights" case below is what would notice the other one.
 //
+// ONE RUN IS ONE TILE, because enumeration happens once in a process. The tile
+// is the command line's (tests/common/pta_twin_adapter.h): the chiplet's
+// working geometry, 128 x 64, with no argument, and the 256 x 64 it was first
+// settled at with "256x64". ci/build_mock.sh runs both, and the cases below are
+// derived for the tile the run was given.
+//
 // NOTHING HERE IS HARDWARE. The device is the twin, it says it is a model, and
 // a pass is a statement about the error model's arithmetic and the runtime's
 // path to it.
@@ -50,10 +56,6 @@ using grxtest::section;
 #ifdef GRXCP_ENABLE_PTA
 namespace {
 
-// One of the link model's candidate geometries for the chiplet, with the 8-bit
-// operands the accuracy budget was measured at.
-const pta_twin_build kBuild = {256, 64, 8, 48, 4, 0};
-
 #define PTA_BITS_OF(a, w, adc, s) \
   ((uint32_t)(a) | ((uint32_t)(w) << 4) | ((uint32_t)(adc) << 8) | ((uint32_t)(s) << 12))
 
@@ -70,15 +72,30 @@ struct Case {
 // The tile's word is eight bits, so a setting of 6 is a six-bit quantiser. The
 // noise figures are in LSB of the ADC each case configures: 64 is a quarter of
 // the 7-bit ADC's LSB in "v1", and 256 is one LSB of the 6-bit ADC's in "v0".
-// An ADC LSB of 2^16 or 2^17 puts a K tile of 256 int8 products inside those.
-const Case kCases[] = {
+//
+// TWO THINGS FOLLOW THE TILE'S ROWS, and are derived here from the build the
+// run was given rather than written down for one tile.
+//
+//   The ADC shift of the four cases that fill a K tile. Its LSB puts a K tile
+//   of int8 products inside the ADC (pta_twin_adc_shift): 2^16 for the 7-bit
+//   ADC and 2^17 for the 6-bit one on 256 rows, 2^15 and 2^16 on 128.
+//   The same four cases' K: one K tile and 44 rows of the next (4, in "drift"),
+//   which is two K tiles on either build. 300 and 260 on 256 rows, 172 and 132
+//   on 128. Their 100 or 70 outputs are two tiles of the 64 columns already.
+//
+// The other four cases are smaller than either tile, and their shifts are sized
+// to their own K.
+std::vector<Case> cases_for(const pta_twin_build& b) {
+  const int k_two_tiles = b.rows + 44, k_drift = b.rows + 4;
+  const uint32_t s7 = grxtest::pta_twin_adc_shift(b, 7), s6 = grxtest::pta_twin_adc_shift(b, 6);
+  return {
   {"v1", "the board plan's version 1 allowances, every impairment but drift, "
          "on a shape of two tiles each way",
-   100, 6, 300, 1, 1,
-   0x57, PTA_BITS_OF(6, 6, 7, 16), 0x2a, 64, 47, 256, 0, 5, 0},
+   100, 6, k_two_tiles, 1, 1,
+   0x57, PTA_BITS_OF(6, 6, 7, s7), 0x2a, 64, 47, 256, 0, 5, 0},
   {"v0", "version 0's: a coarser DAC and ADC and four times the noise",
-   100, 6, 300, 2, 1,
-   0x57, PTA_BITS_OF(5, 6, 6, 17), 0x2b, 256, 148, 1024, 0, 26, 0},
+   100, 6, k_two_tiles, 2, 1,
+   0x57, PTA_BITS_OF(5, 6, 6, s6), 0x2b, 256, 148, 1024, 0, 26, 0},
   {"quant", "quantisation alone, on a shape smaller than the tile every way",
    5, 3, 7, 3, 1,
    0x01, PTA_BITS_OF(5, 6, 6, 10), 0x2c, 0, 0, 0, 0, 0, 0},
@@ -95,13 +112,13 @@ const Case kCases[] = {
    0x03, PTA_BITS_OF(0, 0, 7, 4), 0x2f, 512, 0, 0, 0, 0, 0},
   {"drift", "drift is device state: the second GEMM is the one a tile that "
             "forgot its history gets wrong",
-   70, 8, 260, 7, 2,
+   70, 8, k_drift, 7, 2,
    0x49, PTA_BITS_OF(6, 6, 0, 0), 0x30, 0, 0, 256, 256, 0, 0x0C00},
   {"v1-drift", "everything at once, three times",
-   100, 6, 300, 8, 3,
-   0x5F, PTA_BITS_OF(6, 6, 7, 16), 0x31, 64, 47, 256, 128 | (1u << 16), 5, 0x0C00},
-};
-const int kNumCases = (int)(sizeof(kCases) / sizeof(kCases[0]));
+   100, 6, k_two_tiles, 8, 3,
+   0x5F, PTA_BITS_OF(6, 6, 7, s7), 0x31, 64, 47, 256, 128 | (1u << 16), 5, 0x0C00},
+  };
+}
 
 // Full-range int8 from the model's own xorshift, so a reader needs no data.
 void operands(const Case& c, std::vector<int8_t>* A, std::vector<int8_t>* B) {
@@ -287,13 +304,19 @@ grxAnalogGemm_t read_property(int device) {
 }  // namespace
 #endif  // GRXCP_ENABLE_PTA
 
-int main() {
+int main(int argc, char** argv) {
 #ifndef GRXCP_ENABLE_PTA
+  (void)argc; (void)argv;
   std::printf("built without GRXCP_ENABLE_PTA; no PTA chiplet backend here. skipping\n");
   return 77;
 #else
+  pta_twin_build build;
+  if (!grxtest::pta_twin_build_from_args(argc, argv, &build)) return 2;
+  const std::vector<Case> cases = cases_for(build);
+  const int num_cases = (int)cases.size();
+
   // BEFORE THE FIRST grx CALL. Enumeration runs once and the seam refuses after.
-  const bool installed = grxtest::pta_twin_install(kBuild);
+  const bool installed = grxtest::pta_twin_install(build);
   section("the twin is behind the runtime's PTA device");
   check(installed, "the twin's window and link are installed");
   if (!installed) return grxtest::report();
@@ -314,11 +337,12 @@ int main() {
   }
   check(rig.pta >= 0 && rig.parent >= 0, "a PTA chiplet is enumerated, with a parent");
   if (rig.pta < 0 || rig.parent < 0) return grxtest::report();
-  const pta_tile tile = {kBuild.rows, kBuild.cols, kBuild.din_w, kBuild.acc_w};
+  const pta_tile tile = {build.rows, build.cols, build.din_w, build.acc_w};
   {
     const grxAnalogGemm_t a = read_property(rig.pta);
     check(a.tileRows == tile.rows && a.tileCols == tile.cols && a.operandBits == tile.din_w &&
-          a.accumulatorBits == tile.acc_w, "its tile is the one this file's cases are written for");
+          a.accumulatorBits == tile.acc_w, "its tile is the one this run's cases are derived for");
+    std::printf("  note  tile %dx%d, as the device reports it\n", a.tileRows, a.tileCols);
   }
   GRX_REQUIRE(grxSetDevice(rig.pta), "grxSetDevice");
   if (grxblasCreate(&rig.h) != GRXBLAS_STATUS_SUCCESS) {
@@ -338,18 +362,27 @@ int main() {
   {
     std::vector<int8_t> A, B;
     std::vector<int32_t> C;
-    operands(kCases[0], &A, &B);
-    const grxblasStatus_t s = device_gemm(rig, kCases[0], A, B, &C);
-    check(s == GRXBLAS_STATUS_SUCCESS && mismatches(C, exact_gemm(kCases[0], A, B)) == 0,
-          "100 x 6 x 300 int8, two tiles each way: every element exact");
+    const Case& c = cases[0];
+    operands(c, &A, &B);
+    // What the tile itself counts, read behind the runtime as its registers
+    // are written: a K that was another build's would be a different walk.
+    const uint32_t loads = pta_twin_read32(twin, PTA_TWIN_WLOAD_CT);
+    const uint32_t shots = pta_twin_read32(twin, PTA_TWIN_SHOT_CT);
+    const grxblasStatus_t s = device_gemm(rig, c, A, B, &C);
+    char what[128];
+    std::snprintf(what, sizeof(what), "%d x %d x %d int8: every element exact", c.m, c.n, c.k);
+    check(s == GRXBLAS_STATUS_SUCCESS && mismatches(C, exact_gemm(c, A, B)) == 0, what);
+    check(pta_twin_read32(twin, PTA_TWIN_WLOAD_CT) - loads == 4u &&
+          pta_twin_read32(twin, PTA_TWIN_SHOT_CT) - shots == 4u * (uint32_t)c.n,
+          "on two tiles each way: the tile counts four programmings, and a shot a column of B on each");
     check(read_property(rig.pta).gemmIndex == 1, "and it took an index: the property reads 1");
   }
 
   // ---- the gate -----------------------------------------------------------
   section("bitwise: the device, and the model from the property alone");
   int total_results = 0;
-  for (int ci = 0; ci < kNumCases; ++ci) {
-    const Case& c = kCases[ci];
+  for (int ci = 0; ci < num_cases; ++ci) {
+    const Case& c = cases[ci];
     std::vector<int8_t> A, B;
     operands(c, &A, &B);
     const std::vector<int32_t> exact = exact_gemm(c, A, B);
@@ -411,7 +444,7 @@ int main() {
   // nothing.
   section("the seed alone does not reproduce a chiplet's GEMM");
   {
-    const Case& c = kCases[0];
+    const Case& c = cases[0];
     std::vector<int8_t> A, B;
     std::vector<int32_t> C, on_seed;
     operands(c, &A, &B);
@@ -435,7 +468,7 @@ int main() {
   // ---- whose operand is the weight ----------------------------------------
   section("which operand is the weight");
   {
-    const Case& c = kCases[3];
+    const Case& c = cases[3];
     std::vector<int8_t> A, B;
     std::vector<int32_t> C, as_built, other;
     operands(c, &A, &B);
@@ -461,7 +494,7 @@ int main() {
   // ---- what it refuses ------------------------------------------------------
   section("what it refuses, with C untouched");
   {
-    const Case& c = kCases[2];
+    const Case& c = cases[2];
     std::vector<int8_t> A, B;
     std::vector<int32_t> C;
     operands(c, &A, &B);
@@ -506,9 +539,9 @@ int main() {
           "the property says native again, withdraws the model's numbers, and keeps the index");
     std::vector<int8_t> A, B;
     std::vector<int32_t> C;
-    operands(kCases[1], &A, &B);
-    const grxblasStatus_t s = device_gemm(rig, kCases[1], A, B, &C);
-    check(s == GRXBLAS_STATUS_SUCCESS && mismatches(C, exact_gemm(kCases[1], A, B)) == 0,
+    operands(cases[1], &A, &B);
+    const grxblasStatus_t s = device_gemm(rig, cases[1], A, B, &C);
+    check(s == GRXBLAS_STATUS_SUCCESS && mismatches(C, exact_gemm(cases[1], A, B)) == 0,
           "and a GEMM is the exact product again");
   }
 

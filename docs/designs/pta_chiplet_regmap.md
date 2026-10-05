@@ -357,7 +357,11 @@ It was not, at first, a device grxcp could see. *S4 made it one on 2026-10-04*
 only when a model is attached, with the D2 property read from this map through
 `src/backends/pta_chiplet/pta_chiplet.cpp` and `grxblasGemmEx` routed to it.
 That driver keeps its own transcription of the offsets above, and a test holds
-it to the twin's.
+it to the twin's. The driver's gate and S4's two, the device and its GEMM
+through the runtime, ran on a 256 × 64 twin alone until the board plan revised
+B10. Since 2026-10-05 each runs on 128 × 64 as well, the working geometry: 54
+checks in the driver's where there were 26, and 44 and 49 on each tile in the
+other two where there were 44 and 48 on the one.
 
 ---
 

@@ -33,6 +33,7 @@ extern "C" {
 }
 
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 
 static_assert(PTA_CHIPLET_CMD_PENDING == PTA_TWIN_PENDING &&
@@ -81,6 +82,47 @@ inline int pta_twin_submit_hook(void* ctx, int bank, int M, int N, int K,
   c.status = status;
   return pta_twin_submit(static_cast<pta_twin*>(ctx), &c);
 }
+
+// WHICH TILE. The twin builds any tile, and a gate that installs one runs on
+// one tile a process, because enumeration happens once. So the tile is the
+// command line's, and the gate is run once for each: with no argument or
+// "128x64" on the chiplet's working geometry (the board plan's B10, as revised
+// on 2026-10-05), and with "256x64" on the tile B10 was first settled at.
+// Anything else is refused, and the caller exits on it: a gate that quietly ran
+// on some other tile has not run the one that was asked for.
+constexpr pta_twin_build pta_twin_working_tile = {128, 64, 8, 48, 4, 0};
+constexpr pta_twin_build pta_twin_first_tile = {256, 64, 8, 48, 4, 0};
+
+inline bool pta_twin_build_from_args(int argc, char** argv, pta_twin_build* build) {
+  *build = pta_twin_working_tile;
+  if (argc < 2) return true;
+  if (argc == 2 && std::strcmp(argv[1], "128x64") == 0) return true;
+  if (argc == 2 && std::strcmp(argv[1], "256x64") == 0) {
+    *build = pta_twin_first_tile;
+    return true;
+  }
+  std::printf("usage: %s [128x64 | 256x64]\n"
+              "  the tile the twin is built with: 128x64, the chiplet's working "
+              "geometry, if none is named\n", argv[0]);
+  return false;
+}
+
+// The ADC shift that puts one K tile of a build inside an ADC of `adc_bits`
+// bits. A K tile sums `rows` products of two DIN_W-bit operands, each at most
+// 2^(2 (DIN_W - 1)), and the ADC has 2^(adc_bits - 1) codes each way. So the
+// shift follows the tile's rows, and a gate that runs on two tiles derives it
+// for each rather than carrying one tile's number to the other.
+constexpr uint32_t pta_twin_adc_shift(const pta_twin_build& b, int adc_bits) {
+  const int64_t span = static_cast<int64_t>(b.rows) << (2 * (b.din_w - 1));
+  uint32_t s = 0;
+  while ((static_cast<int64_t>(1) << (adc_bits - 1 + static_cast<int>(s))) < span) ++s;
+  return s;
+}
+static_assert(pta_twin_adc_shift(pta_twin_working_tile, 7) == 15 &&
+              pta_twin_adc_shift(pta_twin_working_tile, 6) == 16 &&
+              pta_twin_adc_shift(pta_twin_first_tile, 7) == 16 &&
+              pta_twin_adc_shift(pta_twin_first_tile, 6) == 17,
+              "7- and 6-bit ADCs: LSBs of 2^15 and 2^16 on 128 rows, 2^16 and 2^17 on 256");
 
 // Build a twin and install it as the chiplet in device `parent`'s package.
 // BEFORE the first grx call. `with_link` false installs the window alone: a
