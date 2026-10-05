@@ -429,9 +429,11 @@ echo "==> PTA CHIPLET TWIN GATE: the chiplet's map, with that model behind it"
 # A twin is not a chiplet, and there is no chiplet. Passing here says the map
 # can be implemented as written and that this implementation is the model.
 #
-# Then three twins that are each wrong in one way -- a GEMM that runs on
+# Then five twins that are each wrong in one way -- a GEMM that runs on
 # PTA_SEED itself, a command taken into a calibrating tile, a MODEL_RST
-# honoured under a running command -- and the gate has to fail against each.
+# honoured under a running command, an activation stage whose shift truncates,
+# and one whose held operands outlive the command after them -- and the gate
+# has to fail against each.
 TWIN_DIR="$ROOT/src/backends/pta_chiplet"
 if ! command -v "$CC_BIN" >/dev/null 2>&1; then
   echo "SKIPPED: no C compiler ($CC_BIN) beside $CXX."
@@ -452,7 +454,7 @@ else
     exit 1
   }
   echo "  ok    $(grep -E '^[0-9]+ checks, 0 failed$' "$BUILD/pta_chiplet_twin.log")"
-  for ablation in SEED CAL_GUARD RST_GUARD; do
+  for ablation in SEED CAL_GUARD RST_GUARD ACT_ROUND HELD_GUARD; do
     twin_build "$BUILD/test_pta_chiplet_twin_$ablation" "-DPTA_TWIN_ABLATE_$ablation"
     if "${RUN[@]}" "$BUILD/test_pta_chiplet_twin_$ablation" \
          > "$BUILD/pta_chiplet_twin_$ablation.log" 2>&1; then

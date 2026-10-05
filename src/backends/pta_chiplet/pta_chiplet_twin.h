@@ -20,6 +20,8 @@
  *   0x000-0x00C  PTA_ID and PTA_CAPS0..2, read-only: what this build is
  *   0x010-0x014  PTA_IRQ_STATUS (write 1 to clear) and PTA_IRQ_MASK
  *   0x018        PTA_GEMM_CT, GEMMs started since the last PTA_SEED write
+ *   0x01C        PTA_ACT_CLIP_CT, outputs the activation stage clamped in the
+ *                last GEMM
  *   0x040-0x0D0  the block the c930 has at 0x140: CTRL, STATUS, IMPAIR, BITS,
  *                SEED, the sigmas, DRIFT, XTALK, TW, TS, CAL_PER, CAL_THR,
  *                CAL_CT, CAL_CYC, SHOT_CT, WLOAD_CT, SAT_CT, ERR_MAX, GAIN[j],
@@ -62,7 +64,9 @@
  *   - PTA_CTRL[9:7], the loop-order and residency modes.  The model walks one
  *     order, the shipped one.  The bits read zero.
  *   - PTA_CTRL[11:10], which on the c930 are its DMA's options.  Read zero.
- *   - The activation stage.  PTA_CAPS2[17] is clear.
+ *   - The activation stage, unless the build asks for one (below).  Without
+ *     it PTA_CAPS2[17] is clear and a command that asks for the stage is
+ *     refused.
  *   - A shot rate.  PTA_CAPS2[15:0] reads zero: a shot here lasts PTA_TS of the
  *     twin's own cycles and has no rate in hertz.
  *   - A calibration that interrupts a GEMM.  pta_gemm() is one call, so here a
@@ -86,6 +90,27 @@
  * effect at the next GEMM start).  Its result is delivered when the time is up
  * and not before.
  *
+ * THE ACTIVATION STAGE (the map's section 8).  What turns one layer's sums into
+ * the next layer's operands, so that a network need not leave the chiplet
+ * between its layers.  It is the step grx930's accuracy harness takes on the
+ * host between layers (c930/sim/pta_mnist.c, tile_batch), and nothing more:
+ *
+ *     a = min( round( max(sum + bias, 0) / 2^shift ), 2^(bits-1) - 1 )
+ *
+ * A command asks for it and it applies to that command alone: nothing is left
+ * switched on for whoever submits next.  Its output goes back to the caller,
+ * or with PTA_TWIN_CMD_HOLD stays here to be the activations of the NEXT
+ * command, which says PTA_TWIN_CMD_FROM_HELD.  Held operands are the next
+ * command's or nobody's: any command's start takes or discards them, and a
+ * calibration between the two does not.
+ *
+ * Three things to know about it.  It is not grx930's S_ACT, which models an
+ * optical nonlinearity and has no bias.  pta_twin_activate() is the twin's own
+ * arithmetic, the one piece here that is not grx930's; the gate holds it to the
+ * harness's three lines.  And it adds no time: the stage is taken to sit in the
+ * shot's own pipeline, one unit a column, which is a requirement on a chiplet
+ * and not a finding about one.
+ *
  * C99, the standard library, and pta_tile_model.h.
  */
 #ifndef PTA_CHIPLET_TWIN_H
@@ -107,6 +132,7 @@ extern "C" {
 #define PTA_TWIN_IRQ_STATUS    0x010u    /* RW1C */
 #define PTA_TWIN_IRQ_MASK      0x014u    /* RW */
 #define PTA_TWIN_GEMM_CT       0x018u    /* R    GEMMs started since the last PTA_SEED write */
+#define PTA_TWIN_ACT_CLIP_CT   0x01Cu    /* R    outputs the activation stage clamped, since the last GEMM start */
 #define PTA_TWIN_CTRL          0x040u    /* RW   [0] EN [1] CAL_NOW [3] MODEL_RST */
 #define PTA_TWIN_STATUS        0x044u    /* R    [0] CAL_BUSY [1] CAL_VALID [2] SAT [3] DRIFT_ALARM [4] BUSY [23:8] residual */
 #define PTA_TWIN_IMPAIR        0x048u    /* RW   [6:0] */
@@ -146,7 +172,9 @@ extern "C" {
 #define PTA_TWIN_BANKS         2u            /* the model's weight banks */
 #define PTA_TWIN_KIND          3u            /* PTA_CAPS2[19:18]: the model on its own */
 #define PTA_TWIN_CAPS2_CAL     0x00010000u   /* the calibration engine is present */
-#define PTA_TWIN_CAPS2_ACT     0x00020000u   /* the activation stage -- never set here */
+#define PTA_TWIN_CAPS2_ACT     0x00020000u   /* the activation stage is built */
+#define PTA_TWIN_CAPS2_HOLD_SHIFT 20         /* [24:20] log2 of the operands the stage can hold */
+#define PTA_TWIN_CAPS2_HOLD_MASK  0x01F00000u
 #define PTA_TWIN_CAPS2_TWIN    0x80000000u   /* this is a model and not silicon */
 
 #define PTA_TWIN_CTRL_EN         0x01u
@@ -176,6 +204,8 @@ typedef struct {
     int din_w;         /* operand width: 2 .. 32 */
     int acc_w;         /* accumulator width: 2 .. 63 */
     int queue_depth;   /* commands that can wait behind the running one: 1 .. 64 */
+    int act_hold;      /* operands the activation stage can hold for the next command:
+                          0 builds no stage, else a power of two up to 2^28 */
 } pta_twin_build;
 
 typedef struct pta_twin pta_twin;
@@ -203,11 +233,26 @@ int       pta_twin_irq(const pta_twin *t);
 #define PTA_TWIN_REFUSED   2   /* the tile cannot do this; C is untouched and IRQ ERR is raised */
 #define PTA_TWIN_LOST      3   /* a reset discarded it; C is untouched */
 
+/* What a command may ask of the activation stage.  Zero asks nothing. */
+#define PTA_TWIN_CMD_ACT        0x1u   /* the results go through the stage: C receives operands, not sums */
+#define PTA_TWIN_CMD_HOLD       0x2u   /* and stay on the chiplet for the next command; C is not written */
+#define PTA_TWIN_CMD_FROM_HELD  0x4u   /* this command's activations are the ones held; A is not read */
+
 /*
  * One command: C = A * B on weight bank `bank`, A being M x K and B K x N, row
  * major, in the model's own integers.  A and B are copied when the command is
- * accepted.  C, status and sats are written when it ends, so they have to
- * outlive it; status and sats may be NULL.
+ * accepted, and so is bias.  C, status, sats and clips are written when it ends,
+ * so they have to outlive it; status, sats and clips may be NULL.
+ *
+ * Zero every field this file may add later: a command is memset to zero and
+ * then filled, and a zero in a field means the command does not use it.
+ *
+ * With PTA_TWIN_CMD_ACT each of the M x N sums goes through
+ * pta_twin_activate(sum, bias[n], act_shift, act_bits) on its way out.
+ * With PTA_TWIN_CMD_HOLD the operands that come out are kept for the next
+ * command and C may be NULL.  With PTA_TWIN_CMD_FROM_HELD the activations are
+ * the M x K operands the command before it held, and A may be NULL.  One
+ * command may take the held operands and hold its own: a middle layer.
  */
 typedef struct {
     int            bank;
@@ -217,6 +262,11 @@ typedef struct {
     int64_t       *C;
     int           *status;   /* PTA_TWIN_PENDING from acceptance, then one of the other three */
     long          *sats;     /* the GEMM's ADC saturations, with PTA_TWIN_DONE */
+    unsigned       flags;    /* PTA_TWIN_CMD_*, or zero */
+    int            act_shift;   /* 0 .. 62 */
+    int            act_bits;    /* the operand's width, clamp included: 2 .. DIN_W */
+    const int64_t *bias;     /* N of them, in the sums' own units, or NULL for none */
+    long          *clips;    /* outputs the stage clamped, with PTA_TWIN_DONE */
 } pta_twin_cmd;
 
 /*
@@ -230,6 +280,13 @@ typedef struct {
  * That is the map's "refused, not dropped".  The tile refuses what the c930's
  * does: an impairment it does not build, or an ADC shift past 40 with any
  * impairment enabled; and a bank it does not have.
+ *
+ * The activation stage refuses, the same way: any flag on a build without the
+ * stage, or a flag it does not know; PTA_TWIN_CMD_HOLD without
+ * PTA_TWIN_CMD_ACT; a shift or a width out of range; more operands to hold than
+ * it has room for; and PTA_TWIN_CMD_FROM_HELD when nothing is held, or when
+ * what is held is not M x K.  A command that is refused has still taken its
+ * turn, so whatever was held before it is gone.
  */
 int       pta_twin_submit(pta_twin *t, const pta_twin_cmd *cmd);
 
@@ -263,6 +320,20 @@ uint32_t  pta_twin_gemm_seed(uint32_t seed, uint32_t index);
 
 /* The seed of calibration `index`, PTA_CAL_CT before it runs. */
 uint32_t  pta_twin_cal_seed(uint32_t cal_seed, uint32_t index);
+
+/*
+ * The activation stage's function, for one sum: the map's section 8.
+ *
+ *     v = max(sum + bias, 0)
+ *     v = round(v / 2^shift)              a half rounds up
+ *     a = min(v, 2^(bits-1) - 1)
+ *
+ * which is grx930's pta_mnist.c between its layers.  shift is 0 .. 62 and bits
+ * 2 .. 32; outside that it returns 0.  *clipped is set to whether the last line
+ * changed the value, and may be NULL.  sum + bias saturates where it would not
+ * fit 64 bits, which the harness's own addition would leave undefined.
+ */
+int64_t   pta_twin_activate(int64_t sum, int64_t bias, int shift, int bits, int *clipped);
 
 #ifdef __cplusplus
 }

@@ -16,6 +16,10 @@ the device cannot honour.
 *X5 built the twin of this map on 2026-10-04* (§6). Building it found things the
 map does not say, and §4, §5 and §7 carry them where they belong.
 
+*X6 specified the activation stage the same day* (§8), and built it into the
+twin. It is the last section because it was §7's last open item, and §7 keeps
+its number so that references to it still land.
+
 ---
 
 ## 1. Where the window sits
@@ -56,7 +60,7 @@ strength of a proposal.
 | 0x000 | `PTA_ID` | R | [31:8] the magic `0x505441`, "PTA"; [7:0] the version of this map, 1 |
 | 0x004 | `PTA_CAPS0` | R | The tile: [9:0] rows `k`, [19:10] columns `n`, [25:20] `DIN_W`, [31:26] `ACC_W` |
 | 0x008 | `PTA_CAPS1` | R | [6:0] impairments built, in `PTA_IMPAIR`'s bit order; [15:8] weight banks; [19:16], [23:20], [27:24] the widest activation, weight and ADC settings the hardware accepts |
-| 0x00C | `PTA_CAPS2` | R | [15:0] shot rate as built, in MHz; [16] the calibration engine and [17] the activation stage are present; [19:18] the tile, 0 none, 1 word-serial, 2 broadside; [31] this is the twin and not silicon |
+| 0x00C | `PTA_CAPS2` | R | [15:0] shot rate as built, in MHz; [16] the calibration engine and [17] the activation stage are present; [19:18] the tile, 0 none, 1 word-serial, 2 broadside; [24:20] the log2 of the operands the activation stage can hold (§8); [31] this is the twin and not silicon |
 
 A driver reads the geometry rather than assuming it. X2 sized the link against
 candidate geometries precisely because the real one is not settled (the board
@@ -141,6 +145,7 @@ does in the C1 harness, and publishes the counter so a run stays reproducible:
 | Offset | Name | Access | Description |
 |---|---|---|---|
 | 0x018 | `PTA_GEMM_CT` | R | GEMMs started since the last `PTA_SEED` write; the seed of GEMM *i* is a stated function of `PTA_SEED` and *i* |
+| 0x01C | `PTA_ACT_CLIP_CT` | R | Outputs the activation stage clamped, since the last GEMM start (§8). Zero after a GEMM that did not ask for the stage |
 
 *The function, as X5 built it.* The seed of GEMM *i* is the upper half of one
 step of SplitMix64 from the state `PTA_SEED · 2³² + i`:
@@ -287,7 +292,8 @@ grx930's `pta_gemm()` and `pta_cal_bank()`. None of the tile's arithmetic is
 written there. Its geometry is the caller's to name, because §7's first question
 is still open.
 
-**What the gate holds**, in 156 checks at 4 × 4, 8 × 8 and 256 × 64:
+**What the gate holds**, in 201 checks at 4 × 4, 8 × 8 and 256 × 64, of which 45
+are the activation stage's (§8):
 
 - *The map.* Every section above: identity, the seed and its counter, 64-bit
   counters with a latched upper half, interrupts, the engine's three words, the
@@ -337,7 +343,8 @@ MNIST files are not in this tree.
 **What it does not model**, each reading zero in the register that would say
 otherwise: the calibration scheduler, so only `CAL_NOW` starts one
 (`PTA_CTRL[6:4]`); the loop-order and residency modes (`PTA_CTRL[9:7]`); the
-activation stage (`PTA_CAPS2[17]`); a shot rate (`PTA_CAPS2[15:0]`). A
+activation stage unless the build asks for one (`PTA_CAPS2[17]`, §8); a shot
+rate (`PTA_CAPS2[15:0]`). A
 calibration does not interrupt a GEMM, because `pta_gemm()` is one call. Its
 timing is two formulas — a GEMM holds the tile for
 `programmings × PTA_TW + shots × PTA_TS` cycles, a calibration for
@@ -381,7 +388,10 @@ it to the twin's.
 8. **`SAT_THRESHOLD`'s threshold**, which no register holds.
 9. **Where a host writes a trim**, if a saved calibration is ever to be
    restored. Open on the c930's map too.
-10. **The activation stage's registers.** `PTA_CAPS2[17]` says whether the stage
+10. ~~**The activation stage's registers.**~~ *Closed by §8, 2026-10-04*, which
+    says what it computes, and that a command configures it and no register
+    does. What §8 leaves open is its own list. As this item stood:
+    `PTA_CAPS2[17]` says whether the stage
     is present and nothing here says what it computes or how it is configured.
     The c930's has its own block, a breakpoint table and a requantisation, and
     B4's addendum put one on the chiplet. The board plan's S3 gives this a price:
@@ -391,3 +401,123 @@ it to the twin's.
     proposal has reserved the flag bits such a command would use and cannot
     define them until this map does. The twin does not model the stage either
     (§6), and those figures use a stand-in for the host's round trip.
+
+---
+
+## 8. The activation stage
+
+*Specified 2026-10-04 and built into the twin the same day* (the board plan's
+X6). B4's addendum put an activation stage on the chiplet so that one layer's
+outputs need not cross the link to become the next layer's inputs. This section
+says what it computes and how a command asks for it.
+
+**What it computes.** For each of a GEMM's `M × N` complete sums, with the bias
+of its output `n`:
+
+```
+v = max(sum + bias[n], 0)
+v = round(v / 2^shift)              a half rounds up
+a = min(v, 2^(bits-1) - 1)
+```
+
+That is the step grx930's accuracy harness takes on the host between a network's
+layers (`c930/sim/pta_mnist.c`, `tile_batch`), and nothing more: a bias, a ReLU,
+a rescale back to an operand, and the operand's clamp. It applies to complete
+sums, after the last K tile has been accumulated, which is where grx930's S_ACT
+note found a stage has to sit.
+
+**It is not S_ACT.** B4's addendum called the cost "a nonlinearity fixed in
+silicon, which S_ACT has designed once already". S_ACT
+(`npu_act_stage_design_note.md` in grx930) is an experiment on all-optical
+activation: a transfer curve from a coupled-mode solver in a 1,025-entry table,
+shot noise on the light entering the unit, a per-unit detuning, and a
+requantisation standing in for an O-E-O reset. It has no bias. So it cannot take
+the step between D3's layers, and D3 is the one network with a measured
+accuracy. Two things S_ACT settled do carry over: where the stage sits, and
+that what it does belongs to a command and not to a live register.
+
+**A command asks for it, and no register does.** S_ACT's note records the
+hazard: a live enable applies to whichever command dispatches next. Here the
+stage's settings ride in the command that uses them and apply to that command
+alone.
+
+| In the command | Meaning |
+|---|---|
+| ACT | The results go through the stage. What comes back is operands, not sums |
+| HOLD | And they stay on the chiplet, to be the next command's activations. Nothing comes back. Needs ACT |
+| FROM_HELD | This command's activations are the ones held. It brings none |
+| shift | 0 to 62 |
+| bits | The operand's width, clamp included: 2 to `DIN_W` |
+| bias | `N` values in the sums' own units, or none |
+
+One command may set all three flags: a middle layer. A command that asks for
+nothing gets sums, whatever the command before it asked. So grxcp's gap 7.39, a
+stage somebody else left enabled changing what a GEMM returns, cannot arise on
+the chiplet.
+
+**Held operands are the next command's or nobody's.** Any command's start takes
+them or discards them. An unrelated command between two layers leaves nothing
+for the second, and so does a layer that was refused. A calibration between two
+layers does not take them, because a host cannot keep the engine from running
+one. A reset of the chiplet drops them. It is the strictest rule that still lets
+a network run, and it is strict on purpose: a command can never run on what is
+left of somebody else's network.
+
+**What it refuses**, as §5 has a refusal: accepted, ended as refused,
+`PTA_IRQ_STATUS.ERR` raised, nothing returned and nothing counted.
+
+- Any of the three flags on a chiplet without the stage, or a flag it does not
+  have.
+- HOLD without ACT: sums are not operands.
+- A shift or a width out of range.
+- More operands to hold than `PTA_CAPS2[24:20]` says there is room for.
+- FROM_HELD when nothing is held, or when what is held is not this command's
+  `M × K`.
+
+**What reports it.**
+
+| Where | What |
+|---|---|
+| `PTA_CAPS2[17]` | The stage is built |
+| `PTA_CAPS2[24:20]` | The log2 of the operands it can hold. 13 holds D3's hidden layer at a batch of 64; X2's 16.4 kB activation buffer is 14 |
+| `PTA_ACT_CLIP_CT`, 0x01C | Outputs the stage clamped, since the last GEMM start |
+| The command's result | The same count for that command, beside its ADC saturations |
+
+**What it is held to.** The twin's gate holds the function to fifteen cases
+worked by hand and 20,000 draws against the harness's three lines, and holds a
+network kept on the chiplet to the same network brought out at every layer: on
+an 8 × 8 tile through three layers and on a 256 × 64 tile at D3's shape, with
+every impairment the tile builds enabled, the last layer's sums agree element
+for element with each other and with a device the twins never see. Two twins
+that are each wrong in one way fail it: one whose shift truncates, and one
+whose held operands outlive the command after them.
+
+And it is held to grx930's harness itself, compiled into a program beside the
+twin (`pta_mnist_act_via_twin.c`; grx930 at `838c7cd`, 2026-10-04, not in CI).
+The harness cuts D3's shape into 54 GEMMs and takes its step on the host; the
+twin is given two commands with the hidden layer held. On four random networks,
+of one and three hidden layers, every operand a hidden layer hands on and every
+sum out of the last layer is the same: 6,400 and 640 at D3's shape. Two are the
+exact product on a 256 × 64 tile, and two have the three quantisers on, on the
+harness's own 8 × 8 tile, where a shot sees the same operands however the work
+is cut. **With noise the two are different runs and are not compared**: each
+GEMM draws from its own seed, and they cut the work into different GEMMs.
+
+**What it leaves open.**
+
+1. **Its time.** The twin adds none. It takes the stage to sit in the shot's own
+   pipeline, one unit a column, at the shot rate. A stage that took a beat an
+   output would spend 6.4 µs on D3's hidden layer at a batch of 64 and 1 GS/s,
+   against 3.74 µs for both of the network's GEMMs (the board plan's S3). So
+   "one unit a column" is a requirement on the interface chip, stated here and
+   not measured anywhere.
+2. **Any other nonlinearity.** ReLU is what D3 uses. S_ACT's table is how
+   another would be carried, and nothing has asked for one.
+3. **How it crosses link 2.** The host-path proposal to grxgpu reserved two
+   flag bits, for FROM_HELD and HOLD, and defined neither. It needs a third for
+   ACT and somewhere for the shift, the width and the bias. That is a further
+   amendment, and it can now be written.
+4. **Operands wider than a byte.** `bits` goes to `DIN_W`, and the link model
+   prices an operand at one byte.
+5. **`sum + bias` past 64 bits.** The harness's addition is undefined there. The
+   stage saturates. No sum a tile produces is near it.

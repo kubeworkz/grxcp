@@ -43,7 +43,7 @@ int main() {
   return 77;
 #else
   // One of the link model's candidate geometries for the chiplet.
-  const pta_twin_build build = {256, 64, 8, 48, 4};
+  const pta_twin_build build = {256, 64, 8, 48, 4, 0};
 
   // BEFORE THE FIRST grx CALL: enumeration runs once.
   const bool installed = grxtest::pta_twin_install(build, /*parent=*/0, /*with_link=*/false);

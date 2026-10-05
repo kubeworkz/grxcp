@@ -414,8 +414,9 @@ def main():
         share = " to ".join(f"{tile / t:.0%}" for t in ts)
         print(f"  {label:<40}{trips:>12}{total:>20}{share:>20}")
     print(f"  The list removes two round trips, {fmt_s(2 * host_s)}, whatever the launch costs.")
-    print("  The last row needs the chiplet's activation stage, which its register map")
-    print("  has a presence bit for and no registers, and which the twin does not model.")
+    print("  The last row needs the chiplet's activation stage.  The register map's section")
+    print("  8 specifies it and the twin runs it (the plan's X6).  grxgpu has not been asked")
+    print("  to carry it, so no host can submit that row yet.")
 
     findings()
     checks()

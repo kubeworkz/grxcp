@@ -52,7 +52,7 @@ namespace {
 
 // One of the link model's candidate geometries for the chiplet, with the 8-bit
 // operands the accuracy budget was measured at.
-const pta_twin_build kBuild = {256, 64, 8, 48, 4};
+const pta_twin_build kBuild = {256, 64, 8, 48, 4, 0};
 
 #define PTA_BITS_OF(a, w, adc, s) \
   ((uint32_t)(a) | ((uint32_t)(w) << 4) | ((uint32_t)(adc) << 8) | ((uint32_t)(s) << 12))

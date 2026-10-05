@@ -225,10 +225,13 @@ reader at the twin through a change of base, which is that map's claim that one
 driver addresses a c930 tile and a chiplet. It needs a C and a C++ compiler and
 nothing else, so it runs in tier 1 everywhere.
 
-Then it builds three twins that are each wrong in one way, and has to fail
+Then it builds five twins that are each wrong in one way, and has to fail
 against each: `PTA_TWIN_ABLATE_SEED` runs every GEMM on `PTA_SEED` itself,
-`PTA_TWIN_ABLATE_CAL_GUARD` takes a command into a calibrating tile, and
-`PTA_TWIN_ABLATE_RST_GUARD` honours a model reset under a running command.
+`PTA_TWIN_ABLATE_CAL_GUARD` takes a command into a calibrating tile,
+`PTA_TWIN_ABLATE_RST_GUARD` honours a model reset under a running command,
+`PTA_TWIN_ABLATE_ACT_ROUND` makes the activation stage's shift truncate, and
+`PTA_TWIN_ABLATE_HELD_GUARD` lets a command run on operands an earlier network
+left held.
 
 **A twin is not a chiplet**, and there is no chiplet. A green run says the map
 can be implemented as written and that this implementation is the model.
