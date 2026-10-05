@@ -2291,6 +2291,11 @@ against the work beside it, which a page cannot. It leaves the link's wire
 format open, narrowed to one command and the ways it can end. Nothing above
 changes until it is answered: the hooks are still all there is.
 
+*Amended the same day* ([kubeworkz/grxgpu#3](https://github.com/kubeworkz/grxgpu/pull/3)):
+the GEMM is also asked for as a member of the list of commands grxgpu's runtime
+already submits under one doorbell, because the board plan's S3 found that a
+call a GEMM makes the host's round trip the cost of a small network.
+
 ## 8. Where GRX-G100 is *ahead* of the reference
 
 Worth recording, because the platform should expose these rather than

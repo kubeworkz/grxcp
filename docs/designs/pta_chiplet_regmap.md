@@ -381,3 +381,13 @@ it to the twin's.
 8. **`SAT_THRESHOLD`'s threshold**, which no register holds.
 9. **Where a host writes a trim**, if a saved calibration is ever to be
    restored. Open on the c930's map too.
+10. **The activation stage's registers.** `PTA_CAPS2[17]` says whether the stage
+    is present and nothing here says what it computes or how it is configured.
+    The c930's has its own block, a breakpoint table and a requantisation, and
+    B4's addendum put one on the chiplet. The board plan's S3 gives this a price:
+    a two-layer network whose intermediate goes through the stage is 14.7 µs
+    in one round trip, where with a launch on the GPU between the layers it is
+    21.6 to 45.1. The host-path
+    proposal has reserved the flag bits such a command would use and cannot
+    define them until this map does. The twin does not model the stage either
+    (§6), and those figures use a stand-in for the host's round trip.
