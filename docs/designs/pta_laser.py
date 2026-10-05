@@ -55,6 +55,13 @@ ASSUMED, and marked again where each is used:
 B10 WAS REVISED ON THIS, 2026-10-05: the working tile is 128 x 64, which this
 file calls SMALLER.  It is kept as it was run, with 256 x 64 as WORKING.
 
+AND HALF OF IT IS THE HOST'S TO GIVE BACK.  The fill is the network's as much as
+the tile's: a layer's sums fall where its operands do, and the host sets two of
+them.  grx930's harness ran both on 128 x 64 (its design note, section 5, "How
+a network is put on the tile"; `sim/pta_mnist.sh MNIST WORK fill`): the hidden
+layer's rescale, which on the chiplet is the activation stage's shift, and the
+scale the first layer's weights are written at.  Section 5.
+
 Standard library only.  Run:  python3 docs/designs/pta_laser.py
 """
 import math
@@ -96,6 +103,28 @@ LIT = {
     (256, 64): ((25.82, 133.48), (6.68, 12.10)),
     (128, 64): ((14.75, 82.96), (6.68, 11.99)),
 }
+# How the network is put on the tile, on 128 x 64: (bits added to the hidden
+# rescale, bits of gain on the first layer's weights) -> points lost by the
+# laser's multiple; and what each clips, in percent of the hidden units that
+# fire and of the first layer's weights, with what that costs by itself.
+PUT = {
+    (0, 0):  {2: (2.74, 0.19), 4: (0.75, 0.07), 8: (0.35, 0.06)},
+    (0, 1):  {2: (2.90, 0.21), 4: (0.83, 0.12), 8: (0.50, 0.16)},
+    (0, 2):  {2: (5.65, 0.31), 4: (2.62, 0.34), 8: (2.05, 0.33)},
+    (-1, 0): {2: (0.92, 0.06), 4: (0.35, 0.06), 8: (0.22, 0.06)},
+    (-1, 1): {2: (0.83, 0.12), 4: (0.41, 0.13), 8: (0.34, 0.10)},
+    (-1, 2): {2: (2.64, 0.32), 4: (2.04, 0.29), 8: (1.89, 0.30)},
+    (-2, 0): {2: (0.99, 0.11), 4: (0.60, 0.08), 8: (0.46, 0.06)},
+    (-2, 1): {2: (0.79, 0.12), 4: (0.63, 0.12), 8: (0.52, 0.13)},
+    (-2, 2): {2: (2.67, 0.46), 4: (2.50, 0.45), 8: (2.41, 0.47)},
+}
+PUT_CLIPS = {
+    (0, 0): (0.00, 0.00, (0.00, 0.01)), (0, 1): (0.00, 0.38, (0.14, 0.08)), (0, 2): (0.00, 7.91, (1.46, 0.33)),
+    (-1, 0): (0.65, 0.00, (0.02, 0.01)), (-1, 1): (0.55, 0.38, (0.14, 0.08)), (-1, 2): (0.30, 7.91, (1.49, 0.35)),
+    (-2, 0): (13.45, 0.00, (0.26, 0.05)), (-2, 1): (12.24, 0.38, (0.33, 0.08)), (-2, 2): (9.57, 7.91, (1.94, 0.42)),
+}
+PUT_S8 = {(0, 0): (11, 9), (-1, 0): (11, 10), (-2, 0): (11, 10)}
+AS_SET, BIT_DOWN = (0, 0), (-1, 0)
 
 
 # ---- the light a column is sent ----------------------------------------------------
@@ -136,6 +165,17 @@ def times_within(tile, budget=WITHIN):
     ok = None
     for t in sorted((t for t in LOST[tile] if t), reverse=True):
         if over(tile, t) >= budget - 1e-9:
+            break
+        ok = t
+    return ok
+
+
+def times_put(put, budget=WITHIN):
+    """The least multiple at which the smaller tile, put on it this way, is within
+    the budget of its own version 1; None if none measured is."""
+    ok = None
+    for t in sorted(PUT[put], reverse=True):
+        if PUT[put][t][0] - LOST[SMALLER][0][0] >= budget - 1e-9:
             break
         ok = t
     return ok
@@ -264,6 +304,25 @@ def main():
     print("  So it is inside the budget's photon row, and it is not three orders away: it falls")
     print("  as the root of the laser where the receiver's falls as the laser.")
 
+    section("5. How the network is put on the tile, and what that gives back")
+    print(f"  {name(SMALLER)}, where version 1 as budgeted loses {LOST[SMALLER][0][0]:.2f} +-{LOST[SMALLER][0][1]:.2f}.  Points lost by the laser's multiple:")
+    print(f"  {'hidden rescale':<16}{'weight gain':>12}{'units clip':>12}{'weights clip':>14}{'that alone':>14}"
+          f"{'x 2':>14}{'x 4':>14}{'x 8':>14}{'within a tenth at':>19}")
+    for put in sorted(PUT, key=lambda k: (-k[0], k[1])):
+        hc, wc, alone = PUT_CLIPS[put]
+        t = times_put(put)
+        bits = ("none", "one bit", "two bits")
+        print(f"  {('the rule' + chr(39) + 's') if put[0] == 0 else bits[-put[0]] + ' less':<16}{bits[put[1]]:>12}{hc:>11.2f}%{wc:>13.2f}%"
+              f"{f'{alone[0]:.2f} +-{alone[1]:.2f}':>14}"
+              + "".join(f"{f'{PUT[put][m][0]:.2f} +-{PUT[put][m][1]:.2f}':>14}" for m in (2, 4, 8))
+              + f"{('none measured' if t is None else f'{t} times'):>19}")
+    need, down = times_put(AS_SET), times_put(BIT_DOWN)
+    lo, hi = laser_w(SMALLER, down)
+    print(f"  The first row is section 2's.  With the hidden rescale one bit under the clip rule the")
+    print(f"  second layer's shift is {PUT_S8[BIT_DOWN][1]} and not {PUT_S8[AS_SET][1]}, its fill {2 ** (PUT_S8[BIT_DOWN][1] - PUT_S8[AS_SET][1]):.0f} times what it was, and the laser")
+    print(f"  {down} times B5's and not {need}: {lo:.2f} to {hi:.1f} W.  On the chiplet that rescale is the activation")
+    print("  stage's shift, a field of the command (the register map's section 8).")
+
     findings()
     checks()
 
@@ -272,7 +331,7 @@ def findings():
     need, need_s = times_within(WORKING), times_within(SMALLER)
     lo, hi = laser_w(WORKING, need)
     print()
-    print("What this says, six readings.")
+    print("What this says, seven readings.")
     print()
     print("  1. B5'S LASER IS SIZED ON LIGHT THE DETECTORS DO NOT GET.  Its method takes a converter's")
     print(f"     full scale for all the light a column is sent.  On D3 at {name(WORKING)} it is {fill(WORKING, 0):.3f} of it on")
@@ -306,6 +365,17 @@ def findings():
     print(f"     loss, in proportion.  The rows.  And the workload: on MNIST a shot lights {LIT[WORKING][0][0] / WORKING[0]:.0%} of the")
     print("     tile's rows at the mean, and one that lights more fills more.  What does not")
     print("     move it is the receiver's gain, which scales the noise with the signal.")
+    print()
+    down, need = times_put(BIT_DOWN), times_put(AS_SET)
+    hc, _, alone = PUT_CLIPS[BIT_DOWN]
+    lo, hi = laser_w(SMALLER, down)
+    print(f"  7. AND HALF OF IT IS THE HOST'S TO GIVE BACK.  The hidden layer's rescale, one bit under")
+    print(f"     the rule that lets one unit in ten thousand reach full scale, clips {hc}% of the")
+    print(f"     units that fire and costs {alone[0]:.2f} of a point.  The second layer's operands are twice")
+    print(f"     as large, and {name(SMALLER)} is within a tenth of a point of version 1 at {down} times B5's")
+    print(f"     laser where it took {need}: {lo:.2f} to {hi:.1f} W.  A second bit buys nothing, and a gain on")
+    print("     the first layer's weights does not pay.  The rule was a converter's: it wasted")
+    print("     none of an operand's range, and under a laser the range is not what is short.")
 
 
 def checks():
@@ -377,6 +447,28 @@ def checks():
     assert [round(x) for x in fj_mac(SMALLER, 8)] == [140, 1351]
     assert abs(laser_w(WORKING, 16)[0] * averaging_gain() - 0.84) < 0.01
     assert abs(laser_w(WORKING, 16)[1] * averaging_gain() - 8.4) < 0.05
+
+    # 9. Section 5 and reading 7.  The first row is section 2's; a bit less of
+    #    rescale is half the laser at 4 and 8 times; a second bit and the weight
+    #    gain do not pay.
+    assert all(PUT[AS_SET][m] == LOST[SMALLER][m] for m in (2, 4, 8))
+    assert (times_put(AS_SET), times_put(BIT_DOWN)) == (8, 4)
+    assert PUT[BIT_DOWN][4] == LOST[SMALLER][8] and PUT[BIT_DOWN][8][0] == LOST[SMALLER][16][0]
+    assert PUT[BIT_DOWN][2][0] > LOST[SMALLER][4][0]            # the first layer's share is not given back
+    assert PUT_CLIPS[BIT_DOWN][0] == 0.65 and PUT_CLIPS[BIT_DOWN][2][0] == 0.02
+    assert abs(100 / PUT_CLIPS[BIT_DOWN][0] - 154) < 1
+    assert PUT_S8[BIT_DOWN][1] - PUT_S8[AS_SET][1] == 1 and PUT_S8[(-2, 0)] == PUT_S8[BIT_DOWN]
+    assert all(PUT[(-2, 0)][m][0] > PUT[BIT_DOWN][m][0] for m in (2, 4, 8))
+    assert PUT_CLIPS[(-2, 0)][0] > 13 and abs(PUT_CLIPS[(-2, 0)][2][0] - 0.26) < 0.005
+    assert all(PUT[(0, 1)][m][0] > PUT[AS_SET][m][0] for m in (2, 4, 8))
+    assert all(PUT[(-1, 1)][m][0] > PUT[BIT_DOWN][m][0] for m in (4, 8))
+    assert min(PUT, key=lambda k: PUT[k][4][0]) == BIT_DOWN and min(PUT, key=lambda k: PUT[k][8][0]) == BIT_DOWN
+    assert [times_put(k) for k in ((0, 1), (-1, 1), (-2, 0))] == [None, 4, None]
+    lo, hi = laser_w(SMALLER, times_put(BIT_DOWN))
+    assert abs(lo - 0.35) < 0.005 and abs(hi - 3.51) < 0.01
+    assert abs(b5_fraction(SMALLER) / times_put(BIT_DOWN) - 1 / 16) < 1e-12
+    half = fj_mac(SMALLER, times_put(BIT_DOWN))
+    assert [round(x) for x in half] == [97, 922], half
 
     # 8. The plan's other figures.  The row as one laser can meet it is a
     #    thirty-second of a line's light, on both tiles; a sixteenth costs 0.40

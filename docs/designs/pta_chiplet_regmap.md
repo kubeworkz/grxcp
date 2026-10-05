@@ -435,6 +435,16 @@ a rescale back to an operand, and the operand's clamp. It applies to complete
 sums, after the last K tile has been accumulated, which is where grx930's S_ACT
 note found a stage has to sit.
 
+**The shift is the laser's too** (2026-10-05; the board plan's B5, at its
+end). grx930's harness picks `shift` by a rule that lets one firing unit in
+ten thousand reach the clamp. A command that asks for one bit less hands the
+next layer operands twice as large: 0.65% of the units that fire clamp, D3
+loses 0.02 of a point, and the next layer's sums are twice the size beside the
+light they are read out of, which halves the laser the working tile needs.
+Two bits less clamp 13% and lose a quarter of a point for nothing. The stage
+does not change for it. `PTA_ACT_CLIP_CT` already counts what a shift clamps,
+which is what a program choosing one would watch.
+
 **It is not S_ACT.** B4's addendum called the cost "a nonlinearity fixed in
 silicon, which S_ACT has designed once already". S_ACT
 (`npu_act_stage_design_note.md` in grx930) is an experiment on all-optical

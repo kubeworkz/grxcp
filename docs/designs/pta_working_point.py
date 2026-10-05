@@ -27,6 +27,10 @@ those say.  Two things are particular to this file:
                  DERIVED at the other candidates: the multiple that leaves the
                  receiver what those two were left, a quarter of an LSB on the
                  first layer.  Nobody ran those
+  the rescale    pta_laser.py's last section: the hidden layer's rescale one bit
+                 under the clip rule halves the laser the working tile needs.
+                 MEASURED IN A MODEL at 128 x 64 and nowhere else, so every
+                 other tile and both scorecards stay at the rule's rescale
   the buses      a ring bank's, for a tile's own inputs: pta_source.py's
                  arithmetic at another input count, by B12's rule, the fewest
                  that hold across the published range of line spacings.  128
@@ -87,6 +91,22 @@ def b5_w(tile, fs=FS):
 def laser_w(tile, fs=FS):
     lo, hi = b5_w(tile, fs)
     return lo * times(tile), hi * times(tile)
+
+
+def times_down(tile):
+    """The multiple with the hidden rescale a bit under the clip rule: pta_laser.py's,
+    which grx930 ran at the working tile alone.  None anywhere else."""
+    return laser.times_put(laser.BIT_DOWN) if tile == laser.SMALLER else None
+
+
+def laser_down_w(tile, fs=FS):
+    lo, hi = b5_w(tile, fs)
+    return lo * times_down(tile), hi * times_down(tile)
+
+
+def fj_mac_down(tile, fs=FS):
+    c, l = chip_w(tile, fs), laser_down_w(tile, fs)
+    return tuple((c[i] + l[i]) / power.mac_s(*tile, fs) * 1e15 for i in (0, 1))
 
 
 # ---- the interface chip -------------------------------------------------------------
@@ -204,6 +224,10 @@ def main():
         ("laser: B5's method", lambda t: span(*b5_w(t)) + " W"),
         ("laser: on the light a column is sent", lambda t: f"{laser_w(t)[0]:.1f}-{laser_w(t)[1]:.1f} W, {times(t):.0f} times"),
         ("a MAC, every cell in use", lambda t: f"{fj_mac(t)[0]:.0f}-{fj_mac(t)[1]:,.0f} fJ"),
+        ("laser: the hidden rescale a bit down", lambda t: "not run" if times_down(t) is None else
+         f"{laser_down_w(t)[0]:.2f}-{laser_down_w(t)[1]:.1f} W, {times_down(t)} times"),
+        ("a MAC, at that", lambda t: "" if times_down(t) is None else
+         f"{fj_mac_down(t)[0]:.0f}-{fj_mac_down(t)[1]:,.0f} fJ"),
         ("the 4096-square layer", lambda t: f"{layer(t, FS, BATCH, *WIDE)['seconds'] * 1e6:.1f} us"),
         ("D3's two layers", lambda t: f"{d3_s(t) * 1e6:.2f} us"),
         ("weights a bank, and written a beat", lambda t: f"{t[0] * t[1]:,}, {shot.per_beat_two_banks(*t, BATCH)}"),
@@ -258,7 +282,7 @@ def main():
 
 def findings():
     print()
-    print("What this says, five readings.")
+    print("What this says, six readings.")
     print()
     a, b = fj_mac(TILE), fj_mac(FIRST)
     print(f"  1. THE MOVE HALVES WHAT THE TILE COSTS AND BARELY MOVES WHAT A MAC COSTS.  {lines_between(TILE):,} lines for {lines_between(FIRST):,},")
@@ -293,6 +317,12 @@ def findings():
           f" {', '.join(f'{x[1]:,.0f}' for x in e)} at the high.")
     print(f"     At {rate.gs(RATES[1])} one bus carries all {TILE[0]} inputs; at {rate.gs(FS)} it takes {buses(TILE)}.  B11's 1 GS/s was")
     print("     chosen on the measured parts' reach, and that has not moved.")
+    print()
+    d = fj_mac_down(TILE)
+    print(f"  6. AND THE HOST HALVES THE LASER AGAIN.  With the hidden layer's rescale one bit under the")
+    print(f"     clip rule the working tile needs {times_down(TILE)} times B5's laser and not {times(TILE)}: {laser_down_w(TILE)[0]:.2f} to {laser_down_w(TILE)[1]:.1f} W, and")
+    print(f"     a MAC is {d[0]:.0f} to {d[1]:.0f} fJ.  It is the activation stage's shift, a field of a command,")
+    print("     and it was run at this tile alone: the two scorecards above are at the rule's.")
 
 
 def checks():
@@ -374,6 +404,15 @@ def checks():
     assert all(laser_w(TILE, fs)[0] > chip_w(TILE, fs)[0] for fs in RATES)
     assert all(laser_w(TILE, fs)[1] > chip_w(TILE, fs)[1] for fs in RATES)
     assert e[3][1] < e[2][1] < e[1][1] and e[4][1] > e[3][1]
+
+    #    Reading 6: with the rescale a bit down, 4 times and not 8, at this tile alone.
+    assert times_down(TILE) == 4 and times_down(FIRST) is None and times(TILE) == 2 * times_down(TILE)
+    assert abs(laser_down_w(TILE)[0] - 0.35) < 0.005 and abs(laser_down_w(TILE)[1] - 3.51) < 0.01
+    assert [round(x) for x in fj_mac_down(TILE)] == [97, 922]
+    assert all(abs(x - y) < 0.5 for x, y in zip(fj_mac_down(TILE), laser.fj_mac(TILE, 4)))
+    assert laser.PUT[laser.BIT_DOWN][4] == laser.LOST[TILE][8]
+    line_down = [x / lines_each(TILE) * 1e3 for x in laser_down_w(TILE)]
+    assert abs(line_down[0] - 5.5) < 0.05 and abs(line_down[1] - 54.9) < 0.2
 
     # 7. The plan's two tables, cell by cell.
     assert [round(chip_w(TILE, fs)[0], 2) for fs in RATES] == [0.31, 0.35, 0.44, 0.63, 1.18]

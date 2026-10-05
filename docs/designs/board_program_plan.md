@@ -17,7 +17,8 @@ weight, a balanced pair of photodiodes. **B10 was settled at 256 × 64 and
 revised the same day to 128 × 64.** Two things found that day moved it.
 Published rings put the larger tile past a standard die. And B5's laser, sized
 on a detector's full scale, was low by sixteen times at 256 rows and eight at
-128 (B5, at its end), which left the larger tile little cheaper a MAC.
+128 (B5, at its end), which left the larger tile little cheaper a MAC. Half of
+that eight is the host's to give back, in the activation stage's shift.
 X2 has made its predictions (§3.3), X1 its budget (§4.3), and P0, X3 and X4
 are drafted as [`board_icd.md`](board_icd.md),
 [`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) and
@@ -299,6 +300,36 @@ and no workload makes the fill one.
 
 *B10 was revised to 128 × 64 on this, the same day.* The working tile's laser
 is then the 0.7–7 W above: eight times this decision's.
+
+*And half of that is the host's to give back, 2026-10-05*
+([`pta_laser.py`](pta_laser.py), its last section; grx930's design note, §5,
+"How a network is put on the tile"). The fill is the network's as much as the
+tile's: a layer's sums fall where its operands do, and the host sets two of
+them. grx930's harness ran both on the working tile.
+
+| How the network is put on the tile | What clips | That alone | At 2 times this decision's laser | 4 times | 8 times |
+|---|---|---|---|---|---|
+| As the harness's rule has it | One firing unit in ten thousand | 0.00 ± 0.01 | 2.74 ± 0.19 | 0.75 ± 0.07 | 0.35 ± 0.06 |
+| **The hidden layer's rescale one bit lower** | 0.65% of the units that fire | 0.02 ± 0.01 | 0.92 ± 0.06 | **0.35 ± 0.06** | 0.22 ± 0.06 |
+| Two bits lower | 13% of them | 0.26 ± 0.05 | 0.99 ± 0.11 | 0.60 ± 0.08 | 0.46 ± 0.06 |
+| The first layer's weights written twice as large | 0.38% of the weights | 0.14 ± 0.08 | 2.90 ± 0.21 | 0.83 ± 0.12 | 0.50 ± 0.16 |
+
+Version 1 as budgeted loses 0.34 ± 0.07 on this tile. With the hidden layer's
+rescale one bit under the rule it is within a tenth of a point of that at 4
+times this decision's laser, where it took 8: **0.35–3.5 W**. The second
+layer's operands are twice as large, so its sums are, and its share of the
+light with them. A second bit buys nothing, and a gain on the first layer's
+weights does not pay.
+
+That rescale is the activation stage's shift, which X6 made a field of a
+command. So it costs no hardware, and it is a choice a program makes with each
+layer. The rule it undercuts was a converter's: it wasted none of an operand's
+range, and under a laser the range is not what is short.
+
+It was run at 128 × 64 and nowhere else, on networks trained with no clip in
+the loop. And it gives back the second layer's share only: at twice this
+decision's laser the first layer's noise is an LSB, and nothing done to the
+hidden operands reaches it.
 
 **B6 — Silicon nodes, and the board before silicon.** grx930's manufacturing
 plan takes the SoC to SKY130 first, then to TSMC N28, and freezes the RTL now.
@@ -1358,6 +1389,15 @@ are larger than that, so it is inside the row. It is not three orders away,
 as B5 had the photons: it falls as the root of the laser where the receiver's
 falls as the laser.
 
+*And with the rescale a bit down, a sixteenth, 2026-10-05.* The row above is
+at the hidden layer's rescale as grx930's harness sets it, by a rule that lets
+one firing unit in ten thousand reach full scale. One bit under that rule the
+second layer's operands are twice as large, and the same accuracy is had with
+**the receiver's noise at a sixteenth of one line's light**: 4 times B5's
+laser on the working tile, where the row above is 8 (B5, at its end). It
+clips 0.65% of the units that fire and costs 0.02 of a point. On the chiplet
+it is the activation stage's shift.
+
 ### 4.4 To the PTA program
 
 - ~~C3, the calibration engine, continues, and becomes X3.~~ **Done**, both
@@ -1540,8 +1580,8 @@ What it fixes now, each from a model and none from a device
 | The die | 62 mm² at the smallest ring read, inside a standard 100. 20.3 by the floorplan's bound | 124 mm², and 39.7 |
 | Link 2 | Three modules with the weights re-sent; one with them held | Five; one |
 | Interface chip | 0.44 to 4.04 W | 0.55 to 7.61 W |
-| Laser | 0.7 to 7.0 W, eight times B5's method | 1.4 to 14 W, sixteen times |
-| A MAC, every cell in use | 140 to 1,351 fJ | 120 to 1,323 fJ |
+| Laser | 0.7 to 7.0 W, eight times B5's method. *0.35 to 3.5 W, four times, with the hidden layer's rescale one bit under the clip rule: B5, at its end* | 1.4 to 14 W, sixteen times |
+| A MAC, every cell in use | 140 to 1,351 fJ. *97 to 922 at that laser* | 120 to 1,323 fJ |
 | The 4096-square layer | 131 µs | 65.7 µs |
 | What the interface chip holds | 8,192 weights a bank in two banks, written 128 cells a beat; 64 receivers and 7-bit converters | 16,384, written 256 a beat |
 | The ring bank | Two buses of 64 lines on an 11 GHz grid | Four buses of the same 64 |
@@ -1710,9 +1750,9 @@ for a layer's weights; or a loss budget past 20 dB behind a laser under 0.88 W.
 
 *At 128 × 64, since B10's revision*
 ([`pta_working_point.py`](pta_working_point.py)): three link modules with the
-weights re-sent, 0.44 to 4.04 W on the interface chip, 0.7 to 7.0 W of laser,
-140 to 1,351 fJ a MAC, 128 G cells written a second at 128 a beat, and two
-buses. The rate, the shot clock, the converters, the receivers and the weight
+weights re-sent, 0.44 to 4.04 W on the interface chip, 0.7 to 7.0 W of laser
+(0.35 to 3.5 with the hidden rescale a bit down: B5), 140 to 1,351 fJ a MAC
+(97 to 922), 128 G cells written a second at 128 a beat, and two buses. The rate, the shot clock, the converters, the receivers and the weight
 ring's Q and swing are as above: none of them knows the tile's rows.
 
 **B12 — The tile's topology: a ring bank, lit by a comb.** *Settled 2026-10-05.*
@@ -2361,6 +2401,11 @@ X1's rows and X3.
    is the fastest rate that both measured parts reach, and neither has moved.
    One thing is new to this tile: at 0.5 GS/s one bus would carry all 128
    inputs, where 1 GS/s takes two.
+
+   Both tables are at the hidden layer's rescale as grx930's harness sets it.
+   One bit under that, the working tile's laser is half of what they show,
+   0.35–3.5 W at 1 GS/s, and a MAC 97–922 fJ (B5, at its end). That was run at
+   128 × 64 alone, so no other column moves here.
 2. **What does the development kit cost, and how many are built?** That settles
    B1 and B2 more than any technical argument does.
 3. **Does the GRX930's NPU keep a PTA of its own?** The c930 PTM work is built
