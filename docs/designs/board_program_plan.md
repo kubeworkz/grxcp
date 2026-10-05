@@ -489,7 +489,9 @@ the twin runs it. Five things.
   harness: the two cut a layer into different GEMMs, each GEMM draws from its own
   seed, and so they are different runs. And the networks are random. D3 on the
   trained networks, held on the chiplet, has not been run, so there is no
-  accuracy figure for a held network.
+  accuracy figure for a held network. *There is one since* (§4.3, the chiplet's
+  own tile): 0.20 ± 0.05 points at 256 × 64, by a chain of two exact
+  comparisons and not by a run of its own.
 
 What it adds to the interface chip's requirements (§4.3): an activation unit a
 column, at the shot rate, and room to hold a layer's operands. The twin gives
@@ -589,8 +591,10 @@ Seven things follow.
   933 times the GPU's arithmetic on the four layers, and its command may cost
   16 µs to 276 ms more than a launch before that turns. What chooses is whether
   the GEMM may go there at all: int8 operands, and a network whose loss at this
-  budget has been measured and accepted. That is one network, D3, at 0.81 points
-  with hourly calibration and 0.37 at six minutes (§4.3).
+  budget has been measured and accepted. That is one network, D3, at 0.24 points
+  with hourly calibration and 0.21 at six minutes on the 256 × 64 tile this
+  model prices. *It read 0.81 and 0.37 until 2026-10-04*, which are the 8 × 8
+  tile's and were the only figures there were (§4.3).
 - **At 1,536 MACs they are level.** The chiplet spends its time moving one padded
   weight set, 16,384 bytes for a layer of 192 weights, and the GPU's arithmetic
   takes as long.
@@ -639,8 +643,12 @@ D3 end to end, a batch of 64, fixed costs included:
 |---|---|---|---|
 | NPU | 29.3 ms | 97.45% | The array's rate. The SoC's NPU cannot be asked for either layer in one command |
 | GPU | 1.37 ms | 97.45% | Two launches at 30.5 µs, which is an indication |
-| Chiplet, hourly calibration | 3.74 µs and two commands | 96.64% | 25.6 to 64.7 µs with a command at the two measured costs |
-| Chiplet, calibrated every six minutes | the same | 97.08% | |
+| Chiplet, hourly calibration | 3.74 µs and two commands | 97.21% | 25.6 to 64.7 µs with a command at the two measured costs |
+| Chiplet, calibrated every six minutes | the same | 97.24% | |
+
+The chiplet's two accuracies are a 256 × 64 tile's. This table gave 96.64 and
+97.08 until 2026-10-04: the c930 core's 8 × 8 tile, on which drift costs more
+(§4.3).
 
 An activation stage on the GPU would put a launch between the two GEMMs: 30.5 µs,
 eight times what the chiplet spends on both. B4's addendum put the stage on the
@@ -864,6 +872,63 @@ It is still one small network (§8). This paragraph went on to say that the
 shape of the result — error compounds, every allowance tightens fourfold —
 would travel further than its numbers. It was the numbers that were wrong, and
 the shape went with them.
+
+*On the chiplet's own tile, 2026-10-04.* Every accuracy in this section was
+measured on the c930 core's 8 × 8 tile, in GEMMs that core accepts, and this
+plan's chiplet runs to 256 × 128 and takes a layer as one command. Nothing had
+asked whether the figures carry. grx930's harness now takes the tile as an
+option ([kubeworkz/grx930#39](https://github.com/kubeworkz/grx930/pull/39)), and its
+design note has the budget on four more of them. Loss in points on D3, five
+networks, a layer a GEMM off the core's tile:
+
+| | 8 × 8, as above | 64 × 8 | 128 × 64 | 256 × 64 | 256 × 128 |
+|---|---|---|---|---|---|
+| v1 | 0.26 ± 0.06 | 0.33 ± 0.11 | 0.34 ± 0.07 | 0.20 ± 0.05 | 0.23 ± 0.05 |
+| v0, at its 6-bit ADC | 1.49 ± 0.06 | 2.05 ± 0.40 | 2.17 ± 0.12 | 1.86 ± 0.17 | 1.78 ± 0.13 |
+| v1, six minutes of TFLT's drift | 0.37 ± 0.04 | 0.32 ± 0.12 | 0.33 ± 0.09 | 0.21 ± 0.04 | 0.23 ± 0.06 |
+| v1, an hour of it | 0.81 ± 0.21 | 0.56 ± 0.09 | 0.51 ± 0.07 | 0.24 ± 0.06 | 0.43 ± 0.15 |
+| v1, four hours of it | 5.18 ± 2.31 | 1.17 ± 0.07 | 0.74 ± 0.07 | 0.77 ± 0.16 | 1.18 ± 0.30 |
+| v1, an hour of TFLN's | 22.62 ± 4.79 | 4.24 ± 0.28 | 2.81 ± 0.22 | 1.92 ± 0.25 | 3.53 ± 0.99 |
+| v1, an hour of TFLT's, then calibrated | 0.22 ± 0.05 | 0.32 ± 0.08 | 0.21 ± 0.05 | 0.20 ± 0.05 | 0.25 ± 0.07 |
+
+Four things for this plan.
+
+- **v1 holds on every tile.** The interface chip's requirement stands as it is
+  written, on every candidate geometry.
+- **v0 does not carry.** It costs a quarter to a half more off the 8 × 8 tile,
+  five standard errors at 128 × 64. The menu above prices each of v0's rows on
+  the 8 × 8 tile, and on a larger one the light costs more and the receiver's
+  noise less.
+- **A noise row is the same noise from tile to tile only within a factor of
+  two.** The rows are in LSB of the tile's own ADC, and the ADC's shift is a
+  whole number of bits set by the tile's sums. The error a row leaves on a layer
+  goes as `√conversions × 2^shift`, and that predicts the receiver-noise row on
+  every tile to a few percent. Of the candidates, 128 inputs is the worst for
+  receiver noise and 256 the best: 128 needs the shift 256 needs and takes
+  nearly twice the conversions. That bears on §8's first question, the geometry,
+  and on B5's laser, which is sized from the receiver's noise in LSB.
+- **Drift costs far less on a large tile: 2.8 to 3.2 times less error at every
+  age.** An hour of TFLT's drift costs 0.55 points beyond v1 on the 8 × 8 tile
+  and 0.04 at 256 × 64. So the recalibration row above, and the interval X3 and
+  C3 worked to, were sized on the worst tile there is. **They are not relaxed
+  here**, for one reason. The model draws every cell's drift independently, and
+  the 8 × 8 tile is hurt because all 78,400 of a layer's weights pass through
+  the same 64 cells. If a real tile's neighbouring cells drift together, as
+  under a temperature they would, a larger tile gains less than this, and
+  nothing measured says how much less.
+
+The calibration itself works at every size: an hour of drift and then C3's
+correction returns every tile to its own v1. That needed a fix in grx930's
+harness, which had been returning without a word on a tile of more than 64
+cells. On the 8 × 8 tile that was every cell, so nothing above was affected.
+
+*And through the twin.* The same runs, with the twin where the model was, print
+the harness's lines byte for byte on every tile (`src/backends/pta_chiplet/`,
+its README). On a tile that is not the core's the harness gives a layer as one
+GEMM, so that is the twin being given what a chiplet would be given. With X6's
+gate, which holds a network kept on the chiplet to the same commands with every
+intermediate brought out, **the 256 × 64 column is the accuracy of D3 held on
+the chiplet.** X6 left that as not run.
 
 *What the two versions are on a single GEMM, 2026-10-03.* The PTA plan's S2
 measured the error of one GEMM against the exact product, at these two sets of

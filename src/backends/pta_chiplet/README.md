@@ -22,6 +22,7 @@ workload.
 | `test_pta_chiplet_twin.cc` | The gate |
 | `pta_mnist_via_twin.c` | grx930's accuracy harness with the twin where the model was — the software half of the board plan's P2 gate |
 | `pta_mnist_budget_via_twin.sh` | Runs that harness over grx930's whole accuracy budget and holds each line to the one recorded |
+| `pta_mnist_geometry_via_twin.sh` | The same for the budget on other tiles, the chiplet's among them, where the twin is given a layer as one command |
 | `pta_mnist_act_via_twin.c` | The activation stage held to that harness: grx930's own batch routine beside a twin that keeps every intermediate |
 | `pta_chiplet.h`, `pta_chiplet.cpp` | The host's driver: detection, the property's reader, the completion test, one GEMM start to end. In `libgrxrt` under `-DGRXCP_ENABLE_PTA=ON` |
 | `pta_chiplet_testing.h` | The seam that attaches a model as the chiplet the runtime enumerates |
@@ -183,7 +184,14 @@ with noise they are two different runs. What holds a held network to anything
 under noise is the gate above, where both runs are cut the same way.
 
 **The network is random.** No MNIST file is read and no accuracy is measured.
-D3 held on the chiplet, on the trained networks, has not been run.
+D3 held on the chiplet, on the trained networks, has not been run as such; its
+accuracy follows from two things that have been ("The D3 network through the
+twin", below).
+
+It needs grx930's harness from [kubeworkz/grx930#39](https://github.com/kubeworkz/grx930/pull/39)
+on, where the tile became an option: the harness's GEMM buffers are sized for
+the run, and this file asks the harness for them. Run again on that harness on
+2026-10-04, with the same four results.
 
 ## The D3 network through the twin
 
@@ -228,6 +236,36 @@ first, by six minutes of drift or by an hour.
 
 It is not in CI: grx930's harness and the MNIST files are not in this tree, and
 are not vendored for this.
+
+**And that is how a fault got in.** The activation stage added a field to the
+twin's build, `act_hold`, and `pta_mnist_via_twin.c` went on filling the build
+field by field, so it built its twin on whatever the stack held in that one.
+Nothing compiles this file but the commands above, and nothing ran them. It
+zeroes the build now. **Run again on 2026-10-04**, with that fix and the harness
+of [kubeworkz/grx930#39](https://github.com/kubeworkz/grx930/pull/39): all 220, byte
+for byte, 1,865,160 GEMMs.
+
+**On the chiplet's own tile, the same day.** Everything above is the c930
+core's 8 × 8 tile. grx930's harness now takes the tile as an option, and its
+`geometry` mode runs sixteen settings of the budget on six tiles: the core's two
+ways, and 64 × 8, 128 × 64, 256 × 64 and 256 × 128. Off the core's tile it gives
+a layer as one GEMM, so through this file the twin is given what a chiplet would
+be: one command a layer, 314 a pass over the test set where the core's cut is
+8,478. `pta_mnist_geometry_via_twin.sh` runs them and compares:
+
+```
+pta_mnist_geometry_via_twin.sh ~/pta-mnist ./pta_mnist_twin 5 all
+```
+
+All 450 printed the harness's own line, byte for byte, on every tile: 753,600
+GEMMs. The 30 runs of the setting that calibrates are left out and counted, for
+the reason below. The figures themselves are grx930's and are in its design
+note, and in the board plan's §4.3: v1 costs 0.20 ± 0.05 points at 256 × 64.
+
+**So D3 held on the chiplet has an accuracy, and it was not run.** The gate
+holds a network kept on the chiplet to the same commands with every
+intermediate brought out, bit for bit. These runs are those commands with every
+intermediate brought out. The held network's accuracy is theirs.
 
 It refuses what no register can do. The harness calibrates through
 `pta_trim_write()`, a host's trim write, and the map has no home for one. A run

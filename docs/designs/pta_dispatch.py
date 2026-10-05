@@ -30,8 +30,11 @@ THE FOUR TERMS ARE NOT THE SAME KIND OF NUMBER, and the tables say which is whic
              1 GS/s with two weight banks.  Each of those is a candidate or an
              assumption of the document it comes from.
   accuracy   MEASURED on one network: grx930's harness on D3, 784-100-10 on
-             MNIST (the board plan's section 4.3).  No other network has a
-             number, and this model does not supply one.
+             MNIST (the board plan's section 4.3), ON THE TILE THIS MODEL
+             PRICES, 256 x 64.  It first quoted the 8 x 8 tile's figures, which
+             were the only ones there were; grx930's design note section 5 now
+             has both.  No other network has a number, and this model does not
+             supply one.
 
 WHAT IT DOES NOT PRICE, and says so where it matters.
 
@@ -97,7 +100,12 @@ LINK1_GBS = 64.0                  # board_icd.md, link 1: "about 64 GB/s a direc
 # ---- accuracy, the board plan's 4.3 ------------------------------------------
 D3 = ((784, 100), (100, 10))
 D3_EXACT = 97.45                  # 8-bit operands, 6-bit weights, nothing else impaired
-D3_V1_LOSS = {"hourly calibration": 0.81, "every six minutes": 0.37}
+# v1's loss in points on a 256 x 64 tile, after an hour of TFLT's drift and
+# after six minutes of it (grx930's `pta_mnist.sh geometry`, five networks,
+# standard errors 0.06 and 0.04), and the same on the c930 core's 8 x 8 tile,
+# which is what this quoted until the harness could be asked for another.
+D3_V1_LOSS = {"hourly calibration": 0.24, "every six minutes": 0.21}
+D3_V1_LOSS_8X8 = {"hourly calibration": 0.81, "every six minutes": 0.37}
 
 WORK = (
     # name, M, K, N
@@ -384,6 +392,9 @@ def main():
     for label, loss in D3_V1_LOSS.items():
         print(f"  {'PTA, ' + label:<26}{fmt_s(tile):>10}   {D3_EXACT - loss:.2f}%   "
               f"{loss:.2f} points lost; and two commands")
+    print(f"  Those two are the {TILE[0]} x {TILE[1]} tile's.  On the c930 core's 8 x 8 they are "
+          + " and ".join(f"{D3_EXACT - x:.2f}%" for x in D3_V1_LOSS_8X8.values())
+          + ": drift costs a small tile more.")
     print(f"  With a command at the two measured costs the chiplet's D3 is"
           f" {fmt_s(tile + 2 * host_s)} to {fmt_s(tile + 2 * gpu_launch_s())}.")
     print(f"  An activation stage on the GPU puts a launch between the two GEMMs:"
@@ -600,7 +611,12 @@ def checks():
     assert npu_takes(*small[1:]) and not any(npu_takes(*w[1:]) for w in layers)
 
     # 10. The accuracy term is one network's, at two calibration intervals.
-    assert sorted(D3_V1_LOSS.values()) == [0.37, 0.81]
+    assert sorted(D3_V1_LOSS.values()) == [0.21, 0.24]
+    #     They are this tile's, and the tile is the one the model prices.  The
+    #     8 x 8 tile's are dearer at both intervals.
+    assert TILE == (256, 64)
+    assert all(D3_V1_LOSS[k] < D3_V1_LOSS_8X8[k] for k in D3_V1_LOSS)
+    assert sorted(D3_V1_LOSS_8X8.values()) == [0.37, 0.81]
 
     # 11. Section 6.  A launch between D3's two GEMMs is eight times what the
     #     chiplet spends on both.
@@ -650,7 +666,8 @@ def checks():
     assert fmt_s(sum(npu_s(BATCH, a, b) for a, b in D3)) == "29.3 ms"
     assert fmt_s(sum(gpu_s(BATCH, a, b) for a, b in D3)) == "1.37 ms"
     assert (fmt_s(d3 + 2 * host_s), fmt_s(d3 + 2 * gpu_launch_s())) == ("25.6 us", "64.7 us")
-    assert [round(D3_EXACT - x, 2) for x in D3_V1_LOSS.values()] == [96.64, 97.08]
+    assert [round(D3_EXACT - x, 2) for x in D3_V1_LOSS.values()] == [97.21, 97.24]
+    assert [round(D3_EXACT - x, 2) for x in D3_V1_LOSS_8X8.values()] == [96.64, 97.08]
 
     print()
     print("All checks pass.")
