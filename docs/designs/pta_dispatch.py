@@ -415,8 +415,8 @@ def main():
         print(f"  {label:<40}{trips:>12}{total:>20}{share:>20}")
     print(f"  The list removes two round trips, {fmt_s(2 * host_s)}, whatever the launch costs.")
     print("  The last row needs the chiplet's activation stage.  The register map's section")
-    print("  8 specifies it and the twin runs it (the plan's X6).  grxgpu has not been asked")
-    print("  to carry it, so no host can submit that row yet.")
+    print("  8 specifies it and the twin runs it (the plan's X6).  grxgpu has been asked to")
+    print("  carry it and has not answered, so no host can submit that row yet.")
 
     findings()
     checks()
