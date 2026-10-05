@@ -412,6 +412,9 @@ def main():
     print(f"  B5 planned on {LOSS_DB[0]:.0f} to {LOSS_DB[1]:.0f} dB.  At 1 GS/s the"
           f" scaling law does not enter, so these")
     print("  are the firmest numbers here.")
+    print("  (pta_laser.py, 2026-10-05: they are firm as B5's method and low as lasers.  The")
+    print("  method takes a detector's full scale for all the light a column is sent, which on")
+    print("  a 256-row tile it is an eighth of.  The working tile needs 16 times these.)")
     print()
     print(f"  Away from 1 GS/s the law matters.  The {k}x{n} tile under v1, in GS/s,")
     print("  as the range the two noise laws span (white noise is the low end below")
