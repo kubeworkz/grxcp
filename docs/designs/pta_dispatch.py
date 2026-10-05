@@ -247,6 +247,18 @@ def batch_for_half(kin, nout, command_s, **kw):
     return lo
 
 
+def d3_submitted_s(round_trips, launch_s, round_trip_s):
+    """D3 at a batch of 64 as a host sees it.
+
+    The chiplet's two GEMMs, the host's round trips, and whatever turns the
+    first layer's sums into the second's operands: a launch on the GPU costing
+    `launch_s` on the device, or None with that step on the chiplet.  The step's
+    own arithmetic is not priced.
+    """
+    chiplet = sum(pta(BATCH, a, b)["seconds"] for a, b in D3)
+    return chiplet + round_trips * round_trip_s + (launch_s or 0.0)
+
+
 def fmt_s(s):
     for unit, scale in (("s", 1.0), ("ms", 1e-3), ("us", 1e-6), ("ns", 1e-9)):
         if s >= scale * 0.9995:
@@ -382,6 +394,29 @@ def main():
     print("  the GPU the launch and the GEMMs are serial, so nothing overlaps to hide it.")
     print("  * the array's rate: the SoC's NPU cannot be asked for either layer in one command.")
 
+    section("7. One round trip for the network: what a command list is worth")
+    lo, hi = gpu_launch_s(False), gpu_launch_s()
+    print("  grxgpu's runtime already submits a list of commands under one doorbell and")
+    print("  one completion poll (vx_enqueue_commands, and vx_enqueue_draw as one command")
+    print("  the device expands).  The host-path proposal's GEMM was a call of its own.  Its")
+    print("  amendment makes it a member of the list.")
+    print(f"  D3 at a batch of {BATCH}.  The host's round trip is the c930's measured"
+          f" {fmt_s(host_s)}, a STAND-IN:")
+    print("  nobody has measured the G100's.  The step between the layers is a launch,")
+    print(f"  {fmt_s(lo)} to {fmt_s(hi)} on the device (section 5); its arithmetic is not priced.")
+    print(f"  {'how it is submitted':<40}{'round trips':>12}{'total':>20}{'the chiplet is':>20}")
+    rows = (("a call a GEMM, and the launch", 3, True),
+            ("one list", 1, True),
+            ("one list, the step on the chiplet", 1, False))
+    for label, trips, launch in rows:
+        ts = [d3_submitted_s(trips, x, host_s) for x in ((lo, hi) if launch else (None,))]
+        total = " to ".join(fmt_s(t) for t in ts)
+        share = " to ".join(f"{tile / t:.0%}" for t in ts)
+        print(f"  {label:<40}{trips:>12}{total:>20}{share:>20}")
+    print(f"  The list removes two round trips, {fmt_s(2 * host_s)}, whatever the launch costs.")
+    print("  The last row needs the chiplet's activation stage, which its register map")
+    print("  has a presence bit for and no registers, and which the twin does not model.")
+
     findings()
     checks()
 
@@ -414,6 +449,8 @@ def findings():
     print(f"     are {2 * host_s / d3:.1f} or {2 * gpu_launch_s() / d3:.0f} times that.  So what"
           f" rev 0 can measure of the chiplet's speed")
     print("     is the command path's, and the proposal to grxgpu is where that is decided.")
+    print("     One list for the network takes two of D3's three round trips away (section")
+    print("     7); keeping the step between its layers on the chiplet takes the launch too.")
     print()
     print("  4. THE LINK BINDS BEFORE THE TILE DOES, at one module, on every shape, and")
     print("     what crosses is weights.  D3's first layer programs eight whole sets to")
@@ -567,6 +604,29 @@ def checks():
     # 11. Section 6.  A launch between D3's two GEMMs is eight times what the
     #     chiplet spends on both.
     assert abs(gpu_launch_s() / d3 - 8.1) < 0.1
+
+    # 13. Section 7.  D3 as three submissions, as one list, and as one list with
+    #     the step between its layers on the chiplet.  The list takes 21.8 us off
+    #     at either launch cost, and the chiplet's share of its own network goes
+    #     from under a tenth to a quarter.
+    lo, hi = gpu_launch_s(False), gpu_launch_s()
+    calls = [d3_submitted_s(3, x, host_s) for x in (lo, hi)]
+    one = [d3_submitted_s(1, x, host_s) for x in (lo, hi)]
+    held = d3_submitted_s(1, None, host_s)
+    assert [fmt_s(t) for t in calls] == ["43.4 us", "67 us"], calls
+    assert [fmt_s(t) for t in one] == ["21.6 us", "45.1 us"], one
+    assert fmt_s(held) == "14.7 us", held
+    assert all(abs((a - b) - 2 * host_s) < 1e-12 for a, b in zip(calls, one))
+    assert fmt_s(2 * host_s) == "21.8 us"
+    assert [f"{d3 / t:.0%}" for t in calls] == ["9%", "6%"]
+    assert [f"{d3 / t:.0%}" for t in one] == ["17%", "8%"]
+    assert f"{d3 / held:.0%}" == "26%"
+    #     The intermediate that would stop crossing is not what the last row
+    #     saves: D3's second layer loses its 6,400 activation bytes from the
+    #     link and a tenth of a microsecond.
+    l2 = pta(BATCH, *D3[1])
+    assert l2["into"] == k * n + BATCH * D3[1][0] and BATCH * D3[1][0] == 6_400
+    assert abs(BATCH * D3[1][0] / (link.MODULE_GBS * 1e9) * 1e6 - 0.11) < 0.005
 
     # 12. board_program_plan.md 3.4 quotes these, figure for figure.
     f0_macs = macs(*f0)

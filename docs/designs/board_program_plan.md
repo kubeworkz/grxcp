@@ -541,10 +541,15 @@ Seven things follow.
   the work they carry. The tile is half of its own GEMM only from a batch of 628
   on D3's first layer and 6,063 on its second, at the smaller cost. So the speed
   rev 0 can measure for the chiplet is its command path's, and the proposal to
-  grxgpu (§4.2) is where that is decided. That proposal asks for one command a
-  GEMM. A descriptor that carries a network's layers, as the GPU's draw
+  grxgpu (§4.2) is where that is decided. That proposal asked for one call a
+  GEMM. ~~A descriptor that carries a network's layers, as the GPU's draw
   descriptor carries a pass's stages, is the obvious answer to this, and nobody
-  has proposed it.
+  has proposed it.~~ *Wrong, and corrected the same day.* grxgpu's runtime
+  already submits a list of commands under one doorbell and one completion poll
+  (`vx_enqueue_commands`, and `vx_enqueue_draw` as one command the device
+  expands). The proposal had been written without using it. It is amended to ask
+  for the GEMM as a member of that list (§4.2, and "one list for the network"
+  below).
 - **The link binds before the tile does**, at one module, on every shape, and
   what crosses is weights. D3's first layer programs eight whole sets to use 60%
   of them. X2 counts a set whole, padding and all; without the padding the
@@ -582,6 +587,25 @@ eight times what the chiplet spends on both. B4's addendum put the stage on the
 chiplet for the link's sake, and this is the same answer from the time side. With
 one command queue on the GPU, which is what the host-path proposal would leave
 (§4.2), the launch and the GEMMs are serial and nothing overlaps to hide it.
+
+**One list for the network.** The model's §7 prices D3 at a batch of 64 as a
+host would submit it. The host's round trip is the c930's measured 10.9 µs, a
+stand-in, since nobody has measured the G100's. The step between the two layers
+is a launch on the GPU, 6.9 to 30.5 µs on the device, and its arithmetic is not
+priced.
+
+| How it is submitted | Round trips | Total | The chiplet is |
+|---|---|---|---|
+| A call a GEMM, and the launch between them | 3 | 43.4 to 67 µs | 9% to 6% |
+| One list, as the amended proposal asks | 1 | 21.6 to 45.1 µs | 17% to 8% |
+| One list, with the step between the layers on the chiplet | 1 | 14.7 µs | 26% |
+
+The list removes two round trips, 21.8 µs, whatever the launch costs. The last
+row removes the launch as well and cannot be asked for yet: it needs the
+chiplet's activation stage, and X4 has a presence bit for that and no registers
+([`pta_chiplet_regmap.md`](pta_chiplet_regmap.md) §7, item 10). The intermediate
+that would stop crossing the link is not what that row saves. It is 6,400 bytes
+and a tenth of a microsecond.
 
 **What rev 0 can check, and what it cannot.** It can check the GPU's rate and
 its launch, the NPU's, the figure that separates them, and what a command to the
@@ -643,6 +667,19 @@ layer mis-sized, and the NPU's read-ahead dropped.
   - **The chiplet's own queue** would go. The command processor's ring would be
     the queue, the depth X4 leaves open (its §7, item 3) would not be a number
     anyone needs, and BUSY would mean running.
+  - *Amended, 2026-10-04* ([kubeworkz/grxgpu#3](https://github.com/kubeworkz/grxgpu/pull/3)),
+    open until grxgpu answers. S3 found that a call a GEMM makes the host's round
+    trip the cost of a small network, and that grxgpu's runtime already has the
+    answer: a list of commands under one doorbell. The amendment asks for the
+    chiplet's GEMM as a member of that list and as a step of the device-expanded
+    form, with one flag, "only after success", so that a layer whose input was
+    refused does not run on whatever was in memory. It withdraws the proposal's
+    question about where results go: in the descriptor, since a list has many.
+    It reserves three flag bits and defines none: two for a GEMM that takes the
+    previous one's results through the activation stage and keeps its own on the
+    chiplet, and one for resident weights. **The first two wait on grxcp**: X4
+    has to say what the activation stage computes before anyone can be asked to
+    carry a command that uses it.
   - **A launch and a GEMM on the chiplet would be serial** while the GPU has one
     command queue, which is its default. *S3 priced it* (§3.4): a launch between
     D3's two GEMMs costs eight times what the chiplet spends on both, which is a
