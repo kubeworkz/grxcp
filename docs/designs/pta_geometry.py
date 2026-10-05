@@ -38,7 +38,9 @@ WHAT KIND OF NUMBER EACH COLUMN IS, because they differ:
                     ADC survey, the receivers from one measured amplifier, the
                     drive from assumed capacitances and swings (pta_power.py).
                     The laser is B5's method at that amplifier's noise, behind
-                    10 and 20 dB of loss.
+                    10 and 20 dB of loss.  AND LOW: pta_laser.py has since
+                    sized it on the light a column is sent, 8 times this at
+                    128 rows and 16 at 256.  The column is kept as it was run.
   time, energy      PREDICTED.  pta_dispatch.py's time for a layer, at that
                     geometry's own module count, times the watts.
   accuracy          MEASURED IN A MODEL, on one network: D3, five trainings.

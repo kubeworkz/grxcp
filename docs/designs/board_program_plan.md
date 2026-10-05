@@ -15,7 +15,9 @@ Six more were raised and settled later and are in §7: B8, B9, and on
 rate, 1 GS/s, B12, its topology, a ring bank lit by a comb, and B13, how it
 signs a weight, a balanced pair of photodiodes. A reading of published rings
 the same day puts that tile past a standard die. Asked, the program let B10
-stand.
+stand. **And B5's laser was found low the same day, by sixteen times at the
+working tile:** it was sized on a detector's full scale, which is an eighth of
+the light a 256-row column is sent (B5, at its end).
 X2 has made its predictions (§3.3), X1 its budget (§4.3), and P0, X3 and X4
 are drafted as [`board_icd.md`](board_icd.md),
 [`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) and
@@ -249,6 +251,51 @@ of loss, which is past the whole of the 10–20 dB this decision ranged over. Th
 photodiode beside it and a limiting amplifier after it, and whether it keeps
 its noise a bond away from the detector, or stays linear over seven bits, its
 paper does not say. That is now the measurement to ask for.
+
+*And sized on the light a column is actually sent, 2026-10-05, it is sixteen
+times that* ([`pta_laser.py`](pta_laser.py); grx930's design note, §5, "What
+does a laser of a given size cost?"). Every figure above takes the light at a
+detector when its converter reads full scale to be the light the column was
+sent. It is not. A column is sent every line at full power whatever the inputs
+are, because a source does not know them. An input passes its activation's
+share of a line, and a ring sends what is left to one photodiode of a pair or
+the other. The converter's full scale is set where the sums fall, and on D3 at
+256 × 64 that is an eighth of what 256 lines send on the first layer and a
+thirty-second on the second.
+
+So a laser of the size above leaves the receiver 4 and 16 LSB of noise, where
+§4.3 holds it to half of one. grx930's harness ran it:
+
+| Laser | 256 × 64, points lost | 128 × 64 |
+|---|---|---|
+| Version 1 as budgeted | 0.20 ± 0.05 | 0.34 ± 0.07 |
+| This decision's laser | 39.19 ± 1.87 | 13.56 ± 1.14 |
+| 4 times it | 2.44 ± 0.24 | 0.75 ± 0.07 |
+| 8 times | 0.60 ± 0.07 | 0.35 ± 0.06 |
+| 16 times | 0.28 ± 0.06 | 0.22 ± 0.04 |
+| 32 times | 0.23 ± 0.06 | 0.20 ± 0.06 |
+
+The working tile is within a tenth of a point of version 1 at 16 times this
+decision's laser: **1.4–14 W** at the measured receiver, behind 10–20 dB. At
+128 × 64 it is 8 times, 0.7–7 W. If a receiver that averages over a shot (B12)
+keeps the measured one's noise density it has 0.60 of its noise, and the
+working tile's laser is 0.84–8.4 W.
+
+The method was right where it was made. On the core's 8 × 8 tile, which is
+where C1's sweep ran, eight lines are a full scale. Sums do not grow as a
+tile's rows do, and the light does. Every laser figure in this plan dated
+before this one is the method above and low by the same factor: B10's and
+B11's rows, B12's source, the two tables of §8's question 1, and the ICD's
+link 4.
+
+A laser of 1.4 to 14 W is not the item this decision placed. Its placement
+stands, off the package and on fiber. What it is on the board, thermally and
+for eye safety, has to be asked again, and so does what it is on the photonic
+die: 22 to 220 mW a line at four buses, where B12 has 1.4 to 14.
+
+It is one network, on MNIST, whose images light a tenth of a tile's rows at
+the mean. A workload that lights more of its inputs fills more of the light,
+and no workload makes the fill one.
 
 **B6 — Silicon nodes, and the board before silicon.** grx930's manufacturing
 plan takes the SoC to SKY130 first, then to TSMC N28, and freezes the RTL now.
@@ -1276,6 +1323,27 @@ It is one network, a first-order term added after the converter, and noise
 with no memory from shot to shot. No source's noise is held here, a comb's or
 an amplifier's: these rows say what one may be.
 
+*The receiver's row, as one laser fixes it, 2026-10-05*
+([`pta_laser.py`](pta_laser.py); B5, at its end). Version 1 gives the receiver
+half an LSB of an 8-bit ADC, and the budget was measured with each layer given
+half an LSB of its own converter. That is no one laser. The second layer's
+sums are a quarter the size of the first's on every tile, so its LSB is a
+quarter the light, and version 1 as budgeted is the first layer at 8 times
+B5's laser and the second at 32.
+
+Stated so that one laser can meet it, the row is **the receiver's noise at a
+thirty-second of one line's light at a detector**: an input at full scale
+through a weight of one. That is 16 times B5's laser on a 256-row tile and 8
+times on a 128-row one, and it costs under a tenth of a point over version 1
+on both. A sixteenth costs 0.40 on the working tile, and an eighth 2.2.
+
+Under it the shot noise of all the light a pair carries, which B13 left open,
+is 0.16 and 0.32 LSB on the two layers, where the receiver's is 0.25 and 0.99.
+That is what the photon row already allows a sum of 0.4 and 1.5 LSB, and sums
+are larger than that, so it is inside the row. It is not three orders away,
+as B5 had the photons: it falls as the root of the laser where the receiver's
+falls as the laser.
+
 ### 4.4 To the PTA program
 
 - ~~C3, the calibration engine, continues, and becomes X3.~~ **Done**, both
@@ -1459,7 +1527,7 @@ What it fixes, each from a model and none from a device:
 | Cells, inputs and link | 39.7 mm², a lower bound. *124 mm² or more at every ring read since: see below* | The floorplan, at its assumed 25 µm cell |
 | Link 2 | Five UCIe-S modules at a batch of 64 with the weights re-sent; one with them resident | X2 |
 | Interface chip | 0.55 to 7.6 W | Published parts |
-| Laser | 0.09 to 0.88 W at a measured receiver, behind 10 to 20 dB of loss | B5's method |
+| Laser | 0.09 to 0.88 W at a measured receiver, behind 10 to 20 dB of loss. *1.4 to 14 W on the light a column is sent: B5, at its end* | B5's method |
 | What the interface chip holds | 16,384 weights a bank in two banks, with a write path 256 cells a beat; 64 receivers and 7-bit converters; an activation unit a column and 2^14 held operands | §4.3, X6 |
 | v1 on D3 | 0.20 ± 0.05 points | grx930's harness |
 | `PTA_CAPS0` | 256 rows, 64 columns | X4 |
@@ -1497,6 +1565,16 @@ not, the working geometry is 128 × 64.
 256 × 64. That takes the photonic die past what a standard service takes at
 every ring read, and what such a die costs is P1's to find.
 
+*And the laser has been asked since* ([`pta_laser.py`](pta_laser.py); B5, at
+its end). What chose this tile over 128 × 64 was a cheaper MAC on wide layers,
+and that was reckoned on B5's laser, which is the same for both. Sized on the
+light each is actually sent, the laser is 1.4–14 W here and 0.7–7 W at
+128 × 64, and a MAC with every cell in use then costs 119 to 1,323 fJ here and
+140 to 1,351 there: the same. So the larger tile no longer buys a cheaper MAC.
+It buys half the time on a wide layer, for twice the laser, twice the die and
+five link modules for three. B10 is not reopened here either: it is the
+program's.
+
 **It is a working geometry and not a tape-out.** Three things would reopen it: a
 workload of layers 128 wide or less; a loss budget or a receiver that cannot
 light 64 columns; or a weight cell that is not resonant. *A fourth, since
@@ -1527,8 +1605,8 @@ What it fixes, each from a model and none from a device:
 | Receivers | 0.88 GHz of bandwidth a column. The one measured has 1.5 | Published |
 | Link 2 | Five modules with the weights re-sent, one with them held on the interface chip: B10's count, now at a settled rate | X2 |
 | Interface chip | 0.55 to 7.6 W | Published parts |
-| Laser | 0.09 to 0.88 W at the measured receiver, behind 10 to 20 dB of loss | B5's method |
-| A MAC, every cell in use | 39 to 518 fJ | The two rows above over the rate |
+| Laser | 0.09 to 0.88 W at the measured receiver, behind 10 to 20 dB of loss. *1.4 to 14 W on the light a column is sent: B5, at its end* | B5's method |
+| A MAC, every cell in use | 39 to 518 fJ. *119 to 1,323 with that laser* | The two rows above over the rate |
 | The weight path | 256 G cells a second, 256 cells a beat, each DAC rewritten at 15.6 MHz | §4.3 |
 | **The weight ring** | A Q of 97,000 at most and a swing of 2.3 V at least. A weight's LSB is 0.19 pm of resonance | Derived, [`pta_rate.py`](pta_rate.py) |
 | Buses | Three or more for 256 inputs: 102 lines a bus at most, on the smallest ring read | Derived |
@@ -1583,7 +1661,7 @@ What it fixes, each from a model and none from a device:
 | Grid | 11 GHz at the widest: eleven times the shot clock, and locked to it. 10 GHz, where a comb has been published, fits too | Derived |
 | Span | Inside 5.7 nm, one free spectral range of the ring read | [`pta_ring.py`](pta_ring.py) |
 | The weight ring | A Q of 62,000 to 97,000 and a swing of 2.3 to 3.6 V. From 81,000 at the published worst spacing | Derived |
-| The source | One comb, a pump before it and an amplifier after: 0.09 to 0.88 W in all, 1.4 to 14 mW a line, on B5's one fiber | [`pta_rate.py`](pta_rate.py) |
+| The source | One comb, a pump before it and an amplifier after: 0.09 to 0.88 W in all, 1.4 to 14 mW a line, on B5's one fiber. *Sixteen times both on the light a column is sent: 1.4 to 14 W, and 22 to 220 mW a line (B5, at its end)* | [`pta_rate.py`](pta_rate.py) |
 | Photodiodes | 256, one a bus a column. Still 64 receivers and 64 converters. *512 since B13: a pair a bus a column* | Derived |
 | The receiver | One that averages over a shot, or one steeper than a single pole | Derived |
 | A weight's LSB | 24 to 38 MHz of a line's position against its ring | Derived |
@@ -1660,7 +1738,10 @@ as made, or has to be trimmed. And two things the error model does not have
 for either reading. Its shot noise is the difference's, where a pair's
 photodiodes carry all the light a column is sent. And B5's laser was sized on
 a detector's full scale, where what a column is sent does not depend on its
-weights at all. Neither has been rerun.
+weights at all. Neither has been rerun. *Both have since*
+([`pta_laser.py`](pta_laser.py)). *The pair's shot noise is inside the budget's
+photon row at the laser the receiver needs. And that laser is sixteen times
+B5's: B5, at its end, and §4.3.*
 
 The twenty times is this network's. Its first layer's weights have an rms of
 0.14 of their range, with a few at the end of it, so the offset is large
@@ -2142,6 +2223,26 @@ X1's rows and X3.
    is the program's. Every ring figure rests on [`pta_ring.py`](pta_ring.py)'s
    five papers and its assumptions, 7.0 pm/V carried from one racetrack to any
    ring among them.
+
+   **The laser rows of both tables are low, 2026-10-05**
+   ([`pta_laser.py`](pta_laser.py); B5, at its end). They are B5's method, which
+   takes a converter's full scale for all the light a column is sent. On D3 it
+   is an eighth of it at 256 rows and a quarter at 128, and less on the second
+   layer. With the laser at what grx930's harness says each tile needs to stay
+   within a tenth of a point of version 1:
+
+   | | 128 × 64 | 256 × 64 | As the tables have it |
+   |---|---|---|---|
+   | Laser, W | 0.7–7.0 | 1.4–14 | 0.09–0.88 for both |
+   | A MAC, every cell in use, fJ | 140–1,351 | 119–1,323 | 65–600 and 39–518 |
+
+   Two readings above change with it. The geometry table's "the laser is the
+   same, because it follows the columns" does not hold: it follows the rows
+   too. And its energy case for the larger tile is gone, since a MAC now costs
+   the same on both. The shot-rate table's laser row scales as it did, as the
+   root of the rate, from sixteen times as much. Neither table has been rerun
+   at other tiles or rates with this laser, and the rows stay as they were
+   run.
 2. **What does the development kit cost, and how many are built?** That settles
    B1 and B2 more than any technical argument does.
 3. **Does the GRX930's NPU keep a PTA of its own?** The c930 PTM work is built

@@ -127,7 +127,13 @@ That was decided for one laser on one fiber, and what the tile asks of its sourc
 has since been written down ([`pta_shot_rate.py`](pta_shot_rate.py) §6). Four
 things, of which this document held one:
 
-- **Power.** The same light whichever way it is made: one laser of 0.33–3.3 W at
+- **Power.** *Every figure in this item and in link 4's row is low by sixteen
+  at the working tile, 2026-10-05* ([`pta_laser.py`](pta_laser.py); board plan
+  B5, at its end). They take a detector's full scale for all the light a
+  column is sent, and it is an eighth of it. On the light a 256-row column is
+  actually sent this link carries **1.4–14 W** at the measured receiver, 22 to
+  220 mW a line, and 0.7–7 W for a 128-row tile. What follows is as it was
+  written. The same light whichever way it is made: one laser of 0.33–3.3 W at
   1 GS/s for a 256 × 64 tile, or an emitter an input row at 1.3–12.8 mW each. An
   emitter of 10 mW a row stands 18.9 dB of loss, where the largest single laser
   B5 planned on stands 16.9.
@@ -155,6 +161,8 @@ things, of which this document held one:
   comb of 43 to 86 lines, 8 to 16 GHz apart and inside 5.7 nm, reused across
   three to six buses: not a line an input. Each line carries 1 to 20 mW, the
   whole 0.09 to 0.88 W, and its spacing wants locking to the shot clock (§4).
+  *(Sixteen times those powers since the laser was sized on the light a column
+  is sent: the Power item above.)*
   That is still one fiber. If the tile is not a ring bank this link carries one
   line, and the tile pays for it with a second device in every cell.
   *Settled the same day, as a working topology:* a ring bank on four buses, the

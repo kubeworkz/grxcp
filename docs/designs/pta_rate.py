@@ -53,7 +53,9 @@ WHAT KIND OF NUMBER EACH ROW IS, because they differ:
                     over the bandwidth a rate needs.  Past the rate its own
                     bandwidth settles, the figure is an extrapolation, and the
                     laser's upper end takes the harsher of pta_shot_rate.py's
-                    two laws from there.
+                    two laws from there.  AND LOW at every rate: it is B5's
+                    method, and pta_laser.py has since sized the laser on the
+                    light a column is sent, 16 times this at the working tile.
   watts             pta_power.py's sum at each rate, between pta_geometry.py's
                     two ends: 2 V with the weights held on the interface chip,
                     and 5 V with them re-sent.  A weight cell is driven at the
