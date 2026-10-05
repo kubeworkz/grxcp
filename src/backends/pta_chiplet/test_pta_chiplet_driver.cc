@@ -175,7 +175,7 @@ bool same_block(const pta_chiplet_analog_t& a, const npu_c930_analog_t& n) {
          a.accumulator_bits == n.accumulator_bits;
 }
 
-const pta_twin_build BUILD = {256, 64, 8, 48, 4};
+const pta_twin_build BUILD = {256, 64, 8, 48, 4, 0};
 
 void program_v1(pta_twin* t) {
   pta_twin_write32(t, PTA_TWIN_IMPAIR, PTA_QUANT | PTA_THERMAL | PTA_SHOT | PTA_PROG_ERR | PTA_XTALK);

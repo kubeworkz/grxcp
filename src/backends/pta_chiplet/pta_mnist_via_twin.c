@@ -190,6 +190,7 @@ long pta_gemm_via_twin(const pta_cfg *cfg, const pta_tile *tile, pta_device *dev
     int   status = -1;
     long  sats = -1;
 
+    memset(&cmd, 0, sizeof cmd);       /* nothing asked of the activation stage */
     if (!twin || starting)
         begin(tile, dev);
     if (cfg->seed != pta_twin_gemm_seed(base_seed, pta_twin_read32(twin, PTA_TWIN_GEMM_CT)))

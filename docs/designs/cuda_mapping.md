@@ -2217,6 +2217,12 @@ the smaller change and the one that cannot be ignored by a caller who does not
 look. Not built: it wants a decision about whether grxcp is ever going to *ask*
 for the stage, and that is `grxdnn`'s question rather than this register's.
 
+*On the PTA chiplet this cannot arise, 2026-10-04.* Its activation stage is
+asked for by the command that uses it and by nothing else
+(`pta_chiplet_regmap.md` §8), so there is no register for somebody to have left
+set, and a GEMM that asks for nothing returns sums. This entry stays open for
+the c930, whose stage is a live bit.
+
 ### 7.40 The photonic tile can be reported and not configured — **OURS, open**
 
 `grxDeviceProp_t.analogGemm` says what a GEMM on the c930's tile is: which

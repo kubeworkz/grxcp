@@ -169,6 +169,12 @@ not weights on the D3 network and 75% on a four-layer block, and that share
 grows with depth and with weight residency — which is where this design is
 going. The cost is chiplet area and a nonlinearity fixed in silicon, which
 S_ACT has designed once already.
+*Corrected 2026-10-04, by X6:* S_ACT had not designed it. S_ACT is grx930's
+experiment on all-optical activation, a transfer curve with shot noise and no
+bias, and the step between D3's layers is a bias, a ReLU, a rescale and a
+clamp. The stage is that step
+([`pta_chiplet_regmap.md`](pta_chiplet_regmap.md) §8). The decision is
+unchanged: the stage is on the chiplet.
 *Addendum, 2026-10-03, once the floorplan had been bounded (§8, question 1):*
 stacked, for any tile past several hundred cells. The interface chip holds a
 voltage a weight and the photonic die has nothing to hold one with, so a
@@ -322,6 +328,7 @@ tree. So L4 is planned alongside L1, not after it.
 | X3 | **Specified, measured and built:** [`pta_chiplet_calibration.md`](pta_chiplet_calibration.md), with C3(a)'s recovery and C3(b)'s RTL in its §8 — the trim returns a tile at chance to within 0.01 points of the no-drift case, and the engine that writes it agrees with the C reference cell for cell | C3's own gate, at TFLT's and TFLN's drift | Done |
 | X4 | **Drafted:** [`pta_chiplet_regmap.md`](pta_chiplet_regmap.md) — the §3.1 block at its own offsets in the GPU's BAR, with identity, interrupts and 64-bit counters added, and §3.2's contract restated for a device behind a link | Review | B4, B7 |
 | X5 | **Built, below:** the digital twin, `pta_tile_model.c` behind X4's map, so that drivers and grxcp can bring the PTA up before silicon | grxcp's backend gates pass against it, bitwise against the model. Bitwise against the model: met. Through grxcp's runtime: met by S4 (§3.4) | X4 |
+| X6 | **Built, below:** the chiplet's activation stage, specified in X4's §8 and built into the twin, so that a network need not leave the chiplet between its layers | A network held on the chiplet is the network brought out at every layer, bit for bit, and is grx930's harness. Met on the twin; not through grxcp's runtime, which has no call for a network | X5, S3 |
 
 **X2, predicted.** [`pta_chiplet_link.py`](pta_chiplet_link.py) prices the
 link the way F1 priced the c930's feed, and carries F3's handoff in its first
@@ -442,6 +449,58 @@ comparison of schedulers that
 twin is still owed. And it is a model: a result through it is a statement about
 the error model's arithmetic and a driver's use of the map, and not about a
 chiplet.
+
+**X6, built 2026-10-04: the activation stage.** X4 had a presence bit for the
+stage and nothing that said what it computes. S3 priced what that was worth:
+the last row of its "one list for the network" (§3.4), where a network's
+intermediate never returns to the GPU and no launch stands between its layers.
+[`pta_chiplet_regmap.md`](pta_chiplet_regmap.md) §8 is now the specification and
+the twin runs it. Five things.
+
+- **It is the step between D3's layers, and not S_ACT.** A bias, a ReLU, a
+  rounding shift back to an operand, and the operand's clamp: what grx930's
+  harness does on the host between layers. B4's addendum expected S_ACT's design
+  to serve. It cannot, because S_ACT has no bias, and D3 is the one network with
+  an accuracy to keep (§2, B4, corrected).
+- **A command asks for it and no register does.** Its settings ride in the
+  command and apply to that command alone, which is S_ACT's own lesson about a
+  live enable. A command either returns operands where it would return sums, or
+  holds them on the chiplet for the next command, which takes them as its
+  activations. Held operands are the next command's or nobody's: any command's
+  start takes or discards them, a calibration between two layers does not, and a
+  layer that was refused leaves nothing behind.
+- **Held, a network is the network brought out at every layer.** The twin's gate
+  grew from 156 checks to 201. On an 8 × 8 tile through three layers and a
+  256 × 64 tile at D3's shape, with every impairment the tile builds enabled, the
+  last layer's sums agree element for element: held, brought out with the step
+  taken by the test, and on a device the twins never see. Two more twins that are
+  each wrong in one way fail it, one whose shift truncates and one whose held
+  operands outlive the command after them.
+- **And it is grx930's harness, not a copy of it.** The function is the one piece
+  of arithmetic in the twin that is not grx930's, so it is held to grx930 from
+  outside: `pta_mnist_act_via_twin.c` compiles the harness's source into itself
+  and runs the harness's own batch routine beside the twin. The harness cuts D3's
+  shape into 54 GEMMs and takes its step on the host; the twin gets two commands.
+  On four random networks every operand a hidden layer hands on and every sum
+  out of the last layer is the same, 6,400 and 640 at D3's shape. Against a twin
+  whose shift truncates, 1,646 of those 6,400 differ. grx930 at `838c7cd`; not in
+  CI, because the harness is not in this tree.
+- **Two things it does not show.** Nothing with noise is compared against the
+  harness: the two cut a layer into different GEMMs, each GEMM draws from its own
+  seed, and so they are different runs. And the networks are random. D3 on the
+  trained networks, held on the chiplet, has not been run, so there is no
+  accuracy figure for a held network.
+
+What it adds to the interface chip's requirements (§4.3): an activation unit a
+column, at the shot rate, and room to hold a layer's operands. The twin gives
+the stage no time. One that took a beat an output would spend 6.4 µs on D3's
+hidden layer at a batch of 64, against 3.74 µs for both of the network's GEMMs.
+
+What it leaves. grxcp's runtime does not use it: grxBLAS runs one GEMM and has
+no notion of a network, so the stage is reachable through the twin's own call
+and nothing above it. grxgpu has not been asked to carry it: the host-path
+proposal reserved two flag bits and the stage needs a third and three fields
+(§4.2). And its time is a requirement and not a measurement.
 
 ### 3.4 Track S — grxcp
 
@@ -605,7 +664,9 @@ row removes the launch as well and cannot be asked for yet: it needs the
 chiplet's activation stage, and X4 has a presence bit for that and no registers
 ([`pta_chiplet_regmap.md`](pta_chiplet_regmap.md) §7, item 10). The intermediate
 that would stop crossing the link is not what that row saves. It is 6,400 bytes
-and a tenth of a microsecond.
+and a tenth of a microsecond. *X6 has since specified the stage and built it
+into the twin* (§3.3). It is the stage that removes the launch, whether its
+operands are held or returned. grxgpu has still not been asked to carry it.
 
 **What rev 0 can check, and what it cannot.** It can check the GPU's rate and
 its launch, the NPU's, the figure that separates them, and what a command to the
@@ -679,7 +740,10 @@ layer mis-sized, and the NPU's read-ahead dropped.
     previous one's results through the activation stage and keeps its own on the
     chiplet, and one for resident weights. **The first two wait on grxcp**: X4
     has to say what the activation stage computes before anyone can be asked to
-    carry a command that uses it.
+    carry a command that uses it. *X4's §8 now says* (X6, §3.3). A further
+    amendment is owed, and it is larger than the two bits foresaw: a third bit
+    to ask for the stage at all, and a shift, a width and a bias vector in the
+    command.
   - **A launch and a GEMM on the chiplet would be serial** while the GPU has one
     command queue, which is its default. *S3 priced it* (§3.4): a launch between
     D3's two GEMMs costs eight times what the chiplet spends on both, which is a

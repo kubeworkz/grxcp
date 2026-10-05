@@ -19,6 +19,9 @@
  *   PTA_TWIN_ABLATE_CAL_GUARD  a command that arrives during a calibration is
  *                              taken at once, into a tile that is not free
  *   PTA_TWIN_ABLATE_RST_GUARD  a MODEL_RST is honoured whatever is running
+ *   PTA_TWIN_ABLATE_ACT_ROUND  the activation stage's shift truncates
+ *   PTA_TWIN_ABLATE_HELD_GUARD held operands outlive the command after them,
+ *                              so a later one can run on a network's leftovers
  */
 #include "pta_chiplet_twin.h"
 
@@ -36,10 +39,14 @@ enum { T_IDLE, T_GEMM, T_CAL };
 
 typedef struct {
     int      bank, M, N, K;
-    int32_t *A, *B;        /* the twin's copies */
+    int32_t *A, *B;        /* the twin's copies; A is NULL when the activations are the held ones */
     int64_t *C;            /* the caller's */
     int     *status;
     long    *sats;
+    unsigned flags;
+    int      act_shift, act_bits;
+    int64_t *bias;         /* the twin's copy, or NULL */
+    long    *clips;
 } cmd_t;
 
 struct pta_twin {
@@ -68,7 +75,14 @@ struct pta_twin {
 
     cmd_t    cur;            /* the running command, */
     int64_t *cur_c;          /* its result, held until it ends, */
-    long     cur_sats;       /* and its saturations */
+    long     cur_sats;       /* its saturations */
+    long     cur_clips;      /* and what the activation stage clamped */
+
+    /* ---- the activation stage's held operands ---- */
+    int32_t *held;           /* build.act_hold of them, or NULL with no stage */
+    int      held_m, held_n; /* what is held is held_m x held_n */
+    int      held_valid;
+    uint32_t act_clip_ct;
 
     struct {                 /* the running calibration's outcome, published at its end */
         int      refused, clamped;
@@ -139,6 +153,7 @@ static void cmd_release(cmd_t *c)
 {
     free(c->A);
     free(c->B);
+    free(c->bias);
     memset(c, 0, sizeof *c);
 }
 
@@ -155,17 +170,81 @@ static uint64_t at_least_one(uint64_t cycles)
     return cycles ? cycles : 1;
 }
 
+/* ---- the activation stage ------------------------------------------------------------ */
+int64_t pta_twin_activate(int64_t sum, int64_t bias, int shift, int bits, int *clipped)
+{
+    int64_t v, amax;
+
+    if (clipped)
+        *clipped = 0;
+    if (shift < 0 || shift > 62 || bits < 2 || bits > 32)
+        return 0;
+    amax = ((int64_t)1 << (bits - 1)) - 1;
+    if (bias > 0 && sum > INT64_MAX - bias)
+        v = INT64_MAX;
+    else if (bias < 0 && sum < INT64_MIN - bias)
+        v = INT64_MIN;
+    else
+        v = sum + bias;
+    if (v < 0)
+        v = 0;
+    if (shift > 0) {
+#ifdef PTA_TWIN_ABLATE_ACT_ROUND
+        v >>= shift;
+#else
+        /* (v + 2^(shift-1)) >> shift, written so that it cannot overflow */
+        v = (v >> shift) + ((v >> (shift - 1)) & 1);
+#endif
+    }
+    if (v > amax) {
+        v = amax;
+        if (clipped)
+            *clipped = 1;
+    }
+    return v;
+}
+
+/* What the stage refuses, judged when the command's turn comes. */
+static int act_refused(const pta_twin *t, const cmd_t *c)
+{
+    const unsigned f = c->flags;
+
+    if (!f)
+        return 0;
+    if ((f & ~(PTA_TWIN_CMD_ACT | PTA_TWIN_CMD_HOLD | PTA_TWIN_CMD_FROM_HELD)) != 0)
+        return 1;
+    if (t->build.act_hold == 0)
+        return 1;
+    if ((f & PTA_TWIN_CMD_HOLD) && !(f & PTA_TWIN_CMD_ACT))
+        return 1;
+    if ((f & PTA_TWIN_CMD_ACT) && (c->act_shift < 0 || c->act_shift > 62 ||
+                                   c->act_bits < 2 || c->act_bits > t->build.din_w))
+        return 1;
+    if ((f & PTA_TWIN_CMD_HOLD) && (int64_t)c->M * c->N > (int64_t)t->build.act_hold)
+        return 1;
+    if ((f & PTA_TWIN_CMD_FROM_HELD) &&
+        (!t->held_valid || t->held_m != c->M || t->held_n != c->K))
+        return 1;
+    return 0;
+}
+
 /* ---- a GEMM ------------------------------------------------------------------------ */
 /*
- * The model's arithmetic for one command, into a buffer of the twin's own.
- * Returns the buffer, or NULL if the tile refuses the command, in which case
- * nothing has been counted and the model has not been called.
+ * The model's arithmetic for one command, into a buffer of the twin's own, and
+ * the activation stage's after it if the command asks.  Returns the buffer, or
+ * NULL if the tile or the stage refuses the command, in which case nothing has
+ * been counted and the model has not been called.
  */
-static int64_t *gemm_arith(pta_twin *t, const cmd_t *c, long *sats)
+static int64_t *gemm_arith(pta_twin *t, const cmd_t *c, long *sats, long *clips)
 {
     pta_cfg  cfg;
     int64_t *out;
     long     r;
+    const int32_t *a = (c->flags & PTA_TWIN_CMD_FROM_HELD) ? t->held : c->A;
+
+    *clips = 0;
+    if (act_refused(t, c))
+        return NULL;
 
     cfg_from_regs(t, &cfg);
     /* The c930 core's own refusal (c930_npu_core.sv, pta_bad): a bit the tile
@@ -183,12 +262,22 @@ static int64_t *gemm_arith(pta_twin *t, const cmd_t *c, long *sats)
     out = (int64_t *)malloc((size_t)c->M * (size_t)c->N * sizeof *out);
     if (!out)
         return NULL;
-    r = pta_gemm(&cfg, &t->tile, &t->dev, c->bank, c->M, c->N, c->K, c->A, c->B, out);
+    r = pta_gemm(&cfg, &t->tile, &t->dev, c->bank, c->M, c->N, c->K, a, c->B, out);
     if (r < 0) {
         free(out);
         return NULL;
     }
     *sats = r;
+    if (c->flags & PTA_TWIN_CMD_ACT) {
+        int m, n, clipped;
+        for (m = 0; m < c->M; ++m)
+            for (n = 0; n < c->N; ++n) {
+                int64_t *v = &out[(size_t)m * (size_t)c->N + (size_t)n];
+                *v = pta_twin_activate(*v, c->bias ? c->bias[n] : 0, c->act_shift, c->act_bits,
+                                       &clipped);
+                *clips += clipped;
+            }
+    }
     return out;
 }
 
@@ -198,9 +287,14 @@ static void gemm_begin(pta_twin *t, cmd_t *c)
     const uint64_t tiles = (uint64_t)((c->N + t->build.cols - 1) / t->build.cols) *
                            (uint64_t)((c->K + t->build.rows - 1) / t->build.rows);
     const uint64_t shots = tiles * (uint64_t)c->M;
-    long     sats = 0;
-    int64_t *out  = gemm_arith(t, c, &sats);
+    long     sats = 0, clips = 0;
+    int64_t *out  = gemm_arith(t, c, &sats, &clips);
 
+    /* Held operands are the next command's or nobody's.  This command has had
+     * its turn: it took them, or it did not want them, or it was refused. */
+#ifndef PTA_TWIN_ABLATE_HELD_GUARD
+    t->held_valid = 0;
+#endif
     if (!out) {
         raise_irq(t, PTA_TWIN_IRQ_ERR);
         cmd_end(c, PTA_TWIN_REFUSED);
@@ -208,6 +302,8 @@ static void gemm_begin(pta_twin *t, cmd_t *c)
     }
     t->gemm_ct  += 1;
     t->sat_ct    = (uint64_t)sats;       /* the count restarts at a GEMM start */
+    t->act_clip_ct = (uint32_t)clips;    /* and so does this one */
+    t->cur_clips = clips;
     t->shot_ct  += shots;
     t->wload_ct += tiles;
     t->cur       = *c;
@@ -219,9 +315,22 @@ static void gemm_begin(pta_twin *t, cmd_t *c)
 
 static void gemm_end(pta_twin *t)
 {
-    memcpy(t->cur.C, t->cur_c, (size_t)t->cur.M * (size_t)t->cur.N * sizeof *t->cur_c);
+    const size_t n = (size_t)t->cur.M * (size_t)t->cur.N;
+
+    if (t->cur.flags & PTA_TWIN_CMD_HOLD) {
+        size_t i;
+        for (i = 0; i < n; ++i)
+            t->held[i] = (int32_t)t->cur_c[i];      /* 0 .. 2^(bits-1) - 1: it fits */
+        t->held_m = t->cur.M;
+        t->held_n = t->cur.N;
+        t->held_valid = 1;
+    } else {
+        memcpy(t->cur.C, t->cur_c, n * sizeof *t->cur_c);
+    }
     if (t->cur.sats)
         *t->cur.sats = t->cur_sats;
+    if (t->cur.clips)
+        *t->cur.clips = t->cur_clips;
     free(t->cur_c);
     t->cur_c = NULL;
     cmd_end(&t->cur, PTA_TWIN_DONE);
@@ -327,6 +436,7 @@ static void regs_reset(pta_twin *t)
     t->cal_cfg = t->trim = t->cal_seed = 0;
     t->irq_status = t->irq_mask = 0;
     t->gemm_ct = t->cal_ct = 0;
+    t->act_clip_ct = 0;
     t->cal_cyc = t->shot_ct = t->wload_ct = t->sat_ct = 0;
     t->cal_cyc_hi = t->shot_hi = t->wload_hi = t->sat_hi = 0;
     t->err_max = t->err_found = 0;
@@ -345,6 +455,10 @@ pta_twin *pta_twin_new(const pta_twin_build *b)
         b->din_w < 2 || b->din_w > 32 || b->acc_w < 2 || b->acc_w > 63 ||
         b->queue_depth < 1 || b->queue_depth > 64)
         return NULL;
+    /* No stage, or room for a power of two of operands: PTA_CAPS2 reports a log2. */
+    if (b->act_hold < 0 || (int64_t)b->act_hold > ELEM_MAX ||
+        (b->act_hold & (b->act_hold - 1)) != 0)
+        return NULL;
     t = (pta_twin *)calloc(1, sizeof *t);
     if (!t)
         return NULL;
@@ -354,7 +468,10 @@ pta_twin *pta_twin_new(const pta_twin_build *b)
     t->tile.din_w = b->din_w;
     t->tile.acc_w = b->acc_w;
     t->q = (cmd_t *)calloc((size_t)b->queue_depth, sizeof *t->q);
-    if (!t->q || pta_device_init(&t->dev, &t->tile) != 0) {
+    if (b->act_hold > 0)
+        t->held = (int32_t *)calloc((size_t)b->act_hold, sizeof *t->held);
+    if (!t->q || (b->act_hold > 0 && !t->held) || pta_device_init(&t->dev, &t->tile) != 0) {
+        free(t->held);
         free(t->q);
         free(t);
         return NULL;
@@ -381,6 +498,7 @@ static void drop_all(pta_twin *t)
     t->state = T_IDLE;
     t->left = 0;
     t->cal_pending = 0;
+    t->held_valid = 0;
 }
 
 void pta_twin_reset(pta_twin *t)
@@ -400,6 +518,7 @@ void pta_twin_free(pta_twin *t)
         return;
     drop_all(t);
     pta_device_free(&t->dev);
+    free(t->held);
     free(t->q);
     free(t);
 }
@@ -417,7 +536,11 @@ int pta_twin_submit(pta_twin *t, const pta_twin_cmd *cmd)
 {
     cmd_t c;
 
-    if (!t || !cmd || !cmd->A || !cmd->B || !cmd->C)
+    /* A is not read when the activations are the held ones, and C is not
+     * written when the results are to be held. */
+    if (!t || !cmd || !cmd->B ||
+        (!cmd->A && !(cmd->flags & PTA_TWIN_CMD_FROM_HELD)) ||
+        (!cmd->C && !(cmd->flags & PTA_TWIN_CMD_HOLD)))
         return -1;
     if (cmd->M < 1 || cmd->N < 1 || cmd->K < 1 ||
         cmd->M > DIM_MAX || cmd->N > DIM_MAX || cmd->K > DIM_MAX ||
@@ -441,11 +564,23 @@ int pta_twin_submit(pta_twin *t, const pta_twin_cmd *cmd)
     c.C = cmd->C;
     c.status = cmd->status;
     c.sats = cmd->sats;
-    c.A = copy_i32(cmd->A, (size_t)cmd->M * (size_t)cmd->K);
+    c.flags = cmd->flags;
+    c.act_shift = cmd->act_shift;
+    c.act_bits = cmd->act_bits;
+    c.clips = cmd->clips;
+    if (!(cmd->flags & PTA_TWIN_CMD_FROM_HELD))
+        c.A = copy_i32(cmd->A, (size_t)cmd->M * (size_t)cmd->K);
     c.B = copy_i32(cmd->B, (size_t)cmd->K * (size_t)cmd->N);
-    if (!c.A || !c.B) {
+    if ((cmd->flags & PTA_TWIN_CMD_ACT) && cmd->bias) {
+        c.bias = (int64_t *)malloc((size_t)cmd->N * sizeof *c.bias);
+        if (c.bias)
+            memcpy(c.bias, cmd->bias, (size_t)cmd->N * sizeof *c.bias);
+    }
+    if ((!c.A && !(cmd->flags & PTA_TWIN_CMD_FROM_HELD)) || !c.B ||
+        ((cmd->flags & PTA_TWIN_CMD_ACT) && cmd->bias && !c.bias)) {
         free(c.A);
         free(c.B);
+        free(c.bias);
         return -1;
     }
     if (c.status)
@@ -455,10 +590,11 @@ int pta_twin_submit(pta_twin *t, const pta_twin_cmd *cmd)
     /* The guard removed: a command that arrives during a calibration goes
      * straight into the tile, and comes straight out of it. */
     if (t->state == T_CAL) {
-        long     sats = 0;
-        int64_t *out  = gemm_arith(t, &c, &sats);
+        long     sats = 0, clips = 0;
+        int64_t *out  = gemm_arith(t, &c, &sats, &clips);
         if (out) {
-            memcpy(c.C, out, (size_t)c.M * (size_t)c.N * sizeof *out);
+            if (c.C)
+                memcpy(c.C, out, (size_t)c.M * (size_t)c.N * sizeof *out);
             free(out);
             t->gemm_ct += 1;
             if (c.sats)
@@ -545,6 +681,18 @@ static uint32_t caps1(const pta_twin *t)
     return PTA_TWIN_BUILT | (PTA_TWIN_BANKS << 8) | (qmax << 16) | (qmax << 20) | (15u << 24);
 }
 
+/* The activation stage, if this build has one, and the log2 of what it holds. */
+static uint32_t caps2_act(const pta_twin *t)
+{
+    uint32_t log2 = 0;
+
+    if (t->build.act_hold == 0)
+        return 0;
+    while (((uint32_t)1 << log2) < (uint32_t)t->build.act_hold)
+        ++log2;
+    return PTA_TWIN_CAPS2_ACT | (log2 << PTA_TWIN_CAPS2_HOLD_SHIFT);
+}
+
 static uint32_t status(const pta_twin *t)
 {
     const int busy = t->state == T_GEMM || t->q_len > 0;
@@ -574,7 +722,9 @@ uint32_t pta_twin_read32(pta_twin *t, uint32_t off)
     case PTA_TWIN_ID:         return PTA_TWIN_ID_VALUE;
     case PTA_TWIN_CAPS0:      return caps0(t);
     case PTA_TWIN_CAPS1:      return caps1(t);
-    case PTA_TWIN_CAPS2:      return PTA_TWIN_CAPS2_TWIN | (PTA_TWIN_KIND << 18) | PTA_TWIN_CAPS2_CAL;
+    case PTA_TWIN_CAPS2:      return PTA_TWIN_CAPS2_TWIN | (PTA_TWIN_KIND << 18) | PTA_TWIN_CAPS2_CAL |
+                                     caps2_act(t);
+    case PTA_TWIN_ACT_CLIP_CT: return t->act_clip_ct;
     case PTA_TWIN_IRQ_STATUS: return t->irq_status;
     case PTA_TWIN_IRQ_MASK:   return t->irq_mask;
     case PTA_TWIN_GEMM_CT:    return t->gemm_ct;

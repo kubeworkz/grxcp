@@ -1,7 +1,7 @@
 // test_pta_chiplet_twin.cc -- the gate for the PTA chiplet's digital twin (X5).
 //
 // The board plan's gate for X5 is "grxcp's backend gates pass against it,
-// bitwise against the model".  This is that, in three parts:
+// bitwise against the model".  This is that, in four parts:
 //
 //   1. THE MAP.  Every behaviour docs/designs/pta_chiplet_regmap.md gives the
 //      chiplet -- identity, the per-GEMM seed, 64-bit counters, the completion
@@ -14,19 +14,24 @@
 //      at the twin through nothing but a change of base -- which is the map's
 //      claim that one driver addresses both -- and then a GEMM reproduced from
 //      what that driver read, and PTA_GEMM_CT, alone.
+//   4. THE ACTIVATION STAGE (X6, the map's section 8).  Its function against
+//      the three lines of grx930's harness it is defined as; a network held on
+//      the chiplet against the same network brought out at every layer; what
+//      the stage refuses; and how long held operands last.
 //
 // NOTHING HERE IS HARDWARE.  The twin is a register file in front of an error
 // model, and a pass says the map can be implemented as written and that this
 // implementation is the model.  It says nothing about a chiplet, which does
 // not exist, or about a photonic device.
 //
-// Built three more times with one of the twin's ablation switches each, this
+// Built five more times with one of the twin's ablation switches each, this
 // file has to FAIL: ci/build_mock.sh requires it.
 
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "npu_c930.h"
@@ -155,6 +160,7 @@ int submit(pta_twin* t, int bank, int M, int N, int K, const std::vector<int32_t
            const std::vector<int32_t>& B, Run* r) {
   r->C.assign(static_cast<size_t>(M) * N, POISON);
   pta_twin_cmd c;
+  std::memset(&c, 0, sizeof c);
   c.bank = bank;
   c.M = M;
   c.N = N;
@@ -191,9 +197,9 @@ bool all_poison(const std::vector<int64_t>& c) {
   return true;
 }
 
-const pta_twin_build B4x4 = {4, 4, 16, 48, 4};       // the c930 register model's tile
-const pta_twin_build B8x8 = {8, 8, 8, 48, 4};        // grx930's bench tile
-const pta_twin_build B256x64 = {256, 64, 8, 48, 4};  // one of X2's candidates for the chiplet
+const pta_twin_build B4x4 = {4, 4, 16, 48, 4, 0};       // the c930 register model's tile
+const pta_twin_build B8x8 = {8, 8, 8, 48, 4, 0};        // grx930's bench tile
+const pta_twin_build B256x64 = {256, 64, 8, 48, 4, 0};  // one of X2's candidates for the chiplet
 
 int amax_of(const pta_twin_build& b) { return b.din_w >= 16 ? 127 : (1 << (b.din_w - 1)) - 1; }
 
@@ -265,8 +271,8 @@ void t_identity() {
                     pta_twin_read32(t, PTA_TWIN_CAPS1) == c1 && pta_twin_read32(t, PTA_TWIN_CAPS2) == c2);
     pta_twin_free(t);
   }
-  const pta_twin_build bad[] = {{0, 4, 8, 48, 4}, {4, 1024, 8, 48, 4}, {4, 4, 1, 48, 4},
-                                {4, 4, 8, 64, 4}, {4, 4, 8, 48, 0}};
+  const pta_twin_build bad[] = {{0, 4, 8, 48, 4, 0}, {4, 1024, 8, 48, 4, 0}, {4, 4, 1, 48, 4, 0},
+                                {4, 4, 8, 64, 4, 0}, {4, 4, 8, 48, 0, 0}};
   bool refused = pta_twin_new(nullptr) == nullptr;
   for (const pta_twin_build& b : bad) refused = refused && pta_twin_new(&b) == nullptr;
   check("a build the capability words could not report is not built", refused);
@@ -985,6 +991,7 @@ void t_refusals() {
   // Not accepted is a different answer from refused.
   Run r;
   pta_twin_cmd cmd;
+  std::memset(&cmd, 0, sizeof cmd);
   r.C.assign(static_cast<size_t>(M) * N, POISON);
   cmd.bank = 0;
   cmd.M = 0;
@@ -1060,7 +1067,7 @@ void t_irq() {
 
 void t_affine() {
   section("PTA_GAIN[j] and PTA_OFFS[j]: eight words, whatever the tile's width");
-  const pta_twin_build b12 = {4, 12, 8, 48, 4};
+  const pta_twin_build b12 = {4, 12, 8, 48, 4, 0};
   pta_twin* t = pta_twin_new(&b12);
   Ref ref(b12);
   Cfg c = base_cfg(b12);
@@ -1256,6 +1263,499 @@ void t_reset() {
   pta_twin_free(t);
 }
 
+// ---- the activation stage (the map's section 8) ---------------------------------------
+const pta_twin_build A8x8 = {8, 8, 8, 48, 4, 1 << 12};        // the bench tile, with a stage
+const pta_twin_build A256x64 = {256, 64, 8, 48, 4, 1 << 14};  // the chiplet's candidate, with one
+
+// grx930's c930/sim/pta_mnist.c, tile_batch(), the hidden layer's step, as it
+// is written there.  This is the reference the stage is held to, and it is not
+// a call into the twin.
+int64_t ref_round_shift(int64_t v, int s) {
+  return s == 0 ? v : (v + (static_cast<int64_t>(1) << (s - 1))) >> s;
+}
+int32_t ref_activate(int64_t y, int64_t b, int sh, int64_t amax, bool* clipped) {
+  int64_t v = y + b;
+  v = ref_round_shift(v > 0 ? v : 0, sh);
+  if (clipped) *clipped = v > amax;
+  return static_cast<int32_t>(v > amax ? amax : v);
+}
+
+std::vector<int32_t> ref_act_all(const std::vector<int64_t>& sums, int N, const std::vector<int64_t>& bias,
+                                 int shift, int bits, long* clips) {
+  const int64_t amax = (static_cast<int64_t>(1) << (bits - 1)) - 1;
+  std::vector<int32_t> a(sums.size());
+  long c = 0;
+  for (size_t i = 0; i < sums.size(); ++i) {
+    bool clipped = false;
+    a[i] = ref_activate(sums[i], bias.empty() ? 0 : bias[i % static_cast<size_t>(N)], shift, amax, &clipped);
+    c += clipped;
+  }
+  if (clips) *clips = c;
+  return a;
+}
+
+std::vector<int64_t> widen(const std::vector<int32_t>& a) { return std::vector<int64_t>(a.begin(), a.end()); }
+
+struct Act {
+  unsigned flags = 0;
+  int shift = 0, bits = 8;
+  const std::vector<int64_t>* bias = nullptr;
+};
+
+struct ARun : Run {
+  long clips = -1;
+};
+
+// A == nullptr submits no activations, which only a FROM_HELD command may do.
+int submit_act(pta_twin* t, int bank, int M, int N, int K, const std::vector<int32_t>* A,
+               const std::vector<int32_t>& B, const Act& a, ARun* r, bool give_c = true) {
+  r->C.assign(static_cast<size_t>(M) * N, POISON);
+  pta_twin_cmd c;
+  std::memset(&c, 0, sizeof c);
+  c.bank = bank;
+  c.M = M;
+  c.N = N;
+  c.K = K;
+  c.A = A ? A->data() : nullptr;
+  c.B = B.data();
+  c.C = give_c ? r->C.data() : nullptr;
+  c.status = &r->status;
+  c.sats = &r->sats;
+  c.flags = a.flags;
+  c.act_shift = a.shift;
+  c.act_bits = a.bits;
+  c.bias = a.bias ? a.bias->data() : nullptr;
+  c.clips = &r->clips;
+  return pta_twin_submit(t, &c);
+}
+
+// Every impairment the tile builds, so that a GEMM's seed and the device's
+// state both matter to what the stage is given.
+Cfg noisy_cfg(const pta_twin_build& b) {
+  Cfg c = base_cfg(b);
+  c.impair = PTA_TWIN_BUILT;
+  c.sth = 0x0180;
+  c.ksh = 0x0060;
+  c.spr = 0x0200;
+  c.dsig = 0x0300;
+  c.dlog2 = 1;
+  c.dmax = 8643;
+  c.xt = 26;
+  return c;
+}
+
+struct Layer {
+  int K, N;
+  std::vector<int32_t> W;
+  std::vector<int64_t> bias;
+  int shift;
+};
+
+Layer make_layer(const pta_twin_build& b, const Cfg& c, uint32_t seed, int K, int N) {
+  Layer l;
+  l.K = K;
+  l.N = N;
+  l.W = operands(seed, static_cast<size_t>(K) * N, amax_of(b));
+  // A sum is a few ADC codes, each 2^shift wide, over ceil(K / rows) tiles.  The
+  // biases are some codes either way, and the stage's shift is three short of
+  // the ADC's, so that a code is eight operand steps and the stage has zeros,
+  // values and clamps to produce.  Every case that uses this checks that it did.
+  // The sums are whole codes, so it is the biases' low bits that give the
+  // stage's rounding something to round.
+  l.shift = static_cast<int>(c.shift) - 3;
+  if (l.shift < 0) l.shift = 0;
+  l.bias.resize(static_cast<size_t>(N));
+  const auto raw = operands(seed + 7, static_cast<size_t>(N), 40);
+  const auto low = operands(seed + 9, static_cast<size_t>(N), (1 << l.shift) - 1);
+  for (int n = 0; n < N; ++n)
+    l.bias[static_cast<size_t>(n)] = static_cast<int64_t>(raw[static_cast<size_t>(n)]) * (static_cast<int64_t>(1) << c.shift) +
+                                     low[static_cast<size_t>(n)];
+  return l;
+}
+
+// A network of GEMMs, twice: on one twin with every intermediate brought out
+// and the stage's step taken here, and on another with the intermediates held.
+// The two have to agree on every element of the last layer's sums, and with a
+// device the twins never see.
+void chain_case(const pta_twin_build& b, const char* what, int M, const std::vector<std::pair<int, int>>& shape,
+                uint32_t seed) {
+  const Cfg c = noisy_cfg(b);
+  const int L = static_cast<int>(shape.size());
+  std::vector<Layer> net;
+  for (int l = 0; l < L; ++l)
+    net.push_back(make_layer(b, c, seed + 100u * static_cast<uint32_t>(l), shape[static_cast<size_t>(l)].first,
+                             shape[static_cast<size_t>(l)].second));
+  const auto a0 = operands(seed + 5, static_cast<size_t>(M) * net[0].K, amax_of(b));
+  char name[240];
+
+  // The reference device, and the unchained twin.
+  Ref ref(b);
+  pta_twin* u = pta_twin_new(&b);
+  pta_twin_write32(u, PTA_TWIN_SEED, seed);
+  program(u, c);
+  std::vector<int32_t> act_ref = a0, act_u = a0;
+  std::vector<int64_t> last_ref;
+  Run last_u;
+  std::vector<long> clips_ref(static_cast<size_t>(L), 0);
+  bool u_ok = true, mixed = false;
+  for (int l = 0; l < L; ++l) {
+    const Layer& ly = net[static_cast<size_t>(l)];
+    std::vector<int64_t> y;
+    ref.gemm(c, seed, static_cast<uint32_t>(l), l & 1, M, ly.N, ly.K, act_ref, ly.W, &y);
+    Run r;
+    u_ok = u_ok && run_gemm(u, l & 1, M, ly.N, ly.K, act_u, ly.W, &r) && r.status == PTA_TWIN_DONE;
+    if (l == L - 1) {
+      last_ref = y;
+      last_u = r;
+    } else {
+      act_ref = ref_act_all(y, ly.N, ly.bias, ly.shift, 8, &clips_ref[static_cast<size_t>(l)]);
+      act_u = ref_act_all(r.C, ly.N, ly.bias, ly.shift, 8, nullptr);
+      bool zero = false, some = false;
+      for (int32_t v : act_ref) {
+        zero = zero || v == 0;
+        some = some || (v > 0 && v < 127);
+      }
+      mixed = mixed || (l == 0 && zero && some && clips_ref[0] > 0);
+    }
+  }
+
+  // The chained twin: every command submitted before the first has run.
+  pta_twin* h = pta_twin_new(&b);
+  pta_twin_write32(h, PTA_TWIN_SEED, seed);
+  program(h, c);
+  std::vector<ARun> r(static_cast<size_t>(L));
+  bool accepted = true;
+  for (int l = 0; l < L; ++l) {
+    const Layer& ly = net[static_cast<size_t>(l)];
+    Act a;
+    a.flags = (l > 0 ? PTA_TWIN_CMD_FROM_HELD : 0u) | (l < L - 1 ? (PTA_TWIN_CMD_ACT | PTA_TWIN_CMD_HOLD) : 0u);
+    a.shift = ly.shift;
+    a.bits = 8;
+    a.bias = l < L - 1 ? &ly.bias : nullptr;
+    accepted = accepted &&
+               submit_act(h, l & 1, M, ly.N, ly.K, l == 0 ? &a0 : nullptr, ly.W, a, &r[static_cast<size_t>(l)]) == 0;
+  }
+  const bool drained = drain(h);
+  bool done = accepted && drained, untouched = true, clips_ok = true;
+  for (int l = 0; l < L; ++l) {
+    done = done && r[static_cast<size_t>(l)].status == PTA_TWIN_DONE;
+    if (l < L - 1) {
+      untouched = untouched && all_poison(r[static_cast<size_t>(l)].C);
+      clips_ok = clips_ok && r[static_cast<size_t>(l)].clips == clips_ref[static_cast<size_t>(l)];
+    }
+  }
+
+  std::snprintf(name, sizeof name, "%s: the stage has zeros, values and clamps to produce (not a vacuous case)", what);
+  check(name, mixed);
+  std::snprintf(name, sizeof name, "%s: %d commands queued at once all end done", what, L);
+  check(name, done);
+  std::snprintf(name, sizeof name, "%s: held, the last layer's sums are what they are brought out and fed back", what);
+  check(name, u_ok && r[static_cast<size_t>(L - 1)].C == last_u.C);
+  std::snprintf(name, sizeof name, "%s: and both are a device's the twins never saw, with grx930's step between", what);
+  check(name, last_u.C == last_ref && r[static_cast<size_t>(L - 1)].C == last_ref);
+  std::snprintf(name, sizeof name, "%s: a held layer writes nothing out, and reports what the stage clamped", what);
+  check(name, untouched && clips_ok);
+  std::snprintf(name, sizeof name, "%s: the same GEMMs and the same shots either way", what);
+  check(name, pta_twin_read32(h, PTA_TWIN_GEMM_CT) == static_cast<uint32_t>(L) &&
+                  pta_twin_read32(u, PTA_TWIN_GEMM_CT) == static_cast<uint32_t>(L) &&
+                  pta_twin_read32(h, PTA_TWIN_SHOT_CT) == pta_twin_read32(u, PTA_TWIN_SHOT_CT));
+  pta_twin_free(u);
+  pta_twin_free(h);
+}
+
+void t_activation() {
+  section("the activation stage: a build has one or it does not (section 8)");
+  {
+    pta_twin* with = pta_twin_new(&A8x8);
+    pta_twin* without = pta_twin_new(&B8x8);
+    const uint32_t cw = pta_twin_read32(with, PTA_TWIN_CAPS2), co = pta_twin_read32(without, PTA_TWIN_CAPS2);
+    check("PTA_CAPS2[17] is set and [24:20] is the log2 of what the stage holds, 12",
+          (cw & PTA_TWIN_CAPS2_ACT) != 0 && ((cw & PTA_TWIN_CAPS2_HOLD_MASK) >> PTA_TWIN_CAPS2_HOLD_SHIFT) == 12);
+    check("and both are clear on a build without it, with nothing else in the word moved",
+          (co & (PTA_TWIN_CAPS2_ACT | PTA_TWIN_CAPS2_HOLD_MASK)) == 0 &&
+              (cw & ~(PTA_TWIN_CAPS2_ACT | PTA_TWIN_CAPS2_HOLD_MASK)) == co);
+    check("PTA_ACT_CLIP_CT reads zero out of reset", pta_twin_read32(with, PTA_TWIN_ACT_CLIP_CT) == 0);
+    pta_twin_free(with);
+    pta_twin_free(without);
+    const pta_twin_build bad[] = {{8, 8, 8, 48, 4, 3}, {8, 8, 8, 48, 4, -1}, {8, 8, 8, 48, 4, 1 << 29}};
+    bool refused = true;
+    for (const pta_twin_build& b : bad) refused = refused && pta_twin_new(&b) == nullptr;
+    check("a stage that holds 3 operands, or -1, or 2^29, is not a build", refused);
+  }
+
+  section("the stage's function is grx930's step between layers, and nothing else");
+  {
+    struct V { int64_t sum, bias; int shift, bits; int64_t want; int clipped; };
+    const V vs[] = {
+        {100, 0, 0, 8, 100, 0},                 // a sum that is already an operand
+        {-5, 0, 0, 8, 0, 0},                    // ReLU
+        {-5, 10, 0, 8, 5, 0},                   // the bias goes on before it
+        {127, 0, 0, 8, 127, 0},                 // the largest operand is not a clamp
+        {128, 0, 0, 8, 127, 1},                 // one more is
+        {1, 0, 1, 8, 1, 0},                     // a half rounds up
+        {3, 0, 1, 8, 2, 0},
+        {5, 0, 2, 8, 1, 0},                     // 1.25
+        {6, 0, 2, 8, 2, 0},                     // 1.5
+        {1000, 8, 3, 8, 126, 0},                // (1008 + 4) >> 3
+        {1000, 24, 3, 8, 127, 1},               // (1024 + 4) >> 3 = 128
+        {static_cast<int64_t>(1) << 40, 0, 34, 8, 64, 0},
+        {9, 0, 0, 2, 1, 1},                     // a two-bit operand is 0 or 1
+        {INT64_MAX - 5, 100, 62, 8, 2, 0},      // sum + bias saturates and does not wrap
+        {INT64_MIN + 5, -100, 0, 8, 0, 0},
+    };
+    bool ok = true;
+    for (const V& v : vs) {
+      int clipped = -1;
+      ok = ok && pta_twin_activate(v.sum, v.bias, v.shift, v.bits, &clipped) == v.want && clipped == v.clipped;
+    }
+    check("fifteen cases worked by hand: bias, ReLU, a half rounding up, the clamp, and no wrap", ok);
+    check("a shift of 63, or a width of 1 or 33, is not a setting: zero",
+          pta_twin_activate(1000, 0, 63, 8, nullptr) == 0 && pta_twin_activate(1000, 0, 0, 1, nullptr) == 0 &&
+              pta_twin_activate(1000, 0, 0, 33, nullptr) == 0);
+    // And twenty thousand draws against grx930's lines as this file has them.
+    uint32_t s = 0xAC71;
+    bool same = true;
+    long clamps = 0, zeros = 0;
+    for (int i = 0; i < 20000 && same; ++i) {
+      auto next = [&s]() { s = s * 1664525u + 1013904223u; return s >> 4; };
+      const int shift = static_cast<int>(next() % 41u), bits = 2 + static_cast<int>(next() % 15u);
+      const int64_t mag = static_cast<int64_t>(next()) << (next() % 14u);
+      const int64_t sum = (next() & 1u) ? mag : -mag;
+      const int64_t bias = static_cast<int64_t>(next() % 2000001u) - 1000000;
+      const int64_t amax = (static_cast<int64_t>(1) << (bits - 1)) - 1;
+      bool rc = false;
+      int tc = -1;
+      const int64_t want = ref_activate(sum, bias, shift, amax, &rc);
+      same = pta_twin_activate(sum, bias, shift, bits, &tc) == want && tc == static_cast<int>(rc);
+      clamps += rc;
+      zeros += want == 0;
+    }
+    check("20,000 draws of sum, bias, shift and width: the twin's function is those three lines", same);
+    check("and the draws reach the clamp and the zero thousands of times each", clamps > 2000 && zeros > 2000);
+  }
+
+  section("one GEMM through the stage: operands come back where sums would");
+  for (const pta_twin_build* b : {&A8x8, &A256x64}) {
+    const Cfg c = noisy_cfg(*b);
+    const int M = 6, N = b->cols + 3, K = 2 * b->rows + 5;
+    const Layer ly = make_layer(*b, c, 0x0ACE, K, N);
+    const auto A = operands(0x0A11, static_cast<size_t>(M) * K, amax_of(*b));
+    char name[200];
+
+    Ref ref(*b);
+    std::vector<int64_t> y0, y1;
+    ref.gemm(c, 77, 0, 0, M, N, K, A, ly.W, &y0);
+    long want_clips = 0;
+    const auto want = widen(ref_act_all(y0, N, ly.bias, ly.shift, 8, &want_clips));
+    ref.gemm(c, 77, 1, 0, M, N, K, A, ly.W, &y1);
+
+    pta_twin* t = pta_twin_new(b);
+    pta_twin_write32(t, PTA_TWIN_SEED, 77);
+    program(t, c);
+    pta_twin_write32(t, PTA_TWIN_TW, 3);
+    pta_twin_write32(t, PTA_TWIN_TS, 2);
+    Act a;
+    a.flags = PTA_TWIN_CMD_ACT;
+    a.shift = ly.shift;
+    a.bias = &ly.bias;
+    ARun r;
+    const uint64_t t0 = pta_twin_now(t);
+    const int rc = submit_act(t, 0, M, N, K, &A, ly.W, a, &r);
+    // One cycle at a time, so that the clock stops where the command does.
+    uint64_t took = 0;
+    while (busy(t) && took < (1u << 24)) {
+      pta_twin_run(t, 1);
+      ++took;
+    }
+    std::snprintf(name, sizeof name, "%3d x %-3d the model's sums through grx930's step, element for element",
+                  b->rows, b->cols);
+    check(name, rc == 0 && r.status == PTA_TWIN_DONE && r.C == want);
+    std::snprintf(name, sizeof name, "%3d x %-3d what it clamped is in the result and in PTA_ACT_CLIP_CT: %ld",
+                  b->rows, b->cols, want_clips);
+    check(name, want_clips > 0 && r.clips == want_clips &&
+                    pta_twin_read32(t, PTA_TWIN_ACT_CLIP_CT) == static_cast<uint32_t>(want_clips));
+    // The twin's two formulas, and nothing for the stage.
+    const uint64_t tiles = 2 * 3, shots = tiles * M;
+    std::snprintf(name, sizeof name, "%3d x %-3d it adds no time: programmings x PTA_TW + shots x PTA_TS", b->rows,
+                  b->cols);
+    check(name, took == tiles * 3 + shots * 2 && pta_twin_now(t) - t0 == took);
+    Run plain;
+    run_gemm(t, 0, M, N, K, A, ly.W, &plain);
+    std::snprintf(name, sizeof name, "%3d x %-3d the next command asks nothing and gets sums: nothing was left on",
+                  b->rows, b->cols);
+    check(name, plain.status == PTA_TWIN_DONE && plain.C == y1 && pta_twin_read32(t, PTA_TWIN_ACT_CLIP_CT) == 0);
+    pta_twin_free(t);
+  }
+
+  section("a network held on the chiplet is the network brought out at every layer");
+  chain_case(A8x8, "  8 x 8  , three layers", 5, {{20, 12}, {12, 9}, {9, 5}}, 0xC4A1);
+  chain_case(A256x64, "256 x 64 , D3's shape", 64, {{784, 100}, {100, 10}}, 0xD3D3);
+
+  section("held operands are the next command's or nobody's");
+  {
+    const pta_twin_build& b = A8x8;
+    const Cfg c = noisy_cfg(b);
+    const int M = 4, K = 10, N = 6, N2 = 3;
+    const Layer l1 = make_layer(b, c, 0x1111, K, N), l2 = make_layer(b, c, 0x2222, N, N2);
+    const auto A = operands(0x3333, static_cast<size_t>(M) * K, 127);
+    Act hold, take, none;
+    hold.flags = PTA_TWIN_CMD_ACT | PTA_TWIN_CMD_HOLD;
+    hold.shift = l1.shift;
+    hold.bias = &l1.bias;
+    take.flags = PTA_TWIN_CMD_FROM_HELD;
+
+    // An unrelated command between the two.
+    pta_twin* t = pta_twin_new(&b);
+    program(t, c);
+    ARun p, mid, q;
+    submit_act(t, 0, M, N, K, &A, l1.W, hold, &p);
+    submit_act(t, 0, M, N, K, &A, l1.W, none, &mid);
+    pta_twin_write32(t, PTA_TWIN_IRQ_STATUS, 0xF);
+    submit_act(t, 1, M, N2, N, nullptr, l2.W, take, &q);
+    drain(t);
+    check("a command between the two discards them: the one that asks for them is refused",
+          p.status == PTA_TWIN_DONE && mid.status == PTA_TWIN_DONE && q.status == PTA_TWIN_REFUSED &&
+              all_poison(q.C) && (pta_twin_read32(t, PTA_TWIN_IRQ_STATUS) & PTA_TWIN_IRQ_ERR) != 0 &&
+              pta_twin_read32(t, PTA_TWIN_GEMM_CT) == 2);
+
+    // A producer that is refused leaves nothing, not the network before it.
+    ARun p1, p2, q2;
+    submit_act(t, 0, M, N, K, &A, l1.W, hold, &p1);
+    drain(t);
+    submit_act(t, 2, M, N, K, &A, l1.W, hold, &p2);       // bank 2: refused
+    submit_act(t, 1, M, N2, N, nullptr, l2.W, take, &q2);
+    drain(t);
+    check("a layer that is refused leaves nothing held, and not the layer before it",
+          p1.status == PTA_TWIN_DONE && p2.status == PTA_TWIN_REFUSED && q2.status == PTA_TWIN_REFUSED &&
+              all_poison(q2.C));
+
+    // The wrong shape, and then the right one: the first attempt used them up.
+    ARun p3, wrong_m, wrong_k, right;
+    submit_act(t, 0, M, N, K, &A, l1.W, hold, &p3);
+    submit_act(t, 1, M + 1, N2, N, nullptr, l2.W, take, &wrong_m);
+    drain(t);
+    submit_act(t, 0, M, N, K, &A, l1.W, hold, &p3);
+    const Layer l2k = make_layer(b, c, 0x2223, N + 1, N2);
+    submit_act(t, 1, M, N2, N + 1, nullptr, l2k.W, take, &wrong_k);
+    submit_act(t, 1, M, N2, N, nullptr, l2.W, take, &right);
+    drain(t);
+    check("what is held is M x N: a command with another M or another K is refused",
+          wrong_m.status == PTA_TWIN_REFUSED && wrong_k.status == PTA_TWIN_REFUSED);
+    check("and a refused command has had its turn: the right one after it is refused too",
+          right.status == PTA_TWIN_REFUSED && all_poison(right.C));
+
+    // A reset.
+    ARun p4, q4;
+    submit_act(t, 0, M, N, K, &A, l1.W, hold, &p4);
+    drain(t);
+    pta_twin_reset(t);
+    submit_act(t, 1, M, N2, N, nullptr, l2.W, take, &q4);
+    drain(t);
+    check("a reset of the chiplet drops them", p4.status == PTA_TWIN_DONE && q4.status == PTA_TWIN_REFUSED);
+    pta_twin_free(t);
+  }
+
+  section("a calibration between two layers does not take what is held");
+  {
+    const pta_twin_build& b = A8x8;
+    const Cfg c = drifting_cfg();
+    const uint32_t seed = 0x51DE, cal_seed = 0xCA1C;
+    const int M = 6, K = 8, N = 8, N2 = 4;
+    const Layer l1 = make_layer(b, c, 0x4444, K, N), l2 = make_layer(b, c, 0x5555, N, N2);
+    const auto A = operands(0x6666, static_cast<size_t>(M) * K, 127);
+
+    Ref ref(b);
+    std::vector<int64_t> y1, y2;
+    ref.gemm(c, seed, 0, 0, M, N, K, A, l1.W, &y1);
+    const auto a1 = ref_act_all(y1, N, l1.bias, l1.shift, 8, nullptr);
+    ref_calibrate(&ref, c, cal_seed, 0, 6, 1, 2, 0);
+    ref.gemm(c, seed, 1, 0, M, N2, N, a1, l2.W, &y2);
+
+    pta_twin* t = pta_twin_new(&b);
+    pta_twin_write32(t, PTA_TWIN_SEED, seed);
+    pta_twin_write32(t, PTA_TWIN_CAL_SEED, cal_seed);
+    program(t, c);
+    pta_twin_write32(t, PTA_TWIN_TS, 1);
+    pta_twin_write32(t, PTA_TWIN_CAL_CFG, cal_cfg_word(6, 1, 2, 0));
+    pta_twin_write32(t, PTA_TWIN_CTRL, PTA_TWIN_CTRL_EN);
+    Act hold, take;
+    hold.flags = PTA_TWIN_CMD_ACT | PTA_TWIN_CMD_HOLD;
+    hold.shift = l1.shift;
+    hold.bias = &l1.bias;
+    take.flags = PTA_TWIN_CMD_FROM_HELD;
+    ARun p, q;
+    submit_act(t, 0, M, N, K, &A, l1.W, hold, &p);
+    pta_twin_write32(t, PTA_TWIN_CTRL, PTA_TWIN_CTRL_EN | PTA_TWIN_CTRL_CAL_NOW);
+    submit_act(t, 0, M, N2, N, nullptr, l2.W, take, &q);
+    const bool d = drain(t);
+    check("layer, calibration, layer: the second runs on the first's operands, on the tile the calibration left",
+          d && p.status == PTA_TWIN_DONE && q.status == PTA_TWIN_DONE && q.C == y2 &&
+              pta_twin_read32(t, PTA_TWIN_CAL_CT) == 1);
+    pta_twin_free(t);
+  }
+
+  section("what the stage refuses, and what is not a command at all");
+  {
+    const Cfg c = base_cfg(A8x8);
+    const int M = 4, N = 8, K = 8;
+    const auto A = operands(71, static_cast<size_t>(M) * K, 127);
+    const auto B = operands(72, static_cast<size_t>(K) * N, 127);
+    const auto wide_a = operands(73, static_cast<size_t>(64) * K, 127);
+    const auto wide_b = operands(74, static_cast<size_t>(K) * 65, 127);
+    struct Bad { const char* what; const pta_twin_build* b; unsigned flags; int shift, bits, M, N; };
+    const Bad bads[] = {
+        {"the stage, on a build without one", &B8x8, PTA_TWIN_CMD_ACT, 0, 8, M, N},
+        {"a flag the stage does not have", &A8x8, 0x8u, 0, 8, M, N},
+        {"HOLD without ACT: sums are not operands", &A8x8, PTA_TWIN_CMD_HOLD, 0, 8, M, N},
+        {"a shift of 63", &A8x8, PTA_TWIN_CMD_ACT, 63, 8, M, N},
+        {"a width of 1", &A8x8, PTA_TWIN_CMD_ACT, 0, 1, M, N},
+        {"a width of 9 on an 8-bit tile", &A8x8, PTA_TWIN_CMD_ACT, 0, 9, M, N},
+        {"4,160 operands to hold where there is room for 4,096", &A8x8,
+         PTA_TWIN_CMD_ACT | PTA_TWIN_CMD_HOLD, 0, 8, 64, 65},
+        {"FROM_HELD with nothing held", &A8x8, PTA_TWIN_CMD_FROM_HELD, 0, 8, M, N},
+    };
+    for (const Bad& bad : bads) {
+      pta_twin* t = pta_twin_new(bad.b);
+      program(t, c);
+      Run good;
+      run_gemm(t, 0, M, N, K, A, B, &good);
+      const uint32_t shots = pta_twin_read32(t, PTA_TWIN_SHOT_CT);
+      pta_twin_write32(t, PTA_TWIN_IRQ_STATUS, 0xF);
+      Act a;
+      a.flags = bad.flags;
+      a.shift = bad.shift;
+      a.bits = bad.bits;
+      ARun r;
+      const int rc = submit_act(t, 0, bad.M, bad.N, K, bad.M == M ? &A : &wide_a, bad.N == N ? B : wide_b, a, &r);
+      drain(t);
+      char name[200];
+      std::snprintf(name, sizeof name, "%s: accepted, REFUSED, IRQ ERR, C untouched, nothing counted", bad.what);
+      check(name, rc == 0 && r.status == PTA_TWIN_REFUSED && all_poison(r.C) &&
+                      (pta_twin_read32(t, PTA_TWIN_IRQ_STATUS) & PTA_TWIN_IRQ_ERR) != 0 &&
+                      pta_twin_read32(t, PTA_TWIN_GEMM_CT) == 1 && pta_twin_read32(t, PTA_TWIN_SHOT_CT) == shots);
+      pta_twin_free(t);
+    }
+
+    pta_twin* t = pta_twin_new(&A8x8);
+    program(t, c);
+    Act none, take, hold;
+    take.flags = PTA_TWIN_CMD_FROM_HELD;
+    hold.flags = PTA_TWIN_CMD_ACT | PTA_TWIN_CMD_HOLD;
+    hold.shift = 12;
+    ARun r1, r2, r3, r4;
+    check("no activations and no FROM_HELD is not a command: not accepted, nothing written",
+          submit_act(t, 0, M, N, K, nullptr, B, none, &r1) == -1 && r1.status == -99);
+    check("no place for the results and no HOLD is not one either",
+          submit_act(t, 0, M, N, K, &A, B, none, &r2, false) == -1 && r2.status == -99);
+    const int rc3 = submit_act(t, 0, M, N, K, &A, B, hold, &r3, false);
+    const int rc4 = submit_act(t, 0, M, N, N, nullptr, B, take, &r4);
+    drain(t);
+    check("a held layer needs no place for its results, and the layer after it needs no activations",
+          rc3 == 0 && rc4 == 0 && r3.status == PTA_TWIN_DONE && r4.status == PTA_TWIN_DONE && !all_poison(r4.C));
+    pta_twin_free(t);
+  }
+}
+
 }  // namespace
 
 int main() {
@@ -1278,6 +1778,7 @@ int main() {
   t_unbuilt();
   t_age();
   t_reset();
+  t_activation();
   std::printf("\n%d checks, %d failed\n", g_checks, g_fail);
   if (g_fail) {
     std::printf("FAILED\n");
