@@ -60,7 +60,10 @@ The gates that need the runtime are
 `tests/unit/test_pta_chiplet_device.cpp`, what the device reports and refuses,
 and `tests/libs/test_grxblas_pta_chiplet.cpp`, `grxblasGemmEx` on it held bit
 for bit to the model built from the device property alone.
-`tests/common/pta_twin_adapter.h` is how a test asks for the twin.
+`tests/common/pta_twin_adapter.h` is how a test asks for the twin, and for
+which tile: one run is one tile, because enumeration happens once in a process,
+so each of the two takes the tile as its argument and is run for 128 × 64 and
+for 256 × 64.
 
 ## Using it
 
@@ -92,7 +95,10 @@ chiplet's working geometry on 2026-10-05 and revised it the same day to
 128 × 64, and the twin still builds any tile, because its gate needs more than
 one. The gate runs 4 × 4 (the c930 register model's tile), 8 × 8 (the tile the
 accuracy budget was first measured on), 128 × 64, the working geometry, and
-256 × 64, the one it was first settled at.
+256 × 64, the one it was first settled at. The driver's gate and the two that
+need the runtime run on the last two, since 2026-10-05; until then they ran on
+256 × 64 alone. Their ADC shifts and the K of their two-tile cases follow a
+tile's rows and are derived for each (`ci/README.md` has the table).
 
 ## The gate
 

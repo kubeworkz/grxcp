@@ -240,8 +240,11 @@ Under the same heading it runs the chiplet's **driver**,
 `src/backends/pta_chiplet/pta_chiplet.cpp`, against that twin and against
 windows and links that misbehave: a window with nothing behind it, a later
 version of the map, a tile that never stops being busy, a link that will not
-take a command and one that loses it. 26 checks. The driver's reader is
-held to this backend's own, field for field, on the same device.
+take a command and one that loses it. 54 checks: 27 on each of two builds, the
+chiplet's working geometry, 128 × 64 (the board plan's B10, as revised on
+2026-10-05), and the 256 × 64 it was first settled at, which was the only one
+this gate ran until then, in 26. The driver's reader is held to this backend's
+own, field for field, on the same device.
 
 The **PTA CHIPLET DEVICE GATE** is the board plan's S4, in a CMake configuration
 of its own: `-DGRXCP_ENABLE_PTA=ON` with the NPU flag off, so that neither
@@ -250,18 +253,49 @@ with the backend and nothing attached enumerates **no** PTA device, because
 there is no hardware path that could have found one. That the device the twin
 becomes, through the seam in `pta_chiplet_testing.h`, reports what it is and
 refuses everything that is not a GEMM (`tests/unit/test_pta_chiplet_device.cpp`,
-44 checks), including a GEMM when it has a window and no link. And that
+44 checks a tile), including a GEMM when it has a window and no link. And that
 `grxblasGemmEx` on it is the error model bit for bit, with the reference built
 from `grxDeviceProp_t.analogGemm` alone
-(`tests/libs/test_grxblas_pta_chiplet.cpp`, 48 checks over 4,164
-results). Neither test may skip in this configuration.
+(`tests/libs/test_grxblas_pta_chiplet.cpp`, 49 checks over 4,164
+results a tile). Neither test may skip in this configuration.
+
+**Each runs twice, on two tiles**: 128 × 64, the chiplet's working geometry, and
+256 × 64, which was the only tile either ran before 2026-10-05, in 44 and 48
+checks. Enumeration happens once in a process, so one run is one tile, and the
+tile is the gate's argument: `128x64`, which is also what no argument means, or
+`256x64`. The script then reads the tile a run was on back out of its log, from
+a line the gate prints off the device property, because a gate that ignored its
+argument would run one tile twice and be reported as both.
+
+Two things in those gates and the driver's follow a tile's rows, and each is
+derived for the tile the run is on and not carried over from the other:
+
+| | 128 × 64 | 256 × 64 |
+|---|---|---|
+| The ADC shift that puts a K tile of int8 products inside a 7-bit ADC, and a 6-bit one | 15, 16 | 16, 17 |
+| K of the cases that walk two K tiles: a tile and 44 rows more, and a tile and 4 | 172, 132 | 300, 260 |
+
+The results compared do not: 4,164 on each tile, because they follow a case's
+outputs and not its K. The shifts are held by a `static_assert` beside the
+function that derives them. The walk is held by a check that is new with the
+second tile, the driver's 27th and the GEMM gate's 49th: it reads the tile's
+own count of programmings and shots, so that a GEMM written to walk two tiles
+each way is seen to have.
 
 Nine planted errors were each watched failing one or both: the property losing
 the GEMM's index, the property cached and not re-read, the operands reaching
 the tile unswapped, a refused GEMM reported as success, a chiplet with no link
 reporting success, `grxMalloc` not refused on the chiplet, the GEMM taking the
 current device's pointers and not the parent's, the device reporting silicon,
-and its profile claiming memcpy.
+and its profile claiming memcpy. Those nine were watched on 256 × 64, and were
+not planted again when the second tile was added.
+
+Four more were watched then, on both tiles. A twin whose GEMMs run on `PTA_SEED`
+itself (`PTA_TWIN_ABLATE_SEED`) fails the GEMM gate and the driver's on each
+tile. A K left at the larger tile's 300 fails the walk's check on 128 × 64 and
+on nothing else. A gate made to build the working tile whatever it is asked
+passes, and the script's reading of its log refuses the run. And a shift left
+at the larger tile's 16 for both does not compile.
 
 The **NPU GROUNDWORK** gate is phase 7 work that can be checked before there is
 an NPU. `grxcp_architecture.md` section 6 fixes the c930 NPU's profile as

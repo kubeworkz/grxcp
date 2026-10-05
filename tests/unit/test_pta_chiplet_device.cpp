@@ -19,6 +19,11 @@
 //
 // A MODEL IS NOT HARDWARE. The device says so in two fields, and both are
 // checked.
+//
+// ONE RUN IS ONE TILE, because enumeration happens once in a process. The tile
+// is the command line's (tests/common/pta_twin_adapter.h): the chiplet's
+// working geometry, 128 x 64, with no argument, and the 256 x 64 it was first
+// settled at with "256x64". ci/build_mock.sh runs both.
 
 #include <grx/grx.h>
 #include <grx/grxblas.h>
@@ -36,14 +41,15 @@
 using grxtest::check;
 using grxtest::section;
 
-int main() {
+int main(int argc, char** argv) {
 #ifndef GRXCP_ENABLE_PTA
+  (void)argc; (void)argv;
   std::printf("built without GRXCP_ENABLE_PTA; there is no PTA chiplet backend in "
               "this build. skipping\n");
   return 77;
 #else
-  // One of the link model's candidate geometries for the chiplet.
-  const pta_twin_build build = {256, 64, 8, 48, 4, 0};
+  pta_twin_build build;
+  if (!grxtest::pta_twin_build_from_args(argc, argv, &build)) return 2;
 
   // BEFORE THE FIRST grx CALL: enumeration runs once.
   const bool installed = grxtest::pta_twin_install(build, /*parent=*/0, /*with_link=*/false);
@@ -100,8 +106,12 @@ int main() {
     const grxAnalogGemm_t& a = prop.analogGemm;
     check(a.tileIsPresent == 1 && a.gemmIsAnalogEmulated == 0,
           "a tile is present, and with PTA_IMPAIR clear its GEMMs are exact");
-    check(a.tileRows == 256 && a.tileCols == 64 && a.operandBits == 8 && a.accumulatorBits == 48,
-          "the tile is the build's: 256 x 64, 8-bit operands, 48-bit sums");
+    char what[96];
+    std::snprintf(what, sizeof(what), "the tile is the build's: %d x %d, 8-bit operands, 48-bit sums",
+                  build.rows, build.cols);
+    check(a.tileRows == build.rows && a.tileCols == build.cols && a.operandBits == 8 &&
+          a.accumulatorBits == 48, what);
+    std::printf("  note  tile %dx%d, as the device reports it\n", a.tileRows, a.tileCols);
     check(a.impairmentsImplemented == 0x5F, "it implements all but MZM_NL");
     check(a.gemmIndex == 0, "GEMM 0 is next: the index is reported with nothing impaired");
     check(a.seed == -1 && a.thermalSigmaQ8 == -1 && a.activationBits == -1,
@@ -111,13 +121,16 @@ int main() {
   // would. The property is read from the device on every call.
   pta_twin_write32(twin, PTA_TWIN_SEED, 0x2A);
   pta_twin_write32(twin, PTA_TWIN_IMPAIR, PTA_QUANT | PTA_THERMAL);
-  pta_twin_write32(twin, PTA_TWIN_BITS, 6u | (6u << 4) | (7u << 8) | (16u << 12));
+  // The board plan's version 1 word, whose ADC shift follows the tile's rows.
+  const uint32_t adc_shift = grxtest::pta_twin_adc_shift(build, 7);
+  pta_twin_write32(twin, PTA_TWIN_BITS, 6u | (6u << 4) | (7u << 8) | (adc_shift << 12));
   pta_twin_write32(twin, PTA_TWIN_SIGMA_TH, 0x0040);
   grxGetDeviceProperties(&prop, pta);
   {
     const grxAnalogGemm_t& a = prop.analogGemm;
     check(a.gemmIsAnalogEmulated == 1 && a.impairments == (PTA_QUANT | PTA_THERMAL) &&
-          a.activationBits == 6 && a.weightBits == 6 && a.adcBits == 7 && a.adcShift == 16 &&
+          a.activationBits == 6 && a.weightBits == 6 && a.adcBits == 7 &&
+          a.adcShift == (int)adc_shift &&
           a.seed == 0x2A && a.thermalSigmaQ8 == 0x40,
           "impairments switched on in the registers are in the next read: it is live");
     check(a.gemmIndex == 0, "and the seed's write restarted the count");

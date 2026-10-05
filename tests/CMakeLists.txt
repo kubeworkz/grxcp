@@ -73,6 +73,14 @@ foreach(src ${UNIT_SRC})
   add_test(NAME ${name} COMMAND ${name})
   # Exit 77 is the skip convention: no device present is not a failure.
   set_tests_properties(${name} PROPERTIES SKIP_RETURN_CODE 77)
+  # A gate that installs the twin runs on one tile a process, because
+  # enumeration happens once. With no argument that is the chiplet's working
+  # geometry, 128 x 64; this is the same gate on the 256 x 64 the board plan's
+  # B10 was first settled at.
+  if(GRXCP_ENABLE_PTA AND _src_text MATCHES "pta_twin_adapter\\.h")
+    add_test(NAME ${name}_256x64 COMMAND ${name} 256x64)
+    set_tests_properties(${name}_256x64 PROPERTIES SKIP_RETURN_CODE 77)
+  endif()
 endforeach()
 
 # Library gates: tests/libs/test_<lib>.cpp is the numerical gate for library
@@ -137,6 +145,12 @@ foreach(src ${LIB_TEST_SRC})
     # is the truthful outcome.
     set_tests_properties(${name} PROPERTIES SKIP_RETURN_CODE 77
                          WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/libs)
+    # And on the second tile, as the unit gates above are.
+    if(GRXCP_ENABLE_PTA AND _src_text MATCHES "pta_twin_adapter\\.h")
+      add_test(NAME ${name}_256x64 COMMAND ${name} 256x64)
+      set_tests_properties(${name}_256x64 PROPERTIES SKIP_RETURN_CODE 77
+                           WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/libs)
+    endif()
   endif()
 endforeach()
 
