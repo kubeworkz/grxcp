@@ -2084,6 +2084,95 @@ for a layer's weights; or a loss budget past 20 dB behind a laser under 0.88 W.
    planning rate 256 inputs are three to six buses and not two to six, and one
    bus carries them all only at 0.40 GS/s and under.
 
+   **Each reading, followed to its source, 2026-10-05**
+   ([`pta_source.py`](pta_source.py)). The tile is settled now, 256 × 64 at
+   1 GS/s (B10, B11), and its cells are rings. That is enough to say what each
+   reading of the topology asks for, which is what this question has waited on.
+
+   | Reading | A column adds | Its source | What the tile needs with it |
+   |---|---|---|---|
+   | A ring bank | Powers, of lines told apart by wavelength | A comb: 43 to 86 lines, 8 to 16 GHz apart, inside 5.7 nm | Three buses or more, and a photodiode a bus a column |
+   | One line, added as fields | Fields | One laser | A second element in every cell, to undo the angle its ring turns the field by |
+   | One line, a photodiode a cell | Currents | One laser | 16,384 photodiodes, 256 of them on each receiver's input |
+
+   *The ring bank's limit is published, and it is the one derived above.* Tait
+   et al., "Microring Weight Banks" (IEEE JSTQE 22(6), 2016), analyse the
+   topology the error model assumes. A bank holds its rings' finesse over the
+   channel spacing in linewidths, and at a 3 dB penalty that spacing is 3.41 to
+   4.61 linewidths, by the length of the bus. The 3.5 this plan got from v1's
+   crosstalk is inside that range and at its kind end. At the other end a bus
+   holds 77 lines at the working rate and not 102, and 256 inputs are four
+   buses and not three. The paper also reads each bank with a balanced pair of
+   photodiodes, for signed weights, and assumes the lines far enough apart that
+   they do not beat within the signal's band. This plan had neither.
+
+   A ring bank at the working point, by its buses. The grid is the widest whole
+   multiple of the shot rate that still fits a bus's share of the inputs in one
+   of the ring's ranges:
+
+   | Buses | Lines each | Grid | The weight ring's Q | Its swing | At the paper's worst spacing | Each line | Photodiodes |
+   |---|---|---|---|---|---|---|---|
+   | 3 | 86 | 8 GHz | 85,000–97,000 | 2.3–2.6 V | No ring does both | 1.0–10 mW | 192 |
+   | 4 | 64 | 11 GHz | 62,000–97,000 | 2.3–3.6 V | A Q from 81,000 | 1.4–14 mW | 256 |
+   | 5 | 52 | 13 GHz | 52,000–97,000 | 2.3–4.3 V | From 69,000 | 1.7–17 mW | 320 |
+   | 6 | 43 | 16 GHz | 42,000–97,000 | 2.3–5.2 V | From 56,000 | 2.0–20 mW | 384 |
+
+   Seven things follow.
+
+   - **A ring bank here is three buses at the least, and four is the first that
+     holds across the published range.** The upper end of every Q window is
+     B11's rate and the lower end is the grid. Three buses leave a ring 15% of
+     room at the kind spacing and none at the worst.
+   - **So its source is a comb, and no announced part is one.** The sources of
+     8 and 16 lines this question was first asked about are 32 and 16 buses.
+     The telecom grid (ITU-T G.694.1) is 37, 19, 10 and 5 buses at 100, 50, 25
+     and 12.5 GHz. An electro-optic comb has been published at about 10 GHz on
+     lithium niobate (Zhang et al., arXiv:1809.08636): 71 lines in this ring's
+     range, four buses. The one on the plan's own material (Zhang et al.,
+     *Nature* 637, 2025) is about 30 GHz, by its span over its line count:
+     twelve.
+   - **The beat between lines is not out of band by itself.** Lines on one
+     photodiode beat at their spacing. The power model's receiver, a single
+     pole, passes 8% of a beat 11 GHz away, and half an LSB is 0.4%. A receiver
+     that averages over a shot passes none of it when the spacing is a whole
+     number of shot rates, and 0.45% when it is 50 MHz off. An electro-optic
+     comb's spacing is a microwave drive, so it can be locked to the shot
+     clock. An array's lines are each their own laser. The other way out is a
+     receiver steeper than one pole, which nothing here has priced.
+   - **Buses that reuse lines cannot share a photodiode.** The same line on two
+     buses is the same light, and brought together in one waveguide it adds as
+     fields. So a column reads each bus on its own photodiode: 256 at four
+     buses, where the laser, the power and the area were all sized on 64.
+   - **A line carries milliwatts, and a comb comes with an amplifier.** The
+     tile's light is the same 0.09 to 0.88 W however it is cut: 0.34 to 3.4 mW
+     an input. None of the combs read states a line's power, and the most
+     efficient of them (Hu et al., arXiv:2111.14743) turns 30% of its pump into lines
+     over 23 times the span the tile can use. The amplifier's noise is then the
+     source's, which is the term §4.3's error model still does not have.
+   - **A weight's LSB is 24 MHz of a line's position.** That is how far a line
+     may sit from where its ring was calibrated. A comb's lines move together,
+     on two numbers: where its pump sits and how far apart they are. An
+     array's move one by one.
+   - **One laser is still possible, and costs a device a cell either way.** A
+     ring that passes half a line's power turns its field by 45°, and by up to
+     90° as the weight falls, so a column that added fields would add them at
+     angles: a second element a cell to undo it, and one that is not resonant
+     is millimeters long. A column that adds currents needs a photodiode a
+     cell. The ring bank is the one reading whose cell is a ring and nothing
+     else, and the one the error model and every bus count here were written
+     for.
+
+   B5's placement survives the first reading: a comb is many lines on one
+   fiber. Its sizing does not, quite: one laser becomes a pump, a comb and an
+   amplifier.
+
+   **What is still open is which reading the tile is, and that is now a choice
+   with a price on each side** and not a gap. It is the program's to make. Not
+   priced in any of them: the amplifier and its noise, whatever picks one line
+   off a comb for one input, what puts a ring on its line in the first place,
+   how the tile signs a weight, and a receiver with more than one photodiode on
+   its input.
+
 ---
 
 ## 9. Edits that followed B1 and B3
