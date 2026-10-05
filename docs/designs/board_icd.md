@@ -142,6 +142,13 @@ things, of which this document held one:
   which sums powers and needs a line an input — so under the model as it stands
   this link carries many lines, not one, and a single-line laser is not a source
   for it. The CPU document calls that topology a hypothesis.
+  *Followed through on 2026-10-05* ([`pta_source.py`](pta_source.py); board plan
+  §8, question 8). At the working geometry and rate a ring bank's source is a
+  comb of 43 to 86 lines, 8 to 16 GHz apart and inside 5.7 nm, reused across
+  three to six buses: not a line an input. Each line carries 1 to 20 mW, the
+  whole 0.09 to 0.88 W, and its spacing wants locking to the shot clock (§4).
+  That is still one fiber. If the tile is not a ring bank this link carries one
+  line, and the tile pays for it with a second device in every cell.
 
 None of this picks a laser. No part's output power or noise is held here, and
 the comparison with one belongs to whoever has its datasheet.
@@ -252,7 +259,9 @@ board plan's §8 holds the ones that are questions rather than gaps.
    working rate. How far up its range link 4's laser has to be is still the
    loss budget's to say.
    **And the kind of source link 4 carries** — one line or one an input — which
-   follows from how a column sums. Board plan §8, question 8.
+   follows from how a column sums. Board plan §8, question 8. *Each answer has
+   been followed to its source since (2026-10-05): a comb of 43 to 86 lines if
+   the tile is a ring bank, one line if it is not. Which it is stays open.*
 3. **Part selection** for DDR5, GDDR6, the controller, the laser module and the
    clock sources, with everything that follows from it.
 4. **Currents** on every rail in §3.

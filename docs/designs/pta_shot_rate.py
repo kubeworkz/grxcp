@@ -541,6 +541,9 @@ def main():
     print("  and there an array or a comb is no source at all.  The CPU document's")
     print("  section 8 calls the ring-bank topology a hypothesis with no ground truth,")
     print("  so this is the model's assumption followed through, not a decision.")
+    print("  (pta_source.py, 2026-10-05, follows each reading to its source at the working")
+    print("  geometry and rate.  A ring bank's is a comb of 43 to 86 lines reused across buses,")
+    print("  and not a line an input.)")
 
     findings(mod_fs)
     checks()
