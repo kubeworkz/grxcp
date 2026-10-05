@@ -19,7 +19,9 @@
  * The harness is not edited.  It is included with its main() renamed, which is
  * what lets this file call tile_batch() and read what it computed.  grx930's
  * source is not vendored here, so this is run by hand against a checkout and
- * is not in CI; README.md says when it was last run and on what.
+ * is not in CI; README.md says when it was last run and on what.  It needs the
+ * harness from the change that made the tile an option onward: that is where
+ * gemm_alloc() comes from.
  *
  * WHAT IS COMPARED.  The harness cuts a layer into GEMMs its core accepts, at
  * most 64 x 256 x 8, adds them up on the host, and takes the step between
@@ -88,7 +90,7 @@ static int run_case(const char *what, int hidden, int M, int quant, int rows, in
     pta_device dev;
     pta_twin_build build;
     pta_twin  *held, *out;
-    gemm_buf  *g  = (gemm_buf *)malloc(sizeof *g);
+    gemm_buf  *g  = gemm_alloc();       /* the harness's own, sized for its cut */
     batch_ws  *bw = (batch_ws *)malloc(sizeof *bw);
     int32_t   *a0 = (int32_t *)malloc((size_t)M * N_IN * sizeof *a0);
     int32_t   *B  = (int32_t *)malloc((size_t)N_IN * N_HID * sizeof *B);
@@ -221,7 +223,7 @@ static int run_case(const char *what, int hidden, int M, int quant, int rows, in
     pta_twin_free(out);
     pta_device_free(&dev);
     host_free(&hn);
-    free(g);
+    gemm_free(g);
     free(bw);
     free(a0);
     free(B);

@@ -26,6 +26,21 @@ almost none. At TFLN's rate the same hour costs far more: C1 put a point of
 loss at six minutes. Left alone for four hours, TFLT's fit costs 4.8 points and
 TFLN's is already at chance.
 
+*Those are the c930 core's 8 × 8 tile, 2026-10-04.* Every figure in this
+document was measured on it, because it was the only tile grx930's harness had.
+The harness now takes the tile as an option, and on a 256 × 64 tile the same
+drift costs far less (the board plan's §4.3): an hour of TFLT's is 0.04 points
+beyond version 1 and not 0.55, four hours 0.77 and not 5.18, an hour of TFLN's
+1.9 and not 22.6. Drift's error is 2.8 to 3.2 times smaller at every age.
+
+The reason is how a small tile is used. All 78,400 weights of D3's first layer
+pass through the same 64 cells, and a cell's drift is the same error on every
+one of them; at 256 × 64 a cell carries 8. **And the model draws every cell's
+drift independently.** A real tile whose neighbouring cells drift together gains
+less from being large, and nothing measured says how much less. So this
+document's intervals are not relaxed. What changes is what they are: sized on
+the worst tile there is, and on the safe side for any other.
+
 So the question is not whether to calibrate but how often, how long it takes,
 and what it can actually undo.
 

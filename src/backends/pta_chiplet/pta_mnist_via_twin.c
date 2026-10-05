@@ -155,6 +155,10 @@ static void begin(const pta_tile *tile, const pta_device *dev)
     if (!twin || memcmp(&built, tile, sizeof built) != 0) {
         const int first = twin == NULL;
         pta_twin_free(twin);
+        /* Zeroed first: a field this file does not set is one it does not use.
+         * The build gained act_hold with the activation stage and this did not
+         * follow, so the twin was built on whatever the stack held. */
+        memset(&b, 0, sizeof b);
         b.rows = tile->rows;
         b.cols = tile->cols;
         b.din_w = tile->din_w;
