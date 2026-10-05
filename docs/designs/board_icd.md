@@ -52,8 +52,8 @@ Four parties own the board between them:
 | # | Link | Carries | Width and rate | Owner, A end | Owner, B end | Source |
 |---|---|---|---|---|---|---|
 | 1 | GRX930 ↔ GRX-G100 | CXL 2.0 (CXL.io, .cache, .mem) on the PCIe 5.0 PHY | x16, 32 GT/s a lane, about 64 GB/s a direction before overhead | grx930: root port, home agent, HDM decoders | grxgpu: Type-2 device | B1, B3; rate from X2 |
-| 2 | GRX-G100 ↔ PTA chiplet | UCIe-S, a streaming protocol in a FLIT format, with the adapter's CRC and retry | One x16 module at 32 GT/s is 57.6 GB/s a direction at X2's assumed 0.9 efficiency. **Module count follows the chiplet's geometry** (§7) | grxgpu: UCIe port, fed by a copy engine | Chiplet team: EIC | B4; rates and counts from X2 |
-| 3 | EIC ↔ PIC | Analog: DAC drive to the modulators, photocurrent back from the detectors | One drive line a weight cell and one an input modulator, one detector a column: `k·n + k + n` lines, 16,704 at 256 × 64. The geometry is still §7's | Chiplet team | Chiplet team | B4, B5; resolutions from X1 |
+| 2 | GRX-G100 ↔ PTA chiplet | UCIe-S, a streaming protocol in a FLIT format, with the adapter's CRC and retry | One x16 module at 32 GT/s is 57.6 GB/s a direction at X2's assumed 0.9 efficiency. **Five modules** at the working geometry, 256 × 64 (the board plan's B10), for a batch of 64 with the weights re-sent; one with them resident | grxgpu: UCIe port, fed by a copy engine | Chiplet team: EIC | B4; rates and counts from X2 |
+| 3 | EIC ↔ PIC | Analog: DAC drive to the modulators, photocurrent back from the detectors | One drive line a weight cell and one an input modulator, one detector a column: `k·n + k + n` lines, 16,704 at the working geometry, 256 × 64 (the board plan's B10) | Chiplet team | Chiplet team | B4, B5; resolutions from X1 |
 | 4 | Laser module → PIC | Light, on polarization-maintaining fiber | Power, wavelength, noise and **kind** all **open** (board plan §8, question 8). For scale: a 64-column tile at 1 GS/s wants 0.33–3.3 W behind 10–20 dB of loss at the receiver B5 assumed, and 0.09–0.88 W at one that has been measured (board plan B5). It is set by the receiver's noise and not by X1's photon row, and intensity noise within about −144 dB/Hz. This row has said 0.16–1.6 W, sized from X1's version 0, and then 0.66–6.6 W and −150, from version 1's receiver noise read in the wrong ADC's LSB (board plan §4.3) | Board team | Chiplet team | B5, X1; figures from [`pta_shot_rate.py`](pta_shot_rate.py) §3 and §6 |
 | 5 | Board controller ↔ all | SMBus or I3C: rails, temperatures, the laser and its interlock | Rate **open**, with the controller (§7) | Board team | Each die's management pins | B7 |
 | 6 | GRX930 ↔ DDR5 | DDR5 (or LPDDR5) | Channels, width and speed grade **open**, with part selection | grx930 team | Board team | B2 |
@@ -242,9 +242,13 @@ board plan's §8 holds the ones that are questions rather than gaps.
 
 1. **The chiplet team and the board team are not named.** Every link with an
    *open* owner in §2 waits on that.
-2. **The chiplet's geometry and shot rate** — inputs, outputs, GS/s — which set
-   link 2's module count, link 3's line count, link 4's laser power and the
-   shot clock. Board plan §8, question 1.
+2. ~~**The chiplet's geometry**~~ **and shot rate** — inputs, outputs, GS/s —
+   which set link 2's module count, link 3's line count, link 4's laser power
+   and the shot clock. Board plan §8, question 1. *The geometry was settled as a
+   working one on 2026-10-05:* 256 inputs by 64 outputs, the board plan's B10,
+   and §2's rows for links 2 and 3 now carry its counts. The shot rate is still
+   open, and with it the shot clock and how far up its range link 4's laser has
+   to be.
    **And the kind of source link 4 carries** — one line or one an input — which
    follows from how a column sums. Board plan §8, question 8.
 3. **Part selection** for DDR5, GDDR6, the controller, the laser module and the
@@ -275,5 +279,6 @@ P0 asks that every link have an owner on each side and every number a source.
   and the telemetry each party reads.
 
 What this document cannot close is §7. P1 and part selection close most of it;
-the chiplet's geometry and its topology close the rest — the topology because it
-decides what link 4 carries.
+the chiplet's shot rate and its topology close the rest — the topology because
+it decides what link 4 carries. Its geometry was the third of those and is a
+working one since the board plan's B10.

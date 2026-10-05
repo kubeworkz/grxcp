@@ -87,10 +87,11 @@ while (pta_twin_read32(t, PTA_TWIN_STATUS) & (PTA_TWIN_STATUS_BUSY | PTA_TWIN_ST
 /* status is PTA_TWIN_DONE and C holds the result, or PTA_TWIN_REFUSED and C is untouched. */
 ```
 
-The geometry is the caller's to name, because it is the map's first open
-question. The gate runs 4 × 4 (the c930 register model's tile), 8 × 8 (the
-tile the accuracy budget was measured on) and 256 × 64 (one of the link
-model's candidates for the chiplet).
+The geometry is the caller's to name. The board plan's B10 made 256 × 64 the
+chiplet's working geometry on 2026-10-05, and the twin still builds any tile,
+because its gate needs more than one. The gate runs 4 × 4 (the c930 register
+model's tile), 8 × 8 (the tile the accuracy budget was first measured on) and
+256 × 64, the working geometry.
 
 ## The gate
 

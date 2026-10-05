@@ -44,6 +44,9 @@ WHAT IT DOES NOT DO.  It does not weigh the columns against each other.  How
 much a watt is worth against a tenth of a point is the program's to say, and a
 score with invented weights would hide the choice inside a number.
 
+THE CHOICE WAS MADE ON 2026-10-05: 256 x 64 is the working geometry, the plan's
+B10.  This file is what it was made from, and is kept as it was run.
+
 Standard library only.  Run:  python3 docs/designs/pta_geometry.py
 """
 import math
