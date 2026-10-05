@@ -347,6 +347,8 @@ def main():
     print("  Only the 45 GHz row is a device.  The rest is a sweep: 30 to 100 GHz is")
     print("  what the offered benchmarks quote (not verified here), and nothing below")
     print("  depends on them, because this bound is the loosest of the three.")
+    print("  (pta_rate.py, 2026-10-05, found a fourth bound of this kind and far tighter:")
+    print("  the weight ring's own line, 0.44 to 2.2 GS/s for a ring that swings on 1 to 5 V.)")
 
     # ------------------------------------------------------------------ 2
     section(f"2. The feed: what the link can deliver ({big['kin']}x{big['nout']} layer,"

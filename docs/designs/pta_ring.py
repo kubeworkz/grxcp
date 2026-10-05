@@ -214,6 +214,9 @@ def main():
         print(f"    {v:.0f} V  Q {q:>9,.0f}   a line {linewidth_pm(q):5.1f} pm wide,"
               f" {linewidth_hz(q) / 1e6:>6,.0f} MHz: {linewidth_hz(q) / WEIGHT_HZ:,.0f} times the"
               f" {WEIGHT_HZ / 1e6:.1f} MHz a weight is rewritten at")
+    print("  (pta_rate.py, the same day: the rewrite is the wrong clock.  The light a ring weighs")
+    print("  carries an input, an input changes every shot, and a ring passes a level no faster")
+    print("  than its line is wide.  That bounds the shot rate, and it is priced there.)")
     print(f"  K's 30 um ring loses {K30['bend_db_cm']} dB/cm to its bend.  DERIVED: that allows an intrinsic Q"
           f" of {q_from_loss(K30['bend_db_cm']):,.0f},")
     print(f"  {q_from_loss(K30['bend_db_cm']) / 2:,.0f} loaded at critical coupling.  It was built at"
