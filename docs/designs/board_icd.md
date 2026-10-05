@@ -53,7 +53,7 @@ Four parties own the board between them:
 |---|---|---|---|---|---|---|
 | 1 | GRX930 ↔ GRX-G100 | CXL 2.0 (CXL.io, .cache, .mem) on the PCIe 5.0 PHY | x16, 32 GT/s a lane, about 64 GB/s a direction before overhead | grx930: root port, home agent, HDM decoders | grxgpu: Type-2 device | B1, B3; rate from X2 |
 | 2 | GRX-G100 ↔ PTA chiplet | UCIe-S, a streaming protocol in a FLIT format, with the adapter's CRC and retry | One x16 module at 32 GT/s is 57.6 GB/s a direction at X2's assumed 0.9 efficiency. **Five modules** at the working geometry, 256 × 64 (the board plan's B10), for a batch of 64 with the weights re-sent; one with them resident | grxgpu: UCIe port, fed by a copy engine | Chiplet team: EIC | B4; rates and counts from X2 |
-| 3 | EIC ↔ PIC | Analog: DAC drive to the modulators, photocurrent back from the detectors | One drive line a weight cell and one an input modulator, one detector a column: `k·n + k + n` lines, 16,704 at the working geometry, 256 × 64 (the board plan's B10) | Chiplet team | Chiplet team | B4, B5; resolutions from X1 |
+| 3 | EIC ↔ PIC | Analog: DAC drive to the modulators, photocurrent back from the detectors | One drive line a weight cell and one an input modulator, one detector a column: `k·n + k + n` lines, 16,704 at the working geometry, 256 × 64 (the board plan's B10). A column's light now lands on eight photodiodes, a balanced pair a bus (B12, B13): still `n` lines back if their currents are combined on the PIC, and 448 more if every photodiode crosses, which is **open** | Chiplet team | Chiplet team | B4, B5; resolutions from X1 |
 | 4 | Laser module → PIC | Light, on polarization-maintaining fiber | **A comb** since the board plan's B12: 64 lines 11 GHz apart at the widest, inside 5.7 nm, each 1.4–14 mW, the spacing locked to the shot clock (§4). Its power, wavelength and noise are still **open** (board plan §8, question 8). For scale: a 64-column tile at 1 GS/s wants 0.33–3.3 W behind 10–20 dB of loss at the receiver B5 assumed, and 0.09–0.88 W at one that has been measured (board plan B5). It is set by the receiver's noise and not by X1's photon row, and intensity noise within about −144 dB/Hz. This row has said 0.16–1.6 W, sized from X1's version 0, and then 0.66–6.6 W and −150, from version 1's receiver noise read in the wrong ADC's LSB (board plan §4.3) | Board team | Chiplet team | B5, X1; figures from [`pta_shot_rate.py`](pta_shot_rate.py) §3 and §6 |
 | 5 | Board controller ↔ all | SMBus or I3C: rails, temperatures, the laser and its interlock | Rate **open**, with the controller (§7) | Board team | Each die's management pins | B7 |
 | 6 | GRX930 ↔ DDR5 | DDR5 (or LPDDR5) | Channels, width and speed grade **open**, with part selection | grx930 team | Board team | B2 |
@@ -140,7 +140,8 @@ things, of which this document held one:
   model has a term for the source now. If a column reads its weights through a
   balanced pair, the budget's row is 2% rms a shot: about −124 dB/Hz, 20 dB
   easier than the figure above. If it reads them through one photodiode and an
-  offset, the figure above is about what it stands. And the lines have to be
+  offset, the figure above is about what it stands. *It reads them through a
+  pair: the board plan's B13, settled the same day.* And the lines have to be
   level to 5%, 0.2 dB, which nothing on the chiplet measures.
 - **Wavelength.** B5's arithmetic is at 1550 nm; the same detector at 1310 nm
   needs 18% more light. The all-optical branch would pin it to 1550 nm within

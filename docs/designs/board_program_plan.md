@@ -10,11 +10,12 @@
 
 **Status: PLAN, drafted 2026-09-21. All seven decisions of §2 are settled, each
 as recommended: B1 and B3 that day, and B2, B4, B5, B6 and B7 on 2026-09-22.
-Five more were raised and settled later and are in §7: B8, B9, and on
+Six more were raised and settled later and are in §7: B8, B9, and on
 2026-10-05 B10, the chiplet's working geometry, 256 × 64, B11, its working shot
-rate, 1 GS/s, and B12, its topology, a ring bank lit by a comb. A reading of
-published rings the same day puts that tile past a standard die. Asked, the
-program let B10 stand.
+rate, 1 GS/s, B12, its topology, a ring bank lit by a comb, and B13, how it
+signs a weight, a balanced pair of photodiodes. A reading of published rings
+the same day puts that tile past a standard die. Asked, the program let B10
+stand.
 X2 has made its predictions (§3.3), X1 its budget (§4.3), and P0, X3 and X4
 are drafted as [`board_icd.md`](board_icd.md),
 [`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) and
@@ -1214,7 +1215,7 @@ the fifth-best published, and next to nothing if it is the best.
 *What B12 adds to this section, 2026-10-05.* The tile is a ring bank on four
 buses, and two requirements here were written for something simpler. **A
 receiver's input is four photodiodes and not one**, a bus's each, because buses
-that reuse lines cannot share one. The interface chip still has 64 receivers
+that reuse lines cannot share one. *(Four pairs, since B13.)* The interface chip still has 64 receivers
 and 64 converters, and what four photodiodes do to a receiver's noise is not
 priced. **And a receiver has to reject the beat between lines**, 11 GHz from
 the signal at the working grid, which the single pole every figure above
@@ -1242,7 +1243,8 @@ left open: through the weight alone, as a balanced pair of photodiodes has it,
 or through the weight and an offset the host takes off again, as one
 photodiode would.
 
-**Three rows for version 1, if a column reads its weights through a pair:** the
+**Three rows for version 1, if a column reads its weights through a pair**
+(*it does, since B13*)**:** the
 source's noise within **2% rms a shot** for the lines together, within **5%**
 for a line on its own, and the lines **level to 5%**, which is 0.2 dB. That
 set loses 0.30 ± 0.04, a tenth of a point between the three. Each stands
@@ -1582,7 +1584,7 @@ What it fixes, each from a model and none from a device:
 | Span | Inside 5.7 nm, one free spectral range of the ring read | [`pta_ring.py`](pta_ring.py) |
 | The weight ring | A Q of 62,000 to 97,000 and a swing of 2.3 to 3.6 V. From 81,000 at the published worst spacing | Derived |
 | The source | One comb, a pump before it and an amplifier after: 0.09 to 0.88 W in all, 1.4 to 14 mW a line, on B5's one fiber | [`pta_rate.py`](pta_rate.py) |
-| Photodiodes | 256, one a bus a column. Still 64 receivers and 64 converters | Derived |
+| Photodiodes | 256, one a bus a column. Still 64 receivers and 64 converters. *512 since B13: a pair a bus a column* | Derived |
 | The receiver | One that averages over a shot, or one steeper than a single pole | Derived |
 | A weight's LSB | 24 to 38 MHz of a line's position against its ring | Derived |
 | The error model's crosstalk | The nearest-neighbour chain it already has, as four chains of 64: 252 pairs of neighbours a column where it has 255 | The CPU document, §4.3 |
@@ -1601,8 +1603,9 @@ and still not a measured one.
 **What it does not settle.** Whose comb. The amplifier and its noise: §4.3's
 error model still has no term for the source. *(It has one since, and three
 rows, through a balanced pair: §4.3.)* How large the beat between lines
-is. How the tile signs a weight. Where a column's four currents are added, on
-the photonic die or after the bond, which is 64 lines between the dies or 256.
+is. How the tile signs a weight *(settled since: a balanced pair, B13)*. Where
+a column's four currents are added, on the photonic die or after the bond,
+which is 64 lines between the dies or 256.
 And whether four is the count: three hold at the kind end of the published
 range, and more are always allowed, at a photodiode a column each.
 
@@ -1613,6 +1616,62 @@ makes a photodiode a cell cheap, which is the one-laser reading that needs no
 second optical element; or a ring that cannot be put on its line and kept
 there, since the drift this program fits is still a modulator's (§8,
 question 1). *Needed by:* L3, P1, P0's link 4, X1's error model and X3.
+
+**B13 — How the tile signs a weight: a balanced pair.** *Settled 2026-10-05.*
+
+A weight in this plan is signed. The networks are trained with weights between
+−1 and 1, and a ring only passes a line's light or does not. B12 made the tile
+a ring bank and left open how it gets a sign out of that. There are two ways. A
+ring sends its line's light to one of two waveguides, each ends on a
+photodiode, and the receiver takes the difference: a balanced pair. Or one
+photodiode reads the light a ring passes, and the host takes off the offset
+that a weight of zero leaves. grx930's harness ran a source's noise through
+both (§4.3): the offset passes twenty times what the pair does of the noise
+the lines share.
+
+*Recommended, and settled as recommended:* **a column reads each bus through a
+balanced pair of photodiodes.** A weight is how a ring splits its line between
+the two: all one way is 1, all the other is −1, and an even split is zero. It
+is how the published ring bank does it (Tait et al., §8, question 8), and it
+is the reading that lets the source be an amplified comb.
+
+What it fixes, each from a model and none from a device:
+
+| | With a balanced pair | From |
+|---|---|---|
+| Photodiodes | 512: two a bus a column, at four buses. Still 64 receivers and 64 converters | Counted |
+| A bank's waveguides | Two out of every bank: the one its rings drop to and the one they pass | The topology |
+| The source's rows of the budget | Version 1's, without the "if": 2% rms a shot for the lines together, 5% for a line on its own, lines level to 5%. A tenth of a point between them | grx930's harness, §4.3 |
+| The source's noise, as a density | About −124 dB/Hz over the shot rate, 20 dB easier than was assumed | [`pta_source_noise.py`](pta_source_noise.py) |
+| A pair's match | Its two halves alike to about 10%. A mismatch is an offset of half its size, and at 10% the offset passes as much of the source's noise as the pair does | Derived from the two measured readings, and not run |
+| The converter's span | The difference alone. Behind an offset it would have had to span the offset too | The topology |
+
+**What it costs** over one photodiode: 256 more photodiodes, a second waveguide
+out of every bank and the crossings that brings, and a pair that has to be
+matched.
+
+**What it closes.** B12's open item. And the "if" on §4.3's three rows for the
+source.
+
+**What it does not settle.** Where a pair's difference is taken, and a
+column's four pairs added: on the photonic die, which is 64 lines between the
+dies, or after the bond, which is 512. Whether a pair can be matched to 10%
+as made, or has to be trimmed. And two things the error model does not have
+for either reading. Its shot noise is the difference's, where a pair's
+photodiodes carry all the light a column is sent. And B5's laser was sized on
+a detector's full scale, where what a column is sent does not depend on its
+weights at all. Neither has been rerun.
+
+The twenty times is this network's. Its first layer's weights have an rms of
+0.14 of their range, with a few at the end of it, so the offset is large
+beside them. A network whose weights filled a ring's range would make the two
+readings closer, and no network makes the offset the quieter one.
+
+**It is a working choice and not a detector.** Three things would reopen it: a
+photonic die on which 512 photodiodes cost more than 26 dB of the source's
+noise is worth; a source quiet enough, about −144 dB/Hz, that the offset would
+do; or a pair that cannot be brought within about 10%. *Needed by:* P1, L3,
+X1's rows and X3.
 
 ---
 
