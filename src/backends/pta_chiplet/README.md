@@ -88,10 +88,12 @@ while (pta_twin_read32(t, PTA_TWIN_STATUS) & (PTA_TWIN_STATUS_BUSY | PTA_TWIN_ST
 ```
 
 The geometry is the caller's to name. The board plan's B10 made 256 × 64 the
-chiplet's working geometry on 2026-10-05, and the twin still builds any tile,
-because its gate needs more than one. The gate runs 4 × 4 (the c930 register
-model's tile), 8 × 8 (the tile the accuracy budget was first measured on) and
-256 × 64, the working geometry.
+chiplet's working geometry on 2026-10-05 and revised it the same day to
+128 × 64, and the twin still builds any tile, because its gate needs more than
+one. The gate runs 4 × 4 (the c930 register model's tile), 8 × 8 (the tile the
+accuracy budget was first measured on) and 256 × 64, which was the working
+geometry when the gate was written. It does not yet run 128 × 64. The harness
+sweep below does, through the twin, and every line of it is the harness's own.
 
 ## The gate
 

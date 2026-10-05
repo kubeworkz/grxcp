@@ -89,7 +89,8 @@ NPU_F0_GEMM = (feed.MEASURED[("NPU bench", sweep.DIGITAL_RUN)][2]
 NPU_HOST = min(d["wall"] - d["gemm"] for d in feed.MEASURED_F2.values())
 
 # ---- the PTA chiplet -------------------------------------------------------
-TILE = (256, 64)                  # the working geometry: the board plan's B10, 2026-10-05
+TILE = (256, 64)                  # B10 as first settled, 2026-10-05.  Revised the same day to
+                                  # 128 x 64: pta_working_point.py has this model's figures at it
 FS = shot.X2_FS                   # 1 GS/s, the working rate: the board plan's B11, 2026-10-05
 BANKS = 2                         # 4.3: "held to two weight banks"
 BATCH = link.BIG["mb"]            # 64, the batch X2 and 4.3 are quoted at

@@ -89,7 +89,8 @@ budgets at half an 8-bit ADC LSB (a quarter of its 7-bit ADC's, which is how
 §8's runs set it).
 
 At a 256-row tile with 16-fold averaging that is 4,096 shots: 4 µs at one shot
-a nanosecond, for one bank, 8 µs for both. Against an hourly interval that is a
+a nanosecond, for one bank, 8 µs for both. (Half of each at the 128 rows of
+the working geometry, since the board plan revised B10 on 2026-10-05.) Against an hourly interval that is a
 duty cycle of about two parts in a billion. **Calibration's cost on this chiplet
 is not its shots.** It is the interruption: draining the tile, rewriting the
 weights and restarting.

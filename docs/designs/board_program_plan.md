@@ -11,13 +11,13 @@
 **Status: PLAN, drafted 2026-09-21. All seven decisions of §2 are settled, each
 as recommended: B1 and B3 that day, and B2, B4, B5, B6 and B7 on 2026-09-22.
 Six more were raised and settled later and are in §7: B8, B9, and on
-2026-10-05 B10, the chiplet's working geometry, 256 × 64, B11, its working shot
-rate, 1 GS/s, B12, its topology, a ring bank lit by a comb, and B13, how it
-signs a weight, a balanced pair of photodiodes. A reading of published rings
-the same day puts that tile past a standard die. Asked, the program let B10
-stand. **And B5's laser was found low the same day, by sixteen times at the
-working tile:** it was sized on a detector's full scale, which is an eighth of
-the light a 256-row column is sent (B5, at its end).
+2026-10-05 B10, the chiplet's working geometry, B11, its working shot rate,
+1 GS/s, B12, its topology, a ring bank lit by a comb, and B13, how it signs a
+weight, a balanced pair of photodiodes. **B10 was settled at 256 × 64 and
+revised the same day to 128 × 64.** Two things found that day moved it.
+Published rings put the larger tile past a standard die. And B5's laser, sized
+on a detector's full scale, was low by sixteen times at 256 rows and eight at
+128 (B5, at its end), which left the larger tile little cheaper a MAC.
 X2 has made its predictions (§3.3), X1 its budget (§4.3), and P0, X3 and X4
 are drafted as [`board_icd.md`](board_icd.md),
 [`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) and
@@ -296,6 +296,9 @@ die: 22 to 220 mW a line at four buses, where B12 has 1.4 to 14.
 It is one network, on MNIST, whose images light a tenth of a tile's rows at
 the mean. A workload that lights more of its inputs fills more of the light,
 and no workload makes the fill one.
+
+*B10 was revised to 128 × 64 on this, the same day.* The working tile's laser
+is then the 0.7–7 W above: eight times this decision's.
 
 **B6 — Silicon nodes, and the board before silicon.** grx930's manufacturing
 plan takes the SoC to SKY130 first, then to TSMC N28, and freezes the RTL now.
@@ -1262,7 +1265,8 @@ the fifth-best published, and next to nothing if it is the best.
 *What B12 adds to this section, 2026-10-05.* The tile is a ring bank on four
 buses, and two requirements here were written for something simpler. **A
 receiver's input is four photodiodes and not one**, a bus's each, because buses
-that reuse lines cannot share one. *(Four pairs, since B13.)* The interface chip still has 64 receivers
+that reuse lines cannot share one. *(Four pairs, since B13; two pairs at
+128 inputs, since B10's revision.)* The interface chip still has 64 receivers
 and 64 converters, and what four photodiodes do to a receiver's noise is not
 priced. **And a receiver has to reject the beat between lines**, 11 GHz from
 the signal at the working grid, which the single pole every figure above
@@ -1322,6 +1326,15 @@ neither set costs more than its three rows summed, and the errors on layer
 It is one network, a first-order term added after the converter, and noise
 with no memory from shot to shot. No source's noise is held here, a comb's or
 an amplifier's: these rows say what one may be.
+
+*The rows hold on the tile as revised, 2026-10-05.* All of the above was
+measured at 256 × 64 on four buses. grx930's `source` mode was run again at
+128 × 64 on two, where version 1 by itself loses 0.34 ± 0.07. The three rows
+together lose 0.37 ± 0.07, which is 0.03 over it; each alone stands 5%; and 5%
+of all three loses 0.46 ± 0.03. Through an offset 1% together loses
+0.67 ± 0.16 and 2% loses 2.25 ± 0.46: the offset passes sixteen times what a
+pair does there, 24 dB, where it passed twenty at 256 rows: with fewer rows
+lit, the offset is smaller beside the sums.
 
 *The receiver's row, as one laser fixes it, 2026-10-05*
 ([`pta_laser.py`](pta_laser.py); B5, at its end). Version 1 gives the receiver
@@ -1505,7 +1518,59 @@ chiplet is refused. S3's placement becomes a choice of device, made above
 grxBLAS, where [`heterogeneous_devices.md`](heterogeneous_devices.md) §6 already
 put it. *Needed by:* S4, S3 and S1.
 
-**B10 — The chiplet's working geometry: 256 × 64.** *Settled 2026-10-05.*
+**B10 — The chiplet's working geometry: 128 × 64.** *Settled 2026-10-05 at
+256 × 64, and revised the same day.*
+
+*Revised 2026-10-05: 128 inputs by 64 outputs.* This decision was first made
+for 256 × 64, on a cheaper MAC on wide layers. Two things found the same day
+took that ground away. The smallest ring read puts 256 × 64 past a standard
+die and 128 × 64 inside one. And the laser, sized on the light a column is
+actually sent, is twice as large for the larger tile, which leaves it 15%
+cheaper a MAC at one end of the power range and 2% at the other, where it had
+been 40% and 14%. *Recommended, and settled as recommended:* **128 inputs by
+64 outputs is the working geometry.**
+
+What it fixes now, each from a model and none from a device
+([`pta_working_point.py`](pta_working_point.py)):
+
+| | At 128 × 64 | As first settled, at 256 × 64 |
+|---|---|---|
+| Lines between the two dies | 8,384 | 16,704 |
+| The die | 62 mm² at the smallest ring read, inside a standard 100. 20.3 by the floorplan's bound | 124 mm², and 39.7 |
+| Link 2 | Three modules with the weights re-sent; one with them held | Five; one |
+| Interface chip | 0.44 to 4.04 W | 0.55 to 7.61 W |
+| Laser | 0.7 to 7.0 W, eight times B5's method | 1.4 to 14 W, sixteen times |
+| A MAC, every cell in use | 140 to 1,351 fJ | 120 to 1,323 fJ |
+| The 4096-square layer | 131 µs | 65.7 µs |
+| What the interface chip holds | 8,192 weights a bank in two banks, written 128 cells a beat; 64 receivers and 7-bit converters | 16,384, written 256 a beat |
+| The ring bank | Two buses of 64 lines on an 11 GHz grid | Four buses of the same 64 |
+| Photodiodes | 256 | 512 |
+| A line of the comb | 11 to 110 mW | 22 to 220 mW |
+| v1 on D3 | 0.34 ± 0.07 points as budgeted, 0.35 ± 0.06 at that laser | 0.20 ± 0.05, and 0.28 ± 0.06 |
+| `PTA_CAPS0` | 128 rows, 64 columns | 256 rows |
+
+**What the move costs.** Time: a wide layer takes twice as long, and D3's two
+layers 1.29 µs for 0.96. And, in grx930's model, accuracy under drift: an hour
+of TFLT's costs 0.51 ± 0.07 points here where it cost 0.24 ± 0.06, with four
+hours the same on both. v1 itself is a standard error and a half worse as
+budgeted, and no worse at the laser.
+
+**What it buys.** Half the laser, half the lines, half the photodiodes, three
+link modules for five, and a die that fits a standard service at the smallest
+ring read. And a ring bank of two buses on the comb B12 already asked for, by
+B12's own rule: the fewest that hold across the published range of line
+spacings.
+
+**It fits at one ring.** 62 mm² is rings touching, with nothing added to a
+cell, at the smallest ring of five papers. At the next ring read it is 233. So
+the fourth thing that would have reopened the first decision has not gone
+away. It has gone from certain to possible.
+
+**What would reopen it now:** a workload for which a wide layer's time is the
+constraint; a ring that cannot be made near 30 µm; or a loss budget that makes
+0.7 to 7 W as hard as 1.4 to 14.
+
+*As first settled, at 256 × 64, and kept as it was written:*
 
 §8's first question has two halves, how big and how fast, and every model swept
 candidate tiles because nothing fixed one. [`pta_geometry.py`](pta_geometry.py)
@@ -1570,10 +1635,12 @@ its end). What chose this tile over 128 × 64 was a cheaper MAC on wide layers,
 and that was reckoned on B5's laser, which is the same for both. Sized on the
 light each is actually sent, the laser is 1.4–14 W here and 0.7–7 W at
 128 × 64, and a MAC with every cell in use then costs 119 to 1,323 fJ here and
-140 to 1,351 there: the same. So the larger tile no longer buys a cheaper MAC.
+140 to 1,351 there: 15% cheaper at one end and 2% at the other, where it had
+been 40% and 14%. So the larger tile buys little of a MAC any more.
 It buys half the time on a wide layer, for twice the laser, twice the die and
 five link modules for three. B10 is not reopened here either: it is the
-program's.
+program's. *The program revised it the same day: 128 × 64, at the head of
+this decision.*
 
 **It is a working geometry and not a tape-out.** Three things would reopen it: a
 workload of layers 128 wide or less; a loss budget or a receiver that cannot
@@ -1635,6 +1702,13 @@ proportion; a link held under five modules with no store on the interface chip
 for a layer's weights; or a loss budget past 20 dB behind a laser under 0.88 W.
 *Needed by:* P0's shot clock, X4's `PTA_CAPS2`, L3, X2's module count and S3.
 
+*At 128 × 64, since B10's revision*
+([`pta_working_point.py`](pta_working_point.py)): three link modules with the
+weights re-sent, 0.44 to 4.04 W on the interface chip, 0.7 to 7.0 W of laser,
+140 to 1,351 fJ a MAC, 128 G cells written a second at 128 a beat, and two
+buses. The rate, the shot clock, the converters, the receivers and the weight
+ring's Q and swing are as above: none of them knows the tile's rows.
+
 **B12 — The tile's topology: a ring bank, lit by a comb.** *Settled 2026-10-05.*
 
 §8's question 8 asked what kind of light source the tile needs, and found the
@@ -1651,7 +1725,8 @@ one reading whose cell is a ring and nothing else. It is what the error model,
 the crosstalk row and every bus count here were written for. And it is the one
 with a published analysis behind it. *The working count that came with the
 recommendation is four buses,* the fewest that hold across the published range
-of line spacings.
+of line spacings. *At 128 inputs, since B10's revision, that rule gives two
+buses, of the same 64 lines on the same grid. What follows is for four.*
 
 What it fixes, each from a model and none from a device:
 
@@ -1717,7 +1792,7 @@ What it fixes, each from a model and none from a device:
 
 | | With a balanced pair | From |
 |---|---|---|
-| Photodiodes | 512: two a bus a column, at four buses. Still 64 receivers and 64 converters | Counted |
+| Photodiodes | 512: two a bus a column, at four buses. Still 64 receivers and 64 converters. *256 at the two buses of 128 inputs, since B10's revision* | Counted |
 | A bank's waveguides | Two out of every bank: the one its rings drop to and the one they pass | The topology |
 | The source's rows of the budget | Version 1's, without the "if": 2% rms a shot for the lines together, 5% for a line on its own, lines level to 5%. A tenth of a point between them | grx930's harness, §4.3 |
 | The source's noise, as a density | About −124 dB/Hz over the shot rate, 20 dB easier than was assumed | [`pta_source_noise.py`](pta_source_noise.py) |
@@ -1743,7 +1818,8 @@ weights at all. Neither has been rerun. *Both have since*
 photon row at the laser the receiver needs. And that laser is sixteen times
 B5's: B5, at its end, and §4.3.*
 
-The twenty times is this network's. Its first layer's weights have an rms of
+*On the tile as revised, 128 × 64, the twenty is sixteen, 24 dB, and the
+match a pair needs is 12% (§4.3).* The twenty times is this network's. Its first layer's weights have an rms of
 0.14 of their range, with a few at the end of it, so the offset is large
 beside them. A network whose weights filled a ring's range would make the two
 readings closer, and no network makes the offset the quieter one.
@@ -1759,8 +1835,9 @@ X1's rows and X3.
 ## 8. Open questions
 
 1. **How big is the PTA chiplet, and how fast?** *Both halves were settled on
-   2026-10-05, as working figures: B10, 256 × 64, and B11, 1 GS/s (§7). What
-   follows is how the question was worked, and reads as it was written.* Its inputs, outputs and
+   2026-10-05, as working figures: B10, 128 × 64 after a revision the same
+   day, and B11, 1 GS/s (§7). What follows is how the question was worked, and
+   reads as it was written.* Its inputs, outputs and
    **optical** shot rate set X2, the laser (B5) and the EIC's area. Nothing here
    fixes them, and X2 sweeps candidate geometries rather than claiming one
    because of it. The *link's* signalling is no longer part of this question:
@@ -2243,6 +2320,41 @@ X1's rows and X3.
    root of the rate, from sixteen times as much. Neither table has been rerun
    at other tiles or rates with this laser, and the rows stay as they were
    run.
+
+   **Both tables again, at the corrected laser, 2026-10-05**
+   ([`pta_working_point.py`](pta_working_point.py)). The note above said
+   neither had been rerun. This is them. First the candidates, at 1 GS/s:
+
+   | | 64 × 8 | 128 × 64 | 256 × 64 | 256 × 128 |
+   |---|---|---|---|---|
+   | The laser, as a multiple of B5's | 8, derived | 8 | 16 | 16, derived |
+   | Laser, W | 0.1–0.9 | 0.7–7.0 | 1.4–14 | 2.8–28 |
+   | A MAC, every cell in use, fJ | 302–3,873 | 140–1,351 | 120–1,323 | 117–1,208 |
+   | The die at the smallest ring read, mm² | 18 | 62 | 124 | 187 |
+
+   The multiple is grx930's where it ran the tile. Elsewhere it is the one
+   that leaves the receiver what those two were left, a quarter of an LSB on
+   the first layer, and nobody ran it. A larger tile buys little of a MAC with
+   this laser: 256 × 64 is 15% cheaper than 128 × 64 at one end and 2% at the
+   other, where the first table had 40% and 14%. It buys time, and pays in
+   light, in area and in link. B10 was revised on it (§7).
+
+   And the rates, at 128 × 64:
+
+   | | 0.25 GS/s | 0.5 GS/s | 1 GS/s | 2 GS/s | 4 GS/s |
+   |---|---|---|---|---|---|
+   | Link modules, weights re-sent | 1 | 2 | 3 | 5 | 10 |
+   | Interface chip, W | 0.31–1.19 | 0.35–2.13 | 0.44–4.04 | 0.63–7.99 | 1.18–18.9 |
+   | Laser, W | 0.4–3.5 | 0.5–5.0 | 0.7–7.0 | 1.0–11.7 | 1.4–33.1 |
+   | A MAC, fJ | 322–2,299 | 207–1,734 | 140–1,351 | 99–1,202 | 79–1,585 |
+   | The 4096-square layer | 525 µs | 262 µs | 131 µs | 65.7 µs | 32.9 µs |
+   | Buses for 128 inputs | 1 | 1 | 2 | 4 | 7 |
+
+   The laser is the larger part of the power at every rate now, and a MAC
+   still gets cheaper with the rate up to 2 GS/s. B11's reason stands: 1 GS/s
+   is the fastest rate that both measured parts reach, and neither has moved.
+   One thing is new to this tile: at 0.5 GS/s one bus would carry all 128
+   inputs, where 1 GS/s takes two.
 2. **What does the development kit cost, and how many are built?** That settles
    B1 and B2 more than any technical argument does.
 3. **Does the GRX930's NPU keep a PTA of its own?** The c930 PTM work is built
@@ -2459,7 +2571,7 @@ X1's rows and X3.
    off a comb for one input, what puts a ring on its line in the first place,
    how the tile signs a weight, and a receiver with more than one photodiode on
    its input. *Answered the same day: a ring bank, on four buses as the working
-   count (B12, §7).*
+   count (B12, §7); two buses at the 128 inputs of B10's revision.*
 
    *And the noise row has been measured, 2026-10-05*
    ([`pta_source_noise.py`](pta_source_noise.py); §4.3). The table at the head

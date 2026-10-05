@@ -52,8 +52,8 @@ Four parties own the board between them:
 | # | Link | Carries | Width and rate | Owner, A end | Owner, B end | Source |
 |---|---|---|---|---|---|---|
 | 1 | GRX930 ↔ GRX-G100 | CXL 2.0 (CXL.io, .cache, .mem) on the PCIe 5.0 PHY | x16, 32 GT/s a lane, about 64 GB/s a direction before overhead | grx930: root port, home agent, HDM decoders | grxgpu: Type-2 device | B1, B3; rate from X2 |
-| 2 | GRX-G100 ↔ PTA chiplet | UCIe-S, a streaming protocol in a FLIT format, with the adapter's CRC and retry | One x16 module at 32 GT/s is 57.6 GB/s a direction at X2's assumed 0.9 efficiency. **Five modules** at the working geometry, 256 × 64 (the board plan's B10), for a batch of 64 with the weights re-sent; one with them resident | grxgpu: UCIe port, fed by a copy engine | Chiplet team: EIC | B4; rates and counts from X2 |
-| 3 | EIC ↔ PIC | Analog: DAC drive to the modulators, photocurrent back from the detectors | One drive line a weight cell and one an input modulator, one detector a column: `k·n + k + n` lines, 16,704 at the working geometry, 256 × 64 (the board plan's B10). A column's light now lands on eight photodiodes, a balanced pair a bus (B12, B13): still `n` lines back if their currents are combined on the PIC, and 448 more if every photodiode crosses, which is **open** | Chiplet team | Chiplet team | B4, B5; resolutions from X1 |
+| 2 | GRX-G100 ↔ PTA chiplet | UCIe-S, a streaming protocol in a FLIT format, with the adapter's CRC and retry | One x16 module at 32 GT/s is 57.6 GB/s a direction at X2's assumed 0.9 efficiency. **Three modules** at the working geometry, 128 × 64 (the board plan's B10, as revised on 2026-10-05; five at the 256 × 64 it was first settled at), for a batch of 64 with the weights re-sent; one with them resident | grxgpu: UCIe port, fed by a copy engine | Chiplet team: EIC | B4; rates and counts from X2 |
+| 3 | EIC ↔ PIC | Analog: DAC drive to the modulators, photocurrent back from the detectors | One drive line a weight cell and one an input modulator, one detector a column: `k·n + k + n` lines, 8,384 at the working geometry, 128 × 64 (the board plan's B10, as revised; 16,704 at the 256 × 64 it was first settled at). A column's light lands on four photodiodes, a balanced pair on each of two buses (B12, B13): still `n` lines back if their currents are combined on the PIC, and 192 more if every photodiode crosses, which is **open** | Chiplet team | Chiplet team | B4, B5; resolutions from X1 |
 | 4 | Laser module → PIC | Light, on polarization-maintaining fiber | **A comb** since the board plan's B12: 64 lines 11 GHz apart at the widest, inside 5.7 nm, each 1.4–14 mW, the spacing locked to the shot clock (§4). Its power, wavelength and noise are still **open** (board plan §8, question 8). For scale: a 64-column tile at 1 GS/s wants 0.33–3.3 W behind 10–20 dB of loss at the receiver B5 assumed, and 0.09–0.88 W at one that has been measured (board plan B5). It is set by the receiver's noise and not by X1's photon row, and intensity noise within about −144 dB/Hz. This row has said 0.16–1.6 W, sized from X1's version 0, and then 0.66–6.6 W and −150, from version 1's receiver noise read in the wrong ADC's LSB (board plan §4.3) | Board team | Chiplet team | B5, X1; figures from [`pta_shot_rate.py`](pta_shot_rate.py) §3 and §6 |
 | 5 | Board controller ↔ all | SMBus or I3C: rails, temperatures, the laser and its interlock | Rate **open**, with the controller (§7) | Board team | Each die's management pins | B7 |
 | 6 | GRX930 ↔ DDR5 | DDR5 (or LPDDR5) | Channels, width and speed grade **open**, with part selection | grx930 team | Board team | B2 |
@@ -132,8 +132,9 @@ things, of which this document held one:
   B5, at its end). They take a detector's full scale for all the light a
   column is sent, and it is an eighth of it. On the light a 256-row column is
   actually sent this link carries **1.4–14 W** at the measured receiver, 22 to
-  220 mW a line, and 0.7–7 W for a 128-row tile. What follows is as it was
-  written. The same light whichever way it is made: one laser of 0.33–3.3 W at
+  220 mW a line, and 0.7–7 W for a 128-row tile. *The tile is 128 rows since
+  the board plan revised B10 the same day: **0.7–7 W**, 11 to 110 mW a line.*
+  What follows is as it was written. The same light whichever way it is made: one laser of 0.33–3.3 W at
   1 GS/s for a 256 × 64 tile, or an emitter an input row at 1.3–12.8 mW each. An
   emitter of 10 mW a row stands 18.9 dB of loss, where the largest single laser
   B5 planned on stands 16.9.
@@ -273,7 +274,8 @@ board plan's §8 holds the ones that are questions rather than gaps.
    which set link 2's module count, link 3's line count, link 4's laser power
    and the shot clock. Board plan §8, question 1. *The geometry was settled as a
    working one on 2026-10-05:* 256 inputs by 64 outputs, the board plan's B10,
-   and §2's rows for links 2 and 3 now carry its counts. *The shot rate was
+   *and revised the same day to 128 by 64,* and §2's rows for links 2 and 3
+   carry the revised counts. *The shot rate was
    settled as a working one the same day:* 1 GS/s, the board plan's B11, so the
    shot clock in §4 is 1 GHz and link 4's "for scale" figures in §2 are at the
    working rate. How far up its range link 4's laser has to be is still the

@@ -16,7 +16,8 @@ design, and it does not choose between them.
 
 THE CHOICE WAS MADE ON 2026-10-05: a ring bank, the plan's B12, on four buses
 as the working count.  This file is what it was made from, and is kept as it
-was run.
+was run.  B10 has since been revised to 128 inputs, where the same rule gives
+two buses of the same 64 lines: pta_working_point.py.
 
 PUBLISHED, and quoted as each has it:
 

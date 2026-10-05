@@ -54,6 +54,9 @@ score with invented weights would hide the choice inside a number.
 THE CHOICE WAS MADE ON 2026-10-05: 256 x 64 is the working geometry, the plan's
 B10.  This file is what it was made from, and is kept as it was run.
 
+AND REVISED THE SAME DAY, to 128 x 64, when pta_laser.py found the laser column
+low by the rows.  pta_working_point.py runs this scorecard again with it.
+
 Standard library only.  Run:  python3 docs/designs/pta_geometry.py
 """
 import math
