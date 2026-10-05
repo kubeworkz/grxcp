@@ -280,6 +280,8 @@ def main():
     print("  and three figures are missing behind this reading: the ring's size, its")
     print("  linewidth, and the swing that moves it by one.  The last is governed by")
     print("  the same 1.96 V cm, through a group index this program does not hold.")
+    print("  (pta_ring.py, 2026-10-05, has since read five published rings into those three")
+    print("  places.  The smallest is 30 um in radius, a 60 um cell: no row above is as fine.)")
     print("  What a non-resonant tile CAN be, at 5 V and 25 um:")
     cell = mzm_mm(5.0) * P_CELL * MM
     for name, a in (("the largest standard die", std), ("the reference package", pkg)):

@@ -11,7 +11,9 @@
 **Status: PLAN, drafted 2026-09-21. All seven decisions of §2 are settled, each
 as recommended: B1 and B3 that day, and B2, B4, B5, B6 and B7 on 2026-09-22.
 Three more were raised and settled later and are in §7: B8, B9, and on
-2026-10-05 B10, the chiplet's working geometry, 256 × 64.
+2026-10-05 B10, the chiplet's working geometry, 256 × 64. A reading of
+published rings the same day puts that tile past a standard die, and B10 says
+so without reopening itself: that is the program's to do.
 X2 has made its predictions (§3.3), X1 its budget (§4.3), and P0, X3 and X4
 are drafted as [`board_icd.md`](board_icd.md),
 [`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) and
@@ -1388,7 +1390,7 @@ What it fixes, each from a model and none from a device:
 | | At 256 × 64 | From |
 |---|---|---|
 | Lines between the two dies | 16,704 | The floorplan |
-| Cells, inputs and link | 39.7 mm², a lower bound | The floorplan, at its assumed 25 µm cell |
+| Cells, inputs and link | 39.7 mm², a lower bound. *124 mm² or more at every ring read since: see below* | The floorplan, at its assumed 25 µm cell |
 | Link 2 | Five UCIe-S modules at a batch of 64 with the weights re-sent; one with them resident | X2 |
 | Interface chip | 0.55 to 7.6 W | Published parts |
 | Laser | 0.09 to 0.88 W at a measured receiver, behind 10 to 20 dB of loss | B5's method |
@@ -1405,10 +1407,30 @@ which stays at X2's 1 GS/s as a planning figure. The kind of light source (§8,
 question 8). And whether a weight cell is resonant, which decides whether a tile
 this size fits a die at all (§8, question 1, the floorplan).
 
+*The last of those was worked the same day, and it bears on this decision*
+([`pta_ring.py`](pta_ring.py); §8, question 1). The cells are rings, as the
+floorplan had already found. But the smallest thin-film lithium niobate ring
+in the five papers read is 30 µm in radius, a 60 µm cell, where the floorplan
+assumed 25.
+At that ring the tile is 124 mm² with its inputs and its link, and at the rings
+on which tuning and a high Q have actually been shown it is 466 to 584. A
+standard packaging service takes 100. 128 × 64 is 62 mm² at the smallest ring,
+and is the largest candidate that fits a standard die there. It fits at no
+other ring read either: 233 mm² at the next.
+
+**So B10 was made on an area that none of the devices read supports.** Five
+papers are not a survey: the ring that would carry 256 × 64 is 26 µm in radius,
+4 µm under the smallest read, and one may be published. But every area here is
+a floor, with nothing added to a cell for electrodes, a bus or a gap. It is not
+reopened here, because whether this board's photonic die may be larger than a
+standard service takes is the program's to say, and P1's to cost. If it may
+not, the working geometry is 128 × 64.
+
 **It is a working geometry and not a tape-out.** Three things would reopen it: a
 workload of layers 128 wide or less; a loss budget or a receiver that cannot
-light 64 columns; or a weight cell that is not resonant. *Needed by:* P1, L3,
-X2's module count and S3.
+light 64 columns; or a weight cell that is not resonant. *A fourth, since
+[`pta_ring.py`](pta_ring.py):* a photonic die held to what a standard packaging
+service takes. *Needed by:* P1, L3, X2's module count and S3.
 
 ---
 
@@ -1753,6 +1775,53 @@ X2's module count and S3.
    and bound by the tile, not 296 µs and bound by the link, and D3's two layers
    are 0.96 µs and not 3.74. S3's readings stand, and the one that says the
    command is the cost of a small layer stands harder.
+
+   **What a published ring makes of the cell, 2026-10-05**
+   ([`pta_ring.py`](pta_ring.py)). The floorplan sized a resonant cell at 25 µm,
+   which is an assumption in a patent application for another topology, and
+   said three figures were missing behind it: the ring's size, its linewidth,
+   and the swing that moves it by one. Five published devices now stand in
+   those places. None is a weight cell, and nobody here has laid out a ring.
+   Nor are five papers a survey: "the smallest" below is the smallest of these.
+
+   | Published ring | Radius | Cell, rings touching | 256 × 64, weights | With inputs and link | 128 × 64, the same |
+   |---|---|---|---|---|---|
+   | Thin-film lithium niobate, the smallest read (Krasnokutska et al., arXiv:1807.06531) | 30 µm | 60 µm | 59 mm² | 124 mm² | 62 mm² |
+   | The ring that paper tuned, at 3 pm/V | 70 µm | 140 µm | 321 mm² | 466 mm² | 233 mm² |
+   | The highest Q, 5 million loaded (Zhang et al., arXiv:1712.04479) | 80 µm | 160 µm | 419 mm² | 584 mm² | 293 mm² |
+   | Thin-film lithium tantalate, a racetrack (Wang et al., arXiv:2306.16492) | 100 µm apex | 200 × 600 µm | 1,966 mm² | | 983 mm² |
+
+   Every area is a floor: electrodes, a bus and a gap to the next ring all add
+   to a cell and none is added. Five things follow.
+
+   - **A cell is 60 to 160 µm, not 25**, so the floorplan's area for the weights
+     was 6 to 41 times too small on a ring, and 192 times on lithium tantalate's
+     racetrack. Its other reading stands the better for it: a pad a cell at
+     flip-chip's 100 µm is enough, and the finest bond is not needed.
+   - **None of these rings puts 256 × 64 on a standard die.** The ring that
+     would is 26 µm in radius, 4 µm under the smallest read, and that with
+     nothing added to a cell. On the plan's own
+     platform, lithium tantalate, the one resonator read with dimensions is
+     a racetrack, and a tile of those is 20 standard dies of weights alone. That
+     bears on B10 (§7).
+   - **The swing is in range.** A linewidth of a published racetrack is 4.4 V at
+     the 7.0 pm/V measured on it (Wang et al., arXiv:1701.06470), so the
+     floorplan's 5 V is a published device's. 2 V and 1 V ask a Q of 111,000 and
+     221,000. A Q far past that is published, and not on a small ring with
+     electrodes.
+   - **Low voltage is paid for in stability, one for one.** A 6-bit weight's LSB
+     is 0.42 pm of resonance on a 5 V ring and 0.084 on a 1 V one. The one
+     figure read, on lithium tantalate, is 0.1 pm in 25 minutes (Sayem et
+     al., arXiv:2602.00922): a quarter of an LSB on the one and more than one on
+     the other. It is one device for 25 minutes, and says nothing about
+     temperature.
+   - **The drift this program fits is not a ring's.** TFLT's and TFLN's fits are
+     a Mach-Zehnder's bias drifting. A ring turns the same change of index into
+     a weight error in proportion to its Q, and nothing has priced that. §4.3's
+     recalibration row, X3's intervals and the geometry sweep's drift row are a
+     modulator's until something does.
+
+   The lines a bus carries are question 8's, and are there.
 2. **What does the development kit cost, and how many are built?** That settles
    B1 and B2 more than any technical argument does.
 3. **Does the GRX930's NPU keep a PTA of its own?** The c930 PTM work is built
@@ -1835,6 +1904,38 @@ X2's module count and S3.
    wavelength, by figures nobody holds. The other half — that inputs are told
    apart by wavelength, which is what decides the source's kind — area does not
    reach, and it stays open here.
+
+   *One bank does not tell 256 apart, 2026-10-05*
+   ([`pta_ring.py`](pta_ring.py)). The question above was whether one bank can,
+   and published rings answer it, for a ring bank. The error model's crosstalk
+   is a neighbour's ring seen from a line away, and a resonance is a Lorentzian,
+   so §4.3's two crosstalk rows are distances between lines: v1's 2% is 3.5
+   linewidths and v0's 10% is 1.5. A ring's free spectral range over that
+   distance is how many lines one bus holds.
+
+   | Ring | Finesse | Lines a bus at v1 | Buses for 256 |
+   |---|---|---|---|
+   | 30 µm, a 5 V swing | 163 | 46 | 6 |
+   | 30 µm, a 2 V swing | 407 | 116 | 3 |
+   | 30 µm, the best its bend loss allows | 503 | 143 | 2 |
+   | 70 µm, a 5 V swing | 71 | 20 | 13 |
+
+   Three things follow.
+
+   - **256 inputs are two to six buses**, on the smallest ring read. A
+     larger ring holds fewer lines, because its lines are as wide and its range
+     is shorter. So a ring bank's source is tens of lines, reused across buses:
+     neither B5's one laser nor one line an input.
+   - **The patent application's "k ≲ 56" has a derivation now**, where it gave
+     none: it is what a 30 µm ring holds at v1's crosstalk with a Q of 53,000,
+     which is a 4.2 V swing. One derivation, and not necessarily theirs.
+   - **The voltage, the stability and the source are one trade.** A lower swing
+     is a narrower line: more lines a bus and fewer buses, and a resonance that
+     has to hold proportionally stiller (question 1).
+
+   What is still open is the first half of the question: whether the tile is a
+   ring bank at all. Area says its cells are rings. Nothing has said that a
+   column sums powers and not fields.
 
 ---
 
