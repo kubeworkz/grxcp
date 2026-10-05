@@ -135,6 +135,13 @@ things, of which this document held one:
   own allowance its intensity noise is about −144 dB/Hz at 1 GS/s, ten tighter
   for each decade of rate, and independent of power and loss. An emitter a row
   relaxes that by up to 24 dB if the emitters are independent.
+  *Measured in grx930's model, 2026-10-05*
+  ([`pta_source_noise.py`](pta_source_noise.py); board plan §4.3). The error
+  model has a term for the source now. If a column reads its weights through a
+  balanced pair, the budget's row is 2% rms a shot: about −124 dB/Hz, 20 dB
+  easier than the figure above. If it reads them through one photodiode and an
+  offset, the figure above is about what it stands. And the lines have to be
+  level to 5%, 0.2 dB, which nothing on the chiplet measures.
 - **Wavelength.** B5's arithmetic is at 1550 nm; the same detector at 1310 nm
   needs 18% more light. The all-optical branch would pin it to 1550 nm within
   2.4 nm, and ring weights would pin it by a figure nobody has.
