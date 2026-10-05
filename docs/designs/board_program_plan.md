@@ -1224,6 +1224,56 @@ Its noise bandwidth is also narrower than the single pole's, which bears on the
 laser and has not been run. Neither is a row of the budget yet: the error model
 has no term for a beat, or for the source.
 
+*The source's rows, measured the same day*
+([`pta_source_noise.py`](pta_source_noise.py)). The error model has a term for
+the source now. It is in grx930's harness, on the host's side of the line and
+outside that team's contract (its design note, §5, "What may the light do?"),
+and it was run on the working tile, on four buses, over version 1, which by
+itself loses 0.20 ± 0.05. Points lost beyond that:
+
+| What the source does to a line's power | Through a balanced pair | Through an offset |
+|---|---|---|
+| Every line together, anew each shot | 0.08 at 5% rms; 0.25 at 10% | 0.10 at 0.2%; 0.20 at 0.5%; 0.74 at 1% |
+| Each line on its own, anew each shot | 0.06 at 5%; 0.16 at 10% | Nothing at 1%; 0.15 at 2% |
+| Each line's level, fixed | 0.07 at 5%; 0.14 at 10% | 0.03 at 1%; 0.12 at 2% |
+
+The two columns are two readings of how the tile signs a weight, which B12
+left open: through the weight alone, as a balanced pair of photodiodes has it,
+or through the weight and an offset the host takes off again, as one
+photodiode would.
+
+**Three rows for version 1, if a column reads its weights through a pair:** the
+source's noise within **2% rms a shot** for the lines together, within **5%**
+for a line on its own, and the lines **level to 5%**, which is 0.2 dB. That
+set loses 0.30 ± 0.04, a tenth of a point between the three. Each stands
+5% alone, and 5% of all three loses 0.35 ± 0.05. They do not compound:
+neither set costs more than its three rows summed, and the errors on layer
+1's sums add in quadrature.
+
+- **Through a pair the source may be 20 dB noisier than this plan assumed.**
+  §8's question 8 held it to the receiver's own allowance, 0.2% of full scale,
+  about −144 dB/Hz. The row's 2% is −124 over the shot rate, and −121 for a
+  receiver that averages over a shot. Alone the source stands 5%, −116.
+- **Through an offset it may not.** There 0.5% costs what 10% costs through a
+  pair, with the same error on layer 1's sums, and the assumed 0.2% is about
+  what the budget stands. The offset is every lit input at a weight of one,
+  beside weights that are small.
+- **So how the tile signs a weight is worth 26 dB of the source's noise,**
+  twenty times. B12 said a pair would double the photodiodes, to 512 at four
+  buses. This is what the other reading costs. A column of rings at a weight
+  of zero that reads the same light would take the offset's noise off with the
+  offset, and is the pair again.
+- **Nothing built measures a line's level.** To a column it is one error on
+  every weight in a row. The calibration engine probes each cell through a
+  weight of zero, which a line's power multiplies
+  ([`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) §9). A comb's
+  lines are not level as made, so something has to level them to a fifth of a
+  decibel, and nothing here says what.
+
+It is one network, a first-order term added after the converter, and noise
+with no memory from shot to shot. No source's noise is held here, a comb's or
+an amplifier's: these rows say what one may be.
+
 ### 4.4 To the PTA program
 
 - ~~C3, the calibration engine, continues, and becomes X3.~~ **Done**, both
@@ -1549,7 +1599,8 @@ document's hypothesis, as far as the board goes: it is the working topology
 and still not a measured one.
 
 **What it does not settle.** Whose comb. The amplifier and its noise: §4.3's
-error model still has no term for the source. How large the beat between lines
+error model still has no term for the source. *(It has one since, and three
+rows, through a balanced pair: §4.3.)* How large the beat between lines
 is. How the tile signs a weight. Where a column's four currents are added, on
 the photonic die or after the bond, which is 64 lines between the dies or 256.
 And whether four is the count: three hold at the kind end of the published
@@ -2249,6 +2300,14 @@ question 1). *Needed by:* L3, P1, P0's link 4, X1's error model and X3.
    how the tile signs a weight, and a receiver with more than one photodiode on
    its input. *Answered the same day: a ring bank, on four buses as the working
    count (B12, §7).*
+
+   *And the noise row has been measured, 2026-10-05*
+   ([`pta_source_noise.py`](pta_source_noise.py); §4.3). The table at the head
+   of this question held the source to about −144 dB/Hz and marked it assumed.
+   Run through grx930's harness on the working tile, a source may be 20 dB
+   noisier than that, −124 dB/Hz, if a column reads its weights through a
+   balanced pair, and no noisier than assumed if it reads them through an
+   offset. Its lines have to be level to within a few percent either way.
 
 ---
 

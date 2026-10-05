@@ -371,3 +371,15 @@ this is the C reference; the RTL, the FSM and the schedulers are C3(b).
    chiplet's buffer sizes (X2) and the link's round trip.
 4. **Whether a failed trim is recoverable in the field** — the DRIFT_ALARM path
    assumes someone is listening.
+5. **What the source does, which neither loop was specified for** (2026-10-05;
+   [`pta_source_noise.py`](pta_source_noise.py), the board plan's §4.3). Since
+   B12 the tile is lit by a comb, and a comb's power can move three ways. *All
+   lines together, slowly:* that is a gain on every column at once, which is
+   the column loop's to take out, and is a candidate for the error class item
+   2 says the model lacks. *All lines together, shot to shot:* no loop reaches
+   it, and through a balanced pair 2% rms is the budget's row for it.
+   *Line by line:* a line that is not level puts one error on every weight in
+   its row, and a column's gain is one number for all its rows, so the column
+   loop cannot see it. Nor can the cell loop as built: grx930's engine probes
+   each cell through a weight of zero, which a line's power multiplies. So a
+   line's level is unmeasured. A probe with weights in it would read it.
