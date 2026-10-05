@@ -498,9 +498,10 @@ hidden layer at a batch of 64, against 3.74 µs for both of the network's GEMMs.
 
 What it leaves. grxcp's runtime does not use it: grxBLAS runs one GEMM and has
 no notion of a network, so the stage is reachable through the twin's own call
-and nothing above it. grxgpu has not been asked to carry it: the host-path
-proposal reserved two flag bits and the stage needs a third and three fields
-(§4.2). And its time is a requirement and not a measurement.
+and nothing above it. grxgpu had not been asked to carry it when this was
+written: the host-path proposal reserved two flag bits and the stage needs a
+third and three fields. *It has been asked since* (§4.2). And its time is a
+requirement and not a measurement.
 
 ### 3.4 Track S — grxcp
 
@@ -666,7 +667,8 @@ chiplet's activation stage, and X4 has a presence bit for that and no registers
 that would stop crossing the link is not what that row saves. It is 6,400 bytes
 and a tenth of a microsecond. *X6 has since specified the stage and built it
 into the twin* (§3.3). It is the stage that removes the launch, whether its
-operands are held or returned. grxgpu has still not been asked to carry it.
+operands are held or returned. ~~grxgpu has still not been asked to carry it.~~
+*Asked, the same day* (§4.2), and open until grxgpu answers.
 
 **What rev 0 can check, and what it cannot.** It can check the GPU's rate and
 its launch, the NPU's, the figure that separates them, and what a command to the
@@ -744,6 +746,28 @@ layer mis-sized, and the NPU's read-ahead dropped.
     amendment is owed, and it is larger than the two bits foresaw: a third bit
     to ask for the stage at all, and a shift, a width and a bias vector in the
     command.
+  - *Amended again, 2026-10-04* ([kubeworkz/grxgpu#4](https://github.com/kubeworkz/grxgpu/pull/4)),
+    open until grxgpu answers. It defines the two reserved bits as "from held"
+    and "hold", adds "activate", and asks for a second version of the command's
+    descriptor, 16 bytes longer, carrying the shift, the width, the bias
+    vector's address and the count of what the stage clamped. The chiplet
+    computes the stage; the GPU's command processor carries the settings.
+    Three things came out of writing it.
+    - **The first amendment had the stage on the wrong command.** It reserved a
+      bit for "activations are the previous command's results, through the
+      activation stage". The stage belongs on the command that produces the
+      operands, whose bias and shift it uses, and X4's §8 has it there. The bit
+      now means only that the activations are the held ones.
+    - **"Activate" alone removes the launch.** A command that returns operands
+      where it would return sums writes a buffer the next command can read as
+      it stands. Holding them saves the link crossing on top, a tenth of a
+      microsecond on D3.
+    - **A chain needs the tile kept for it once the GPU has more than one
+      command queue.** Held operands are for the chiplet's next command, so
+      another queue's GEMM between two layers gets the second layer refused.
+      That fails safe, by X4's rule, and it fails. With one queue, which is the
+      GPU's default, it cannot happen. It is recorded as a question for grxgpu
+      and as something S3's model does not price.
   - **A launch and a GEMM on the chiplet would be serial** while the GPU has one
     command queue, which is its default. *S3 priced it* (§3.4): a launch between
     D3's two GEMMs costs eight times what the chiplet spends on both, which is a

@@ -516,8 +516,19 @@ GEMM draws from its own seed, and they cut the work into different GEMMs.
 3. **How it crosses link 2.** The host-path proposal to grxgpu reserved two
    flag bits, for FROM_HELD and HOLD, and defined neither. It needs a third for
    ACT and somewhere for the shift, the width and the bias. That is a further
-   amendment, and it can now be written.
+   amendment, and it can now be written. *Written, 2026-10-04*
+   ([kubeworkz/grxgpu#4](https://github.com/kubeworkz/grxgpu/pull/4)): the three
+   flags, and a second version of the command's descriptor with the shift, the
+   width, a bias vector's address and the clamp count. That is what the GPU is
+   asked to carry. What the link itself carries is still nobody's.
 4. **Operands wider than a byte.** `bits` goes to `DIN_W`, and the link model
    prices an operand at one byte.
 5. **`sum + bias` past 64 bits.** The harness's addition is undefined there. The
    stage saturates. No sum a tile produces is near it.
+6. **Whose turn is next, with more than one queue on the GPU.** "The next
+   command" above is the chiplet's next. With one command queue on the GPU that
+   is the host's next as well. With several, another queue's GEMM can land
+   between two layers, and the second is refused. The amendment asks grxgpu to
+   keep the tile for a queue whose last command is holding. Until something
+   does, a host that shares a chiplet between queues cannot hold a network on
+   it.
