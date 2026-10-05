@@ -14,6 +14,10 @@ or found since, and together they are enough to say what each answer asks for:
 This follows each reading of the topology to the source it needs.  It is not a
 design, and it does not choose between them.
 
+THE CHOICE WAS MADE ON 2026-10-05: a ring bank, the plan's B12, on four buses
+as the working count.  This file is what it was made from, and is kept as it
+was run.
+
 PUBLISHED, and quoted as each has it:
 
   M   A. N. Tait, A. X. Wu, T. Ferreira de Lima, E. Zhou, B. J. Shastri,
@@ -463,6 +467,14 @@ def checks():
     assert abs(q_of(wins[0][0]) / q_of(wins[0][1]) - 1.15) < 0.01
     #    The beat, 50 MHz off the clock at 11 GHz: 0.45%.
     assert abs(averaged_pass(clocked_hz(4) + 50e6) - 0.0045) < 0.0001
+
+    # 9. B12's own figures, at four buses.
+    assert lines_needed(4) == N == 64 and clocked_hz(4) == 11 * FS and photodiodes(4) == 256
+    assert lines_at(E_SPACING_HZ) >= lines_needed(4)            # E's 10 GHz fits too
+    assert round(q_of(E_SPACING_HZ / V1_SPACING), -3) == 68_000
+    assert [round(lsb_hz(x) / 1e6) for x in line_window_hz(4)] == [24, 38]
+    assert 4 * (lines_needed(4) - 1) == 252 and K - 1 == 255    # neighbours a column
+    assert abs(line_w(4)[0] * 1e3 - 1.37) < 0.01 and abs(line_w(4)[1] * 1e3 - 13.7) < 0.05
 
     print()
     print("All checks pass.")

@@ -69,7 +69,11 @@ ASSUMED, and marked again where each is used:
     - the receiver's noise bandwidth: that of a single pole just fast enough to
       settle to half an LSB within a shot.  And that a receiver measured with a
       photodiode beside it keeps its noise with one a bond away
-    - one detector, one receiver and one ADC a column
+    - one detector, one receiver and one ADC a column.  (The plan's B12 has since
+      made it a photodiode a bus a column, four at the working count, on the
+      same 64 receivers and ADCs.  What that does to a receiver's noise, and
+      what a receiver that averages over a shot would do to the laser, are
+      not priced here.)
 
 NOT PRICED: the DACs themselves, apart from what they charge; the interface
 chip's weight store, buffers and clocking; calibration; and anything that holds

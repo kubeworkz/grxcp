@@ -543,7 +543,7 @@ def main():
     print("  so this is the model's assumption followed through, not a decision.")
     print("  (pta_source.py, 2026-10-05, follows each reading to its source at the working")
     print("  geometry and rate.  A ring bank's is a comb of 43 to 86 lines reused across buses,")
-    print("  and not a line an input.)")
+    print("  and not a line an input.  The plan's B12 took the ring bank the same day.)")
 
     findings(mod_fs)
     checks()

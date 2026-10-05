@@ -54,7 +54,7 @@ Four parties own the board between them:
 | 1 | GRX930 ↔ GRX-G100 | CXL 2.0 (CXL.io, .cache, .mem) on the PCIe 5.0 PHY | x16, 32 GT/s a lane, about 64 GB/s a direction before overhead | grx930: root port, home agent, HDM decoders | grxgpu: Type-2 device | B1, B3; rate from X2 |
 | 2 | GRX-G100 ↔ PTA chiplet | UCIe-S, a streaming protocol in a FLIT format, with the adapter's CRC and retry | One x16 module at 32 GT/s is 57.6 GB/s a direction at X2's assumed 0.9 efficiency. **Five modules** at the working geometry, 256 × 64 (the board plan's B10), for a batch of 64 with the weights re-sent; one with them resident | grxgpu: UCIe port, fed by a copy engine | Chiplet team: EIC | B4; rates and counts from X2 |
 | 3 | EIC ↔ PIC | Analog: DAC drive to the modulators, photocurrent back from the detectors | One drive line a weight cell and one an input modulator, one detector a column: `k·n + k + n` lines, 16,704 at the working geometry, 256 × 64 (the board plan's B10) | Chiplet team | Chiplet team | B4, B5; resolutions from X1 |
-| 4 | Laser module → PIC | Light, on polarization-maintaining fiber | Power, wavelength, noise and **kind** all **open** (board plan §8, question 8). For scale: a 64-column tile at 1 GS/s wants 0.33–3.3 W behind 10–20 dB of loss at the receiver B5 assumed, and 0.09–0.88 W at one that has been measured (board plan B5). It is set by the receiver's noise and not by X1's photon row, and intensity noise within about −144 dB/Hz. This row has said 0.16–1.6 W, sized from X1's version 0, and then 0.66–6.6 W and −150, from version 1's receiver noise read in the wrong ADC's LSB (board plan §4.3) | Board team | Chiplet team | B5, X1; figures from [`pta_shot_rate.py`](pta_shot_rate.py) §3 and §6 |
+| 4 | Laser module → PIC | Light, on polarization-maintaining fiber | **A comb** since the board plan's B12: 64 lines 11 GHz apart at the widest, inside 5.7 nm, each 1.4–14 mW, the spacing locked to the shot clock (§4). Its power, wavelength and noise are still **open** (board plan §8, question 8). For scale: a 64-column tile at 1 GS/s wants 0.33–3.3 W behind 10–20 dB of loss at the receiver B5 assumed, and 0.09–0.88 W at one that has been measured (board plan B5). It is set by the receiver's noise and not by X1's photon row, and intensity noise within about −144 dB/Hz. This row has said 0.16–1.6 W, sized from X1's version 0, and then 0.66–6.6 W and −150, from version 1's receiver noise read in the wrong ADC's LSB (board plan §4.3) | Board team | Chiplet team | B5, X1; figures from [`pta_shot_rate.py`](pta_shot_rate.py) §3 and §6 |
 | 5 | Board controller ↔ all | SMBus or I3C: rails, temperatures, the laser and its interlock | Rate **open**, with the controller (§7) | Board team | Each die's management pins | B7 |
 | 6 | GRX930 ↔ DDR5 | DDR5 (or LPDDR5) | Channels, width and speed grade **open**, with part selection | grx930 team | Board team | B2 |
 | 7 | GRX-G100 ↔ GDDR6 | GDDR6 | Channels, width and speed grade **open**, with part selection | grxgpu team | Board team | B2 |
@@ -149,6 +149,9 @@ things, of which this document held one:
   whole 0.09 to 0.88 W, and its spacing wants locking to the shot clock (§4).
   That is still one fiber. If the tile is not a ring bank this link carries one
   line, and the tile pays for it with a second device in every cell.
+  *Settled the same day, as a working topology:* a ring bank on four buses, the
+  board plan's B12. So this link carries one comb of 64 lines, with a pump
+  before it and an amplifier after, and §2's row says so.
 
 None of this picks a laser. No part's output power or noise is held here, and
 the comparison with one belongs to whoever has its datasheet.
@@ -205,6 +208,7 @@ rail is large and what makes it so, not what regulator it needs.
 | Forwarded, inside link 2 | The UCIe module | UCIe, which also fixes how many lanes carry clock, valid and sideband — **not read out here** |
 | Memory clocks | Links 6 and 7 | Each die's PLL from a board reference; frequencies **open** with the parts |
 | Shot clock | The tile's shots, and so the ADCs | The chiplet. **1 GHz**: the working shot rate, 1 GS/s (the board plan's B11). X2 sized the link at 0.1 and 1 GS/s as candidates |
+| Comb drive | The spacing of link 4's lines | The laser module. **11 GHz** at the widest, a whole multiple of the shot clock and locked to it (the board plan's B12), so the two share a reference. Which reference, and who distributes it, is **open** (§7) |
 | Controller | The board controller | Its own oscillator |
 
 ---
@@ -258,10 +262,14 @@ board plan's §8 holds the ones that are questions rather than gaps.
    shot clock in §4 is 1 GHz and link 4's "for scale" figures in §2 are at the
    working rate. How far up its range link 4's laser has to be is still the
    loss budget's to say.
-   **And the kind of source link 4 carries** — one line or one an input — which
-   follows from how a column sums. Board plan §8, question 8. *Each answer has
-   been followed to its source since (2026-10-05): a comb of 43 to 86 lines if
-   the tile is a ring bank, one line if it is not. Which it is stays open.*
+   ~~**And the kind of source link 4 carries**~~ — one line or one an input —
+   which follows from how a column sums. Board plan §8, question 8. *Each
+   answer was followed to its source on 2026-10-05, and the board plan's B12
+   settled it the same day as a working topology:* a ring bank on four buses,
+   lit by a comb of 64 lines. What that opens in its place is in §4: the comb's
+   drive has to be locked to the shot clock, the laser module is on the board
+   and the shot clock is the chiplet's, and no one owns the reference they
+   share.
 3. **Part selection** for DDR5, GDDR6, the controller, the laser module and the
    clock sources, with everything that follows from it.
 4. **Currents** on every rail in §3.
