@@ -133,7 +133,10 @@ things, of which this document held one:
   column is sent, and it is an eighth of it. On the light a 256-row column is
   actually sent this link carries **1.4–14 W** at the measured receiver, 22 to
   220 mW a line, and 0.7–7 W for a 128-row tile. *The tile is 128 rows since
-  the board plan revised B10 the same day: **0.7–7 W**, 11 to 110 mW a line.*
+  the board plan revised B10 the same day: **0.7–7 W**, 11 to 110 mW a line.
+  And half of that, 0.35–3.5 W and 5.5 to 55 mW a line, if a command sets the
+  activation stage's shift one bit under the harness's clip rule (board plan
+  B5, at its end).*
   What follows is as it was written. The same light whichever way it is made: one laser of 0.33–3.3 W at
   1 GS/s for a 256 × 64 tile, or an emitter an input row at 1.3–12.8 mW each. An
   emitter of 10 mW a row stands 18.9 dB of loss, where the largest single laser
