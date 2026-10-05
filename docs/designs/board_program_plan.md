@@ -1643,6 +1643,69 @@ put it. *Needed by:* S4, S3 and S1.
    are assumptions the script marks where it uses them. (The first of those was
    priced the next day, in §4.3: the converters, the drive and the link. The
    weight store, the DACs and whatever holds a ring on its line were not.)
+
+   **As one table, 2026-10-05** ([`pta_geometry.py`](pta_geometry.py)). Six
+   models price the tile, each sweeping the same candidates because none can
+   fix one, and until now nothing put them side by side. This does, and adds
+   nothing of its own: every figure is one of those models', asked for at each
+   candidate, and held to the model it came from.
+
+   | | 64 × 8 | 128 × 64 | 256 × 64 | 256 × 128 | What kind of number |
+   |---|---|---|---|---|---|
+   | Lines between the dies | 584 | 8,384 | 16,704 | 33,152 | Counted |
+   | Cells, inputs and link, mm² | 7.5 | 20.3 | 39.7 | 54.4 | A lower bound, at an assumed 25 µm cell |
+   | Link modules | 1 | 3 | 5 | 10 | Predicted, for a 4096-square layer at batch 64 |
+   | Interface chip, W | 0.07–1.10 | 0.44–4.04 | 0.55–7.61 | 1.02–11.46 | From published parts |
+   | Laser, W | 0.01–0.11 | 0.09–0.88 | 0.09–0.88 | 0.18–1.76 | B5's method, at a measured receiver, 10 to 20 dB of loss |
+   | A MAC, every cell in use, fJ | 152–2,372 | 65–600 | 39–518 | 37–403 | The two rows above over the rate |
+   | The 4096-square layer | 2.1 ms | 131 µs | 65.7 µs | 32.9 µs | Predicted, at that row's modules |
+   | v1 on D3, points lost | 0.33 ± 0.11 | 0.34 ± 0.07 | 0.20 ± 0.05 | 0.23 ± 0.05 | Measured in a model, one network |
+   | The same receiver noise, on a layer | 0.73 or 1.46 | 1.07 | 0.81 | 0.81 | Against the 8 × 8 tile's |
+   | An hour of drift, on a layer | 10.4% | 7.6% | 6.9% | 7.2% | In a model whose cells drift independently |
+
+   Five things follow.
+
+   - **The choice is between 128 × 64 and 256 × 64.** 64 × 8 is 32 times slower
+     than 256 × 64 at four times the energy a MAC. 256 × 128 doubles the
+     detectors, the laser and the modules for 0.78 to 0.93 of the energy, and
+     its ten modules are a third of the way to where B8 reopens.
+   - **What 256 × 64 costs over 128 × 64**: twice the lines between the dies,
+     twice the cells' area, five modules for three, and 0.11 to 3.6 W. The laser
+     is the same, because it follows the columns.
+   - **Accuracy does not choose between them.** v1's two losses are a standard
+     error and a half apart, and drift treats them alike. What leans to 256 is
+     the receiver: 128 inputs need the ADC shift 256 need and take nearly twice
+     the conversions. That lean is the harness's whole-bit shift, and a receiver
+     whose gain steps are finer than a factor of two would not have it.
+   - **So it is the workload that chooses, and it has a number.** Energy a MAC
+     the layer asked for, on square layers at a batch of 64:
+
+     | Layer | 128 × 64 | 256 × 64 | The cheaper |
+     |---|---|---|---|
+     | 64 wide | 462–4,276 fJ | 557–7,385 | 128 × 64, at both ends of the power range |
+     | 128 wide | 148–1,369 | 178–2,365 | 128 × 64, at both ends |
+     | 256 wide | 86–792 | 64–850 | One end each |
+     | 512 wide | 70–648 | 45–601 | 256 × 64, at both ends |
+     | 4096 wide | 65–601 | 39–520 | 256 × 64, at both ends |
+
+     A tile pays for the cells a narrower layer leaves unused. D3 uses 54% of
+     what a 256 × 64 tile programs for it and 65% of the smaller tile's, and
+     costs 0.61 to 8.1 µJ a batch on the one and 0.68 to 6.3 on the other: no
+     difference that can be told.
+   - **The plan does not hold a workload, and that is what this question was
+     waiting on.** It sizes its link, its power and its time on a 4096-square
+     layer nobody has trained, and measures accuracy on a 784-100-10 network
+     that fills a fraction of either tile. Layers 512 wide and up pay for
+     256 × 64. Layers 128 wide and under do not. The question the board team
+     can answer is which the board is for.
+
+   It does not weigh a watt against a tenth of a point: that is the program's
+   to say, and a score with invented weights would hide the choice in a number.
+   One thing it found in passing. S3 priced the chiplet on one link module,
+   where X2 gives a 256 × 64 tile five. At five the 4096-square layer is 65.7 µs
+   and bound by the tile, not 296 µs and bound by the link, and D3's two layers
+   are 0.96 µs and not 3.74. S3's readings stand, and the one that says the
+   command is the cost of a small layer stands harder.
 2. **What does the development kit cost, and how many are built?** That settles
    B1 and B2 more than any technical argument does.
 3. **Does the GRX930's NPU keep a PTA of its own?** The c930 PTM work is built
