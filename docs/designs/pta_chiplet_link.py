@@ -25,8 +25,10 @@ Assumed, and marked at each use: operands and ADC codes are one byte, an
 accumulated output is four, one UCIe-S module of 16 lanes at 32 GT/s carries
 64 GB/s a direction before overhead, 0.9 of that survives flit and protocol
 overhead, and a request crosses and returns in 100 ns.  GB is 10^9 bytes.  The
-chiplet's own geometry is not settled (board_program_plan.md §8), so the tables
-sweep candidates rather than claiming one.
+chiplet's own geometry was not settled when this was written
+(board_program_plan.md §8), so the tables sweep candidates rather than claiming
+one.  The plan's B10 made 256 x 64 the working geometry on 2026-10-05, and the
+sweep stays: it is what that choice was made from.
 
 Standard library only.  Run:  python3 docs/designs/pta_chiplet_link.py
 """

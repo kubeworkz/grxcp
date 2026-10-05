@@ -289,8 +289,9 @@ behaviour is visible in a register rather than assumed.
 beside it and in tier 1 of `ci/build_mock.sh`. It is a register file, the
 chiplet's own command queue, a clock and the calibration contract, in front of
 grx930's `pta_gemm()` and `pta_cal_bank()`. None of the tile's arithmetic is
-written there. Its geometry is the caller's to name, because §7's first question
-is still open.
+written there. Its geometry is the caller's to name. That was because §7's
+first question was open, and it stays so because the gate runs three tiles; the
+working geometry, 256 × 64 (the board plan's B10), is one of them.
 
 **What the gate holds**, in 201 checks at 4 × 4, 8 × 8 and 256 × 64, of which 45
 are the activation stage's (§8):
@@ -361,8 +362,12 @@ it to the twin's.
 
 ## 7. Open
 
-1. **The geometry and shot rate** that `PTA_CAPS0` and `PTA_CAPS2` report.
-   Board plan §8, question 1.
+1. ~~**The geometry**~~ **and shot rate** that `PTA_CAPS0` and `PTA_CAPS2`
+   report. Board plan §8, question 1. *The geometry is a working one since
+   2026-10-05:* 256 rows and 64 columns, the board plan's B10, so `PTA_CAPS0`
+   reads those on a chiplet built to the plan. `DIN_W` and `ACC_W` in the same
+   register are not part of that decision, and the shot rate in `PTA_CAPS2` is
+   still open.
 2. **Whether `PTA_TW` and `PTA_TS` mean anything on silicon**, or stay the
    twin's.
 3. **The chiplet's command queue depth**, which the GPU's dispatcher has to

@@ -10,6 +10,8 @@
 
 **Status: PLAN, drafted 2026-09-21. All seven decisions of §2 are settled, each
 as recommended: B1 and B3 that day, and B2, B4, B5, B6 and B7 on 2026-09-22.
+Three more were raised and settled later and are in §7: B8, B9, and on
+2026-10-05 B10, the chiplet's working geometry, 256 × 64.
 X2 has made its predictions (§3.3), X1 its budget (§4.3), and P0, X3 and X4
 are drafted as [`board_icd.md`](board_icd.md),
 [`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) and
@@ -1367,11 +1369,55 @@ chiplet is refused. S3's placement becomes a choice of device, made above
 grxBLAS, where [`heterogeneous_devices.md`](heterogeneous_devices.md) §6 already
 put it. *Needed by:* S4, S3 and S1.
 
+**B10 — The chiplet's working geometry: 256 × 64.** *Settled 2026-10-05.*
+
+§8's first question has two halves, how big and how fast, and every model swept
+candidate tiles because nothing fixed one. [`pta_geometry.py`](pta_geometry.py)
+put the six models side by side (§8, question 1). It leaves two candidates,
+128 × 64 and 256 × 64, and says that what separates them is the width of the
+layers the board is for: 128 × 64 is the cheaper a MAC on layers up to 128 wide,
+and 256 × 64 from 512 wide. Accuracy and drift do not choose between them.
+
+*Recommended, and settled as recommended:* **256 inputs by 64 outputs is the
+working geometry.** It is the tile the link sizing, the twin's gates and the
+dispatch model were already built on. Wide layers are what this plan has sized
+everything for. And nothing measured argues against it.
+
+What it fixes, each from a model and none from a device:
+
+| | At 256 × 64 | From |
+|---|---|---|
+| Lines between the two dies | 16,704 | The floorplan |
+| Cells, inputs and link | 39.7 mm², a lower bound | The floorplan, at its assumed 25 µm cell |
+| Link 2 | Five UCIe-S modules at a batch of 64 with the weights re-sent; one with them resident | X2 |
+| Interface chip | 0.55 to 7.6 W | Published parts |
+| Laser | 0.09 to 0.88 W at a measured receiver, behind 10 to 20 dB of loss | B5's method |
+| What the interface chip holds | 16,384 weights a bank in two banks, with a write path 256 cells a beat; 64 receivers and 7-bit converters; an activation unit a column and 2^14 held operands | §4.3, X6 |
+| v1 on D3 | 0.20 ± 0.05 points | grx930's harness |
+| `PTA_CAPS0` | 256 rows, 64 columns | X4 |
+
+**What it costs** over 128 × 64: twice the lines between the dies, five link
+modules for three, and 0.11 to 3.6 W. On layers under 256 wide it is the dearer
+tile a MAC.
+
+**What it does not settle.** The shot rate, the other half of the question,
+which stays at X2's 1 GS/s as a planning figure. The kind of light source (§8,
+question 8). And whether a weight cell is resonant, which decides whether a tile
+this size fits a die at all (§8, question 1, the floorplan).
+
+**It is a working geometry and not a tape-out.** Three things would reopen it: a
+workload of layers 128 wide or less; a loss budget or a receiver that cannot
+light 64 columns; or a weight cell that is not resonant. *Needed by:* P1, L3,
+X2's module count and S3.
+
 ---
 
 ## 8. Open questions
 
-1. **How big is the PTA chiplet, and how fast?** Its inputs, outputs and
+1. **How big is the PTA chiplet, and how fast?** *The first half was settled on
+   2026-10-05: B10, 256 × 64 as the working geometry (§7). The second half, the
+   shot rate, is open. What follows is how the question was worked, and reads
+   as it was written.* Its inputs, outputs and
    **optical** shot rate set X2, the laser (B5) and the EIC's area. Nothing here
    fixes them, and X2 sweeps candidate geometries rather than claiming one
    because of it. The *link's* signalling is no longer part of this question:
@@ -1697,7 +1743,8 @@ put it. *Needed by:* S4, S3 and S1.
      layer nobody has trained, and measures accuracy on a 784-100-10 network
      that fills a fraction of either tile. Layers 512 wide and up pay for
      256 × 64. Layers 128 wide and under do not. The question the board team
-     can answer is which the board is for.
+     can answer is which the board is for. *Answered the same day: wide layers,
+     and 256 × 64 as the working geometry (B10, §7).*
 
    It does not weigh a watt against a tenth of a point: that is the program's
    to say, and a score with invented weights would hide the choice in a number.
