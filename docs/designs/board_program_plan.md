@@ -1327,6 +1327,15 @@ It is one network, a first-order term added after the converter, and noise
 with no memory from shot to shot. No source's noise is held here, a comb's or
 an amplifier's: these rows say what one may be.
 
+*The rows hold on the tile as revised, 2026-10-05.* All of the above was
+measured at 256 × 64 on four buses. grx930's `source` mode was run again at
+128 × 64 on two, where version 1 by itself loses 0.34 ± 0.07. The three rows
+together lose 0.37 ± 0.07, which is 0.03 over it; each alone stands 5%; and 5%
+of all three loses 0.46 ± 0.03. Through an offset 1% together loses
+0.67 ± 0.16 and 2% loses 2.25 ± 0.46: the offset passes sixteen times what a
+pair does there, 24 dB, where it passed twenty at 256 rows: with fewer rows
+lit, the offset is smaller beside the sums.
+
 *The receiver's row, as one laser fixes it, 2026-10-05*
 ([`pta_laser.py`](pta_laser.py); B5, at its end). Version 1 gives the receiver
 half an LSB of an 8-bit ADC, and the budget was measured with each layer given
@@ -1809,7 +1818,8 @@ weights at all. Neither has been rerun. *Both have since*
 photon row at the laser the receiver needs. And that laser is sixteen times
 B5's: B5, at its end, and §4.3.*
 
-The twenty times is this network's. Its first layer's weights have an rms of
+*On the tile as revised, 128 × 64, the twenty is sixteen, 24 dB, and the
+match a pair needs is 12% (§4.3).* The twenty times is this network's. Its first layer's weights have an rms of
 0.14 of their range, with a few at the end of it, so the offset is large
 beside them. A network whose weights filled a ring's range would make the two
 readings closer, and no network makes the offset the quieter one.

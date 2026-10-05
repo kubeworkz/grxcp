@@ -45,6 +45,11 @@ and nobody has run that.
 No source's noise is held here, a comb's or an amplifier's.  This says what one
 may be and not what one is.
 
+AND ON THE TILE AS IT STANDS.  B10 was revised to 128 x 64 after grx930 ran
+this at 256 x 64 on four buses.  Its merged `source` mode was run again for
+this file, with SOURCE_TILE=128x64 and SOURCE_BUSES=2, on 2026-10-05: section 4.
+Those lines are not in grx930's note, which has the first run.
+
 THE CHOICE WAS MADE ON 2026-10-05: a balanced pair, the plan's B13.  The two
 readings are kept side by side, because the second is what the first was
 chosen against.  One figure was added for B13: how alike a pair's two halves
@@ -106,6 +111,30 @@ JOINT_PAIR_E1 = {(0.02, 0.05, 0.05): 9.77, (0.05, 0.05, 0.05): 10.98}
 JOINT_OFFSET = {(0.002, 0.01, 0.01): (0.33, 0.08)}
 ROWS = (0.02, 0.05, 0.05)                  # the set that costs the budget between them
 
+# The same on 128 x 64 on two buses: B10's tile as revised.
+V1_LOSS_128, V1_E1_128 = (0.34, 0.07), 10.72
+PAIR_128 = {
+    0.002: ((0.34, 0.08), (0.34, 0.07), None),
+    0.005: ((0.34, 0.07), None, None),
+    0.01:  ((0.34, 0.07), (0.34, 0.07), (0.38, 0.04)),
+    0.02:  ((0.28, 0.08), (0.36, 0.06), (0.37, 0.03)),
+    0.05:  ((0.38, 0.07), (0.43, 0.06), (0.40, 0.03)),
+    0.1:   ((0.53, 0.05), (0.56, 0.07), (0.44, 0.05)),
+    0.2:   (None, (0.93, 0.10), (0.71, 0.11)),
+}
+OFFSET_128 = {
+    0.002: ((0.35, 0.09), (0.30, 0.05), None),
+    0.005: ((0.39, 0.09), None, None),
+    0.01:  ((0.67, 0.16), (0.39, 0.06), (0.38, 0.05)),
+    0.02:  ((2.25, 0.46), (0.46, 0.05), (0.39, 0.04)),
+    0.05:  (None, (0.78, 0.11), (0.61, 0.19)),
+}
+PAIR_E1_128 = {0.05: (11.99, 10.92, 10.84), 0.1: (15.18, 11.51, 11.33), 0.2: (None, 13.62, 13.22)}
+OFFSET_E1_128 = {0.005: (13.80, None, None), 0.01: (20.43, 11.22, 11.77)}
+JOINT_PAIR_128 = {(0.02, 0.05, 0.05): (0.37, 0.07), (0.05, 0.05, 0.05): (0.46, 0.03)}
+JOINT_OFFSET_128 = {(0.002, 0.01, 0.01): (0.40, 0.07)}
+ONE_BUS_128 = ((0.38, 0.04), 10.92)
+
 
 # ---- as a density ---------------------------------------------------------------
 def bands():
@@ -124,12 +153,12 @@ def assumed_rms():
     return V1["rx_noise_lsb"] / 2 ** shot.NOISE_LSB_BITS
 
 
-def over(cell):
-    """Points lost over version 1's own."""
-    return cell[0] - V1_LOSS[0]
+def over(cell, base=None):
+    """Points lost over version 1's own: the working run's unless another is given."""
+    return cell[0] - (V1_LOSS if base is None else base)[0]
 
 
-def allowed(table, kind):
+def allowed(table, kind, base=None):
     """The largest rms that costs under the budget, every smaller one doing so too.
     None if the smallest measured already costs it."""
     best = None
@@ -137,16 +166,16 @@ def allowed(table, kind):
         cell = table[rms][kind]
         if cell is None:
             continue
-        if over(cell) >= BUDGET - 1e-9:
+        if over(cell, base) >= BUDGET - 1e-9:
             break
         best = rms
     return best
 
 
-def reaches(table_e1, rms, kind):
+def reaches(table_e1, rms, kind, e0=None):
     """The share of a noise's rms that arrives at layer 1's sums."""
-    e = table_e1[rms][kind]
-    return math.sqrt(e * e - V1_E1 * V1_E1) / (100 * rms)
+    e, e0 = table_e1[rms][kind], V1_E1 if e0 is None else e0
+    return math.sqrt(e * e - e0 * e0) / (100 * rms)
 
 
 def mismatch_offset(m):
@@ -236,6 +265,22 @@ def main():
           f" {reaches(PAIR_E1, 0.1, 0):.2f}, and at 5%,")
     print(f"  {reaches_mismatched(0.05):.2f}.  Derived from the two readings, taking the shares as independent; not run.")
 
+    section("4. On the tile as it stands: 128 x 64 on two buses")
+    print(f"  Version 1 by itself loses {cell_text(V1_LOSS_128)} there.  Through a balanced pair:")
+    print(f"  {'rms a shot':<12}{'every line together':>22}{'each on its own':>18}{LEVEL:>18}")
+    for rms in sorted(PAIR_128):
+        print(f"  {rms:<12.1%}" + "".join(f"{cell_text(c):>{w}}" for c, w in zip(PAIR_128[rms], (22, 18, 18))))
+    for t, loss in JOINT_PAIR_128.items():
+        print(f"  All three, {t[0]:.0%} with {t[1]:.0%} a line and {t[2]:.0%} of level: {cell_text(loss)},"
+              f" {over(loss, V1_LOSS_128):.2f} over version 1.")
+    pair = reaches(PAIR_E1_128, 0.1, 0, V1_E1_128)
+    off = reaches(OFFSET_E1_128, 0.01, 0, V1_E1_128)
+    print(f"  Through an offset, {0.01:.0%} together loses {cell_text(OFFSET_128[0.01][0])} and {0.02:.0%} {cell_text(OFFSET_128[0.02][0])}.  It passes {off / pair:.0f}")
+    print(f"  times what a pair does of noise the lines share, {20 * math.log10(off / pair):.0f} dB, where 256 rows had"
+          f" {reaches(OFFSET_E1, 0.01, 0) / reaches(PAIR_E1, 0.1, 0):.0f}: with fewer")
+    print(f"  rows lit the offset is smaller beside the sums.  A line on its own still counts for {reaches(PAIR_E1_128, 0.2, 1, V1_E1_128):.2f}, and a pair's")
+    print(f"  halves have to be alike to {2 * pair / off:.0%} where they had to be to {match_for_equal():.0%}.")
+
     findings()
     checks()
 
@@ -244,7 +289,7 @@ def findings():
     ap, ao = allowed(PAIR, 0), allowed(OFFSET, 0)
     ratio = reaches(OFFSET_E1, 0.01, 0) / reaches(PAIR_E1, 0.1, 0)
     print()
-    print("What this says, seven readings.")
+    print("What this says, eight readings.")
     print()
     print(f"  1. THROUGH A BALANCED PAIR THE SOURCE MAY BE {db_hz(ap) - db_hz(assumed_rms()):.0f} dB NOISIER THAN THE PLAN ASSUMED.")
     print(f"     {ap:.0%} rms a shot costs under a tenth of a point, where the plan held it to {assumed_rms():.1%}:")
@@ -277,7 +322,11 @@ def findings():
     print("     through a weight of zero, which a line's power multiplies: it cannot see one.")
     print("     Levelling is somebody else's, or the probe needs weights in it.")
     print()
-    print("  7. NONE OF THIS IS A SOURCE.  It is what one may do, on one network, in a term that")
+    print("  7. THE ROWS HOLD ON THE TILE AS IT STANDS.  At 128 x 64 on two buses the set costs")
+    print(f"     {over(JOINT_PAIR_128[ROWS], V1_LOSS_128):.2f} of a point where it cost {over(JOINT_PAIR[ROWS]):.2f} at 256 x 64, each row alone still stands 5%,")
+    print("     and the offset is sixteen times a pair and not twenty.")
+    print()
+    print("  8. NONE OF THIS IS A SOURCE.  It is what one may do, on one network, in a term that")
     print("     is first order and outside grx930's contract.  No comb's noise is held here, and")
     print("     no amplifier's.")
 
@@ -348,6 +397,21 @@ def checks():
     assert [round(over(OFFSET[x][2]), 2) for x in (0.01, 0.02)] == [0.03, 0.12]
     assert abs(db_hz(ROWS[0], FS / 2) + 121.0) < 0.05
     assert 2 * source.photodiodes(4) == 512
+
+    # 9. Section 4.  On 128 x 64 the rows hold: each alone at 5%, the set at 0.03,
+    #    5% of each at 0.12; the offset is 16 times a pair, 24 dB; a line 0.42.
+    assert [allowed(PAIR_128, k, V1_LOSS_128) for k in range(3)] == [0.05, 0.05, 0.05]
+    assert abs(over(JOINT_PAIR_128[ROWS], V1_LOSS_128) - 0.03) < 0.005
+    assert over(JOINT_PAIR_128[ROWS], V1_LOSS_128) < BUDGET
+    assert abs(over(JOINT_PAIR_128[(0.05, 0.05, 0.05)], V1_LOSS_128) - 0.12) < 0.005
+    assert [round(over(PAIR_128[0.05][k], V1_LOSS_128), 2) for k in range(3)] == [0.04, 0.09, 0.06]
+    pair128 = reaches(PAIR_E1_128, 0.1, 0, V1_E1_128)
+    off128 = reaches(OFFSET_E1_128, 0.01, 0, V1_E1_128)
+    assert round(off128 / pair128) == 16 and round(20 * math.log10(off128 / pair128)) == 24
+    assert abs(reaches(PAIR_E1_128, 0.2, 1, V1_E1_128) - 0.42) < 0.005
+    assert abs(2 * pair128 / off128 - 0.12) < 0.005
+    assert [round(over(OFFSET_128[x][0], V1_LOSS_128), 2) for x in (0.005, 0.01, 0.02)] == [0.05, 0.33, 1.91]
+    assert abs(ONE_BUS_128[0][0] - PAIR_128[0.05][1][0]) < 0.08 and ONE_BUS_128[1] == PAIR_E1_128[0.05][1]
 
     # 8. B13's figure: a pair matched to 10% passes 1.4 times a matched pair's.
     assert abs(match_for_equal() - 0.10) < 0.002 and abs(mismatch_offset(0.10) - 0.05) < 1e-12
