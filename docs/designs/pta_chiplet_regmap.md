@@ -290,8 +290,11 @@ beside it and in tier 1 of `ci/build_mock.sh`. It is a register file, the
 chiplet's own command queue, a clock and the calibration contract, in front of
 grx930's `pta_gemm()` and `pta_cal_bank()`. None of the tile's arithmetic is
 written there. Its geometry is the caller's to name. That was because §7's
-first question was open, and it stays so because the gate runs three tiles; the
-working geometry, 256 × 64 (the board plan's B10), is one of them.
+first question was open, and it stays so because the gate runs three tiles. The
+working geometry was 256 × 64 when this was written, and that is one of them.
+It is 128 × 64 since the board plan revised B10 on 2026-10-05, and that is
+not. The twin has been held to grx930's harness at 128 × 64, in the sweep the
+backend's README records, but no build of that size is in the gate yet.
 
 **What the gate holds**, in 201 checks at 4 × 4, 8 × 8 and 256 × 64, of which 45
 are the activation stage's (§8):
@@ -364,8 +367,9 @@ it to the twin's.
 
 1. ~~**The geometry and shot rate**~~ that `PTA_CAPS0` and `PTA_CAPS2`
    report. Board plan §8, question 1. *The geometry is a working one since
-   2026-10-05:* 256 rows and 64 columns, the board plan's B10, so `PTA_CAPS0`
-   reads those on a chiplet built to the plan. `DIN_W` and `ACC_W` in the same
+   2026-10-05:* 128 rows and 64 columns, the board plan's B10 as revised that
+   day from 256 rows, so `PTA_CAPS0` reads those on a chiplet built to the
+   plan. `DIN_W` and `ACC_W` in the same
    register are not part of that decision. *The shot rate is a working one
    since the same day:* 1 GS/s, the board plan's B11, so `PTA_CAPS2[15:0]`
    reads 1,000 on such a chiplet. It still reads zero on an emulated tile (§2),

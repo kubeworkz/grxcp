@@ -134,7 +134,8 @@ PM_FWHM_NM = tpaqcn.FWHM_NM
 PM_HALF_ARG = 1.3915574     # sinc^2(x) = 1/2 at this x; its FWHM is 2.783
 
 # ---- X2's working point ---------------------------------------------------
-X2_TILE = (256, 64)
+X2_TILE = (256, 64)         # X2's, and B10's as first settled.  B10 was revised to
+                            # 128 x 64 on 2026-10-05; the models that import this keep it
 X2_FS = 1e9                 # the shot rate X2's tables are quoted at, and since
                             # 2026-10-05 the working rate: the board plan's B11
 X2_MODULES = 5              # what its 256x64 tile needs at 1 GS/s, batch 64

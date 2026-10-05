@@ -71,7 +71,10 @@ WHAT IT DOES NOT DO.  It does not weigh the rows against each other, and it
 does not choose.  It says what each rate asks for and what it buys.
 
 THE CHOICE WAS MADE ON 2026-10-05: 1 GS/s is the working shot rate, the plan's
-B11.  This file is what it was made from, and is kept as it was run.
+B11.  This file is what it was made from, and is kept as it was run.  It was
+run at 256 x 64, which B10 has since revised to 128 x 64, and at B5's laser,
+which pta_laser.py has since corrected: pta_working_point.py has this table
+at both.
 
 Standard library only.  Run:  python3 docs/designs/pta_rate.py
 """
