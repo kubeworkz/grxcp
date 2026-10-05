@@ -90,7 +90,7 @@ NPU_HOST = min(d["wall"] - d["gemm"] for d in feed.MEASURED_F2.values())
 
 # ---- the PTA chiplet -------------------------------------------------------
 TILE = (256, 64)                  # the working geometry: the board plan's B10, 2026-10-05
-FS = shot.X2_FS                   # 1 GS/s.  Not settled: B10 fixed the tile and not the rate.
+FS = shot.X2_FS                   # 1 GS/s, the working rate: the board plan's B11, 2026-10-05
 BANKS = 2                         # 4.3: "held to two weight banks"
 BATCH = link.BIG["mb"]            # 64, the batch X2 and 4.3 are quoted at
 # 4.3: "a write path one output's column wide at batch 64".
