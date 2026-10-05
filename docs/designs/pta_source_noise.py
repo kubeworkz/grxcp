@@ -45,6 +45,11 @@ and nobody has run that.
 No source's noise is held here, a comb's or an amplifier's.  This says what one
 may be and not what one is.
 
+THE CHOICE WAS MADE ON 2026-10-05: a balanced pair, the plan's B13.  The two
+readings are kept side by side, because the second is what the first was
+chosen against.  One figure was added for B13: how alike a pair's two halves
+have to be.
+
 Standard library only.  Run:  python3 docs/designs/pta_source_noise.py
 """
 import math
@@ -144,6 +149,23 @@ def reaches(table_e1, rms, kind):
     return math.sqrt(e * e - V1_E1 * V1_E1) / (100 * rms)
 
 
+def mismatch_offset(m):
+    """A pair whose halves differ by a fraction m reads a * (w + m / 2): an offset
+    of half the mismatch, in weights of one."""
+    return m / 2
+
+
+def reaches_mismatched(m):
+    """What reaches the sums of noise the lines share, through a pair mismatched by
+    m.  ASSUMED: the pair's own share and the offset's add as independent."""
+    return math.hypot(reaches(PAIR_E1, 0.1, 0), mismatch_offset(m) * reaches(OFFSET_E1, 0.01, 0))
+
+
+def match_for_equal():
+    """The mismatch at which the offset it makes passes as much as the pair does."""
+    return 2 * reaches(PAIR_E1, 0.1, 0) / reaches(OFFSET_E1, 0.01, 0)
+
+
 def rows_summed(table, triple):
     """What three settings cost over version 1 if their separate costs added."""
     return sum(over(table[rms][k]) for k, rms in enumerate(triple))
@@ -208,6 +230,11 @@ def main():
         print(f"  {name:<22}" + "".join(f"{reaches(table, r, k):>10.2f}" for k, r in enumerate(at)))
     print(f"  An offset passes {reaches(OFFSET_E1, 0.01, 0) / reaches(PAIR_E1, 0.1, 0):.0f} times what a pair does of noise the lines share,")
     print(f"  {20 * math.log10(reaches(OFFSET_E1, 0.01, 0) / reaches(PAIR_E1, 0.1, 0)):.0f} dB: it is every lit input at a weight of one, beside weights that are small.")
+    print(f"  And a pair whose two halves differ is partly an offset, of half the difference.  At"
+          f" {match_for_equal():.0%} it")
+    print(f"  passes as much through that as through itself: {reaches_mismatched(match_for_equal()):.2f} of the noise's rms for"
+          f" {reaches(PAIR_E1, 0.1, 0):.2f}, and at 5%,")
+    print(f"  {reaches_mismatched(0.05):.2f}.  Derived from the two readings, taking the shares as independent; not run.")
 
     findings()
     checks()
@@ -321,6 +348,13 @@ def checks():
     assert [round(over(OFFSET[x][2]), 2) for x in (0.01, 0.02)] == [0.03, 0.12]
     assert abs(db_hz(ROWS[0], FS / 2) + 121.0) < 0.05
     assert 2 * source.photodiodes(4) == 512
+
+    # 8. B13's figure: a pair matched to 10% passes 1.4 times a matched pair's.
+    assert abs(match_for_equal() - 0.10) < 0.002 and abs(mismatch_offset(0.10) - 0.05) < 1e-12
+    assert abs(reaches_mismatched(match_for_equal()) / reaches(PAIR_E1, 0.1, 0) - math.sqrt(2)) < 1e-9
+    assert abs(reaches_mismatched(0.05) - 1.23) < 0.01 and reaches_mismatched(0.0) == reaches(PAIR_E1, 0.1, 0)
+    #    At the rows' 2%, a 10% mismatch is as 2.8%: still under what the row stands alone.
+    assert ROWS[0] * reaches_mismatched(0.10) / reaches(PAIR_E1, 0.1, 0) < allowed(PAIR, 0)
 
     print()
     print("All checks pass.")

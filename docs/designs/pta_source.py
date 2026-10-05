@@ -80,8 +80,8 @@ ASSUMED, and marked again where each is used:
 NOT PRICED: an amplifier, and its noise; whatever picks one line off a comb
 for one input; what puts a ring on its line in the first place; how this tile
 signs a weight, which M does with a balanced pair and which would double every
-photodiode count here; and the receiver's noise with more than one photodiode
-on its input.
+photodiode count here (the plan's B13 has since chosen the pair: 512 at four
+buses); and the receiver's noise with more than one photodiode on its input.
 
 Standard library only.  Run:  python3 docs/designs/pta_source.py
 """
