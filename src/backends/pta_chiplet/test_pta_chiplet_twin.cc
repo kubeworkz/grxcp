@@ -199,7 +199,8 @@ bool all_poison(const std::vector<int64_t>& c) {
 
 const pta_twin_build B4x4 = {4, 4, 16, 48, 4, 0};       // the c930 register model's tile
 const pta_twin_build B8x8 = {8, 8, 8, 48, 4, 0};        // grx930's bench tile
-const pta_twin_build B256x64 = {256, 64, 8, 48, 4, 0};  // one of X2's candidates for the chiplet
+const pta_twin_build B128x64 = {128, 64, 8, 48, 4, 0};  // the chiplet's working geometry: the board plan's B10, as revised
+const pta_twin_build B256x64 = {256, 64, 8, 48, 4, 0};  // B10 as first settled, and the largest tile the gate runs
 
 int amax_of(const pta_twin_build& b) { return b.din_w >= 16 ? 127 : (1 << (b.din_w - 1)) - 1; }
 
@@ -239,7 +240,7 @@ void t_seed_function() {
 
 void t_identity() {
   section("identity and capability (the map's section 2)");
-  for (const pta_twin_build* b : {&B4x4, &B8x8, &B256x64}) {
+  for (const pta_twin_build* b : {&B4x4, &B8x8, &B128x64, &B256x64}) {
     pta_twin* t = pta_twin_new(b);
     const uint32_t c0 = pta_twin_read32(t, PTA_TWIN_CAPS0);
     const uint32_t c1 = pta_twin_read32(t, PTA_TWIN_CAPS1);
@@ -381,7 +382,7 @@ const Case CASES[] = {
 
 void t_bitwise() {
   section("a GEMM through the twin is the model, bit for bit");
-  for (const pta_twin_build* b : {&B4x4, &B8x8, &B256x64}) {
+  for (const pta_twin_build* b : {&B4x4, &B8x8, &B128x64, &B256x64}) {
     // Two N tiles and three K tiles, the last of each partial.
     const int M = 5, N = b->cols + b->cols / 2 + 1, K = 2 * b->rows + 1;
     const auto A = operands(static_cast<uint32_t>(b->rows), static_cast<size_t>(M) * K, amax_of(*b));
@@ -1265,7 +1266,8 @@ void t_reset() {
 
 // ---- the activation stage (the map's section 8) ---------------------------------------
 const pta_twin_build A8x8 = {8, 8, 8, 48, 4, 1 << 12};        // the bench tile, with a stage
-const pta_twin_build A256x64 = {256, 64, 8, 48, 4, 1 << 14};  // the chiplet's candidate, with one
+const pta_twin_build A128x64 = {128, 64, 8, 48, 4, 1 << 13};  // the working geometry, with one
+const pta_twin_build A256x64 = {256, 64, 8, 48, 4, 1 << 14};  // B10 as first settled, with one
 
 // grx930's c930/sim/pta_mnist.c, tile_batch(), the hidden layer's step, as it
 // is written there.  This is the reference the stage is held to, and it is not
@@ -1535,7 +1537,7 @@ void t_activation() {
   }
 
   section("one GEMM through the stage: operands come back where sums would");
-  for (const pta_twin_build* b : {&A8x8, &A256x64}) {
+  for (const pta_twin_build* b : {&A8x8, &A128x64, &A256x64}) {
     const Cfg c = noisy_cfg(*b);
     const int M = 6, N = b->cols + 3, K = 2 * b->rows + 5;
     const Layer ly = make_layer(*b, c, 0x0ACE, K, N);
@@ -1589,6 +1591,7 @@ void t_activation() {
 
   section("a network held on the chiplet is the network brought out at every layer");
   chain_case(A8x8, "  8 x 8  , three layers", 5, {{20, 12}, {12, 9}, {9, 5}}, 0xC4A1);
+  chain_case(A128x64, "128 x 64 , D3's shape", 64, {{784, 100}, {100, 10}}, 0xD3D4);
   chain_case(A256x64, "256 x 64 , D3's shape", 64, {{784, 100}, {100, 10}}, 0xD3D3);
 
   section("held operands are the next command's or nobody's");
