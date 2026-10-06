@@ -24,8 +24,10 @@ ADC's LSB, and 30 photons such an LSB.  Sections 1 to 3 are version 1's and
 are kept as they were run.  Section 4 is the working point under version 2,
 beside version 1's, from pta_tighten.py: grx930's sweep, and the plan's models
 asked for a bit more.  Drift and the source's rows were then rerun at version
-2 (pta_version2.py) and are in section 4 too.  Nothing else in this plan has
-been, and section 4 says what has not.
+2 (pta_version2.py) and are in section 4 too.  B15 and B16 chose from that:
+version 2 is calibrated every six minutes, and its source's shared row is 1%.
+Nothing else in this plan has been rerun at version 2, and section 4 says what
+has not.
 
 WHAT KIND OF NUMBER EACH ROW IS is what it was in the model it came from, and
 those say.  Two things are particular to this file:
@@ -267,6 +269,14 @@ def section(title):
     print(f"\n{title}\n{'-' * len(title)}")
 
 
+def held_to(v):
+    """How often a version is calibrated, and its source's shared row: B15 and B16
+    for version 2, and what section 4.3 had for version 1."""
+    seconds, row = {1: (version2.HOURLY_S, version2.ROWS3[0]), 2: (version2.INTERVAL_S, version2.ROWS_V2[0])}[v]
+    every = "about hourly" if seconds == version2.HOURLY_S else f"every {seconds // 60} minutes"
+    return every, f"{row:.0%}, {version2.noise.db_hz(row):.0f} dB/Hz"
+
+
 def workload_rows(w):
     """Section 4's rows for one data set: a label, and the cell for a version."""
     return (
@@ -279,6 +289,7 @@ def workload_rows(w):
         ("an hour of it adds", lambda v: version2.pm(version2.adds(w, v, "hour"))),
         ("an hour, then calibrated", lambda v: version2.pm(version2.adds(w, v, "cal"))),
         ("the source's three rows add", lambda v: version2.pm(version2.adds(w, v, ("all", "rows")))),
+        ("with B16's source, six minutes on", lambda v: version2.pm(version2.held(w, v)[0])),
     )
 
 
@@ -365,6 +376,8 @@ def main():
         ("lines a bus could hold", lambda v: f"{tighten.lines_a_bus(budget(v)[2])}"),
         ("the ring bank's buses, and lines each", lambda v: f"{tighten.buses(budget(v)[2])} of {lines_each(TILE)}"),
         ("photodiodes", lambda v: f"{2 * tighten.buses(budget(v)[2]) * TILE[1]}"),
+        ("calibrated", lambda v: held_to(v)[0]),
+        ("the source's shared row", lambda v: held_to(v)[1]),
     )
     for label, f in rows:
         print(f"  {label:<44}" + "".join(f"{f(v):>26}" for v in both))
@@ -382,7 +395,7 @@ def main():
 
 def findings():
     print()
-    print("What this says, eight readings.")
+    print("What this says, nine readings.")
     print()
     a, b = fj_mac(TILE), fj_mac(FIRST)
     print(f"  1. THE MOVE HALVES WHAT THE TILE COSTS AND BARELY MOVES WHAT A MAC COSTS.  {lines_between(TILE):,} lines for {lines_between(FIRST):,},")
@@ -439,6 +452,12 @@ def findings():
     print(f"     harder sets is more than version 2 bought.  Six minutes adds {version2.adds(f, 2, 'six')[0]:.2f} and {version2.adds(i, 2, 'six')[0]:.2f} there.")
     print(f"     The source's three rows add {version2.adds(m, 2, rows)[0]:.2f}, {version2.adds(f, 2, rows)[0]:.2f} and {version2.adds(i, 2, rows)[0]:.2f}: inside their tenth on two sets,")
     print("     and nearly four tenths on the one that lights three rows in four.")
+    print()
+    h = [version2.held(w) for w in WORKLOADS]
+    print(f"  9. SO B15 CALIBRATES IT EVERY SIX MINUTES AND B16 HOLDS THE SHARED ROW TO 1%.  With both, and")
+    print(f"     at the end of an interval, version 2 loses {h[0][0][0]:.2f}, {h[1][0][0]:.2f} and {h[2][0][0]:.2f} points: {h[0][1][0]:.2f}, {h[1][1][0]:.2f} and {h[2][1][0]:.2f} over")
+    print(f"     its budget.  That is {86400 // version2.INTERVAL_S} calibrations a day, a period of {version2.period_bits()} bits of shot-clock cycles")
+    print(f"     where PTA_CAL_PER has {version2.PERIOD_BITS}, and a source's shared noise of {version2.noise.db_hz(version2.ROWS_V2[0]):.0f} dB/Hz over the shot rate.")
 
 
 def checks():
@@ -603,7 +622,15 @@ def checks():
         "an hour of it adds": ["0.69 +-0.33", "0.67 +-0.31"],
         "an hour, then calibrated": ["0.03 +-0.15", "0.02 +-0.11"],
         "the source's three rows add": ["0.06 +-0.11", "0.09 +-0.13"],
+        "with B16's source, six minutes on": ["1.37 +-0.23", "0.60 +-0.23"],
     }, cells
+
+    # 10. Reading 9: B15 and B16.
+    assert [held_to(v) for v in (1, 2)] == [("about hourly", "2%, -124 dB/Hz"), ("every 6 minutes", "1%, -130 dB/Hz")]
+    assert [version2.held(w)[0][0] for w in WORKLOADS] == [0.19, 0.60, 1.09]
+    assert [version2.held(w)[1][0] for w in WORKLOADS] == [0.04, 0.06, 0.48]
+    assert version2.period_bits() == 39 > version2.PERIOD_BITS == 32 and 86400 // version2.INTERVAL_S == 240
+    assert version2.FS == FS and version2.TILE == TILE
 
     print()
     print("All checks pass.")

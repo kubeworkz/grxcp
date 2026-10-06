@@ -414,6 +414,15 @@ other two where there were 44 and 48 on the one.
     proposal has reserved the flag bits such a command would use and cannot
     define them until this map does. The twin does not model the stage either
     (§6), and those figures use a stand-in for the host's round trip.
+11. **`PTA_CAL_PER` cannot hold the interval it is for** (2026-10-06). It is
+    32 bits of cycles, as on the c930, where a cycle is the core's. Behind a
+    shot clock of 1 GHz that is 4.3 seconds. The board plan's B15 calibrates
+    version 2 every six minutes, which is 3.6 × 10¹¹ cycles and 39 bits, and
+    the hour it replaced was 42. §4 widened the counters for this reason and
+    left the period as it was. Either it gains an upper half as they did, or
+    its unit becomes a power of two of cycles: a unit of 2¹⁶ cycles, 66 µs at
+    1 GHz, holds 78 hours in 32 bits. Nothing here chooses. The twin stores
+    the period and no scheduler in it reads it, so it does not show this.
 
 ---
 
