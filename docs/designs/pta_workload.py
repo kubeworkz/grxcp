@@ -48,6 +48,9 @@ WHAT THIS IS NOT:
     convolution, no residual path, no attention has been run
   - a measurement of a tile
 
+WHAT TIGHTENING VERSION 1 WOULD BUY is pta_tighten.py's, from a sweep grx930
+ran the day after this.
+
 Standard library only.  Run:  python3 docs/designs/pta_workload.py
 """
 import os

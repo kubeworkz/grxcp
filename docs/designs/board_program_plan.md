@@ -22,7 +22,10 @@ that eight is the host's to give back, in the activation stage's shift.
 And X1's budget was run on a second data set that day and does not hold (§8,
 question 7): version 1 costs 1.2 points on Fashion-MNIST and on MNIST
 inverted, where it costs a third of a point on MNIST, and the working tile's
-laser is twice and four times MNIST's.
+laser is twice and four times MNIST's. What a tighter budget would buy was run
+on 2026-10-06 (§4.3, at the end of its budget): one more bit of ADC with both
+noise rows halved takes Fashion-MNIST from 1.16 points to 0.54, and all six
+rows a notch tighter to 0.39. Neither is adopted.
 X2 has made its predictions (§3.3), X1 its budget (§4.3), and P0, X3 and X4
 are drafted as [`board_icd.md`](board_icd.md),
 [`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) and
@@ -371,6 +374,14 @@ light those about half as much as MNIST does. On Fashion-MNIST the fill hardly
 moved, and the same noise in a converter's LSB costs that network more points.
 On the inverted set the second layer's fill fell on all five networks, by two
 to four times.
+
+*And a tighter budget takes more of it, 2026-10-06* (§4.3, at the end of its
+budget; [`pta_tighten.py`](pta_tighten.py)). Version 1 with an 8-bit ADC and
+both noise rows halved, or with all six rows a notch tighter, is within a
+tenth of a point of its own budget at 8, 16 and 16 times this decision's
+laser on the three data sets, the shift a bit down: 0.7–7 W, 1.4–14 W and
+1.4–14 W. That is twice version 1's on MNIST and on Fashion-MNIST, and no
+more on the inverted set.
 
 **B6 — Silicon nodes, and the board before silicon.** grx930's manufacturing
 plan takes the SoC to SKY130 first, then to TSMC N28, and freezes the RTL now.
@@ -1364,6 +1375,94 @@ So none of this section's prices is a budget's. Each is a budget's on a
 workload. Version 1 is still the tightest set of rows this plan has and still
 what the interface chip is held to. What it buys is a quarter of a point on
 MNIST and a point on either of the other two.
+
+*What tightening it would buy, 2026-10-06.* ([`pta_tighten.py`](pta_tighten.py);
+grx930's design note, §5, "What would tightening v1 buy?") The table above
+prices each row loosened. grx930's harness has now run version 1 with each row
+made better, alone and together, on the working tile and all three data sets.
+What a row buys of version 1's loss when it is taken away altogether, which is
+the most that tightening it could buy:
+
+| Row, gone | MNIST | Fashion-MNIST | MNIST, inverted |
+|---|---|---|---|
+| Version 1 loses | 0.34 ± 0.07 | 1.16 ± 0.14 | 1.23 ± 0.13 |
+| Activation DAC | 0.06 ± 0.03 | −0.01 ± 0.03 | 0.06 ± 0.05 |
+| ADC | 0.08 ± 0.08 | **0.26 ± 0.09** | 0.15 ± 0.06 |
+| Receiver noise | **0.17 ± 0.03** | **0.31 ± 0.14** | 0.20 ± 0.07 |
+| Shot noise | **0.20 ± 0.03** | **0.26 ± 0.11** | **0.52 ± 0.14** |
+| Weight programming error | 0.05 ± 0.03 | −0.04 ± 0.07 | 0.12 ± 0.06 |
+| Crosstalk | −0.01 ± 0.03 | −0.08 ± 0.11 | 0.13 ± 0.09 |
+
+On Fashion-MNIST the point is in three rows. The other three are worth
+nothing there: the activation DAC's sixth bit, programming error at 1 LSB and
+crosstalk at 2%. By the table before this one they are dear to loosen, and by
+this one they are free to hold. The inverted set spreads its point over all
+six, with the shot noise half a point by itself. On MNIST it is the two noise
+rows.
+
+So two sets of rows tighter than version 1 were run whole. A notch is a bit
+more in a converter and half the noise or the error: receiver noise of a
+quarter of an 8-bit ADC's LSB, and 30 photons per such LSB.
+
+| | Version 1 | Version 1 with an 8-bit ADC and both noise rows halved | All six rows a notch tighter |
+|---|---|---|---|
+| Points lost: MNIST | 0.34 ± 0.07 | 0.15 ± 0.02 | 0.06 ± 0.02 |
+| Fashion-MNIST | 1.16 ± 0.14 | 0.54 ± 0.22 | 0.39 ± 0.15 |
+| MNIST, inverted | 1.23 ± 0.13 | 0.62 ± 0.07 | 0.50 ± 0.08 |
+| ADC | 7 bits | 8 bits | 8 bits |
+| Published parts that reach it at 1 GS/s | 70 | 47 | 47 |
+| Its 64 converters, best to fifth-best published | 0.07–0.20 W | 0.27–0.34 W | 0.27–0.34 W |
+| The interface chip | 0.44–4.04 W | 0.64–4.18 W | 0.64–4.18 W, and what is not priced below |
+| A weight ring's line, at least, to settle in a shot | 1.99 GHz | 2.21 GHz | 2.21 GHz |
+| Lines a bus, and buses | 77, 2 | 69, 2 | 69, 2 |
+| A ring's Q, between settling in a shot and keeping two buses | 80,200 to 97,400: 21% of room | 80,200 to 87,700: 9% | 80,200 to 87,700: 9% |
+| Its swing | 2.27 to 2.76 V | 2.53 to 2.76 V | 2.53 to 2.76 V |
+| Laser, the activation stage's shift a bit down: MNIST | 4 times B5's, 0.35–3.5 W | 8 times, 0.7–7 W | 8 times, 0.7–7 W |
+| Fashion-MNIST | 8 times, 0.7–7 W | 16 times, 1.4–14 W | 16 times, 1.4–14 W |
+| MNIST, inverted | 16 times, 1.4–14 W | 16 times, 1.4–14 W | 16 times, 1.4–14 W |
+| A MAC, every cell in use: MNIST | 97–922 fJ | 164–1,368 fJ | 164–1,368 fJ |
+| Fashion-MNIST | 140–1,351 fJ | 250–2,226 fJ | 250–2,226 fJ |
+| MNIST, inverted | 226–2,209 fJ | 250–2,226 fJ | 250–2,226 fJ |
+| Activation DAC | 6 bits | 6 bits | 7 bits. **Not priced** |
+| Weight programming error | 1 LSB | 1 LSB | 0.5 LSB. **Not priced** |
+| Crosstalk | 2% | 2% | 1.2%, which B12's grid already is |
+
+Five things.
+
+- **A notch on all six puts Fashion-MNIST where version 1 puts MNIST**, 0.39
+  for 0.34. Two notches halve it again, to 0.18, and ask a ninth bit of ADC,
+  at which a bus holds 63 lines and the tile needs a third.
+- **Three rows are four fifths of it.** One more bit of ADC and half of each
+  noise row buy 82% and 85% of what all six buy on the two harder sets, and
+  68% on MNIST. A notch on the other three, by itself, buys 0.04 to 0.11.
+- **The bit is a seventh to a fifth of a watt, and a ring that is harder to
+  hit.** A level read to a bit more has to have settled further in the same
+  shot, so B11's bound on a ring moves: the Q ceiling falls by a tenth. Two
+  buses of 64 lines want a Q of at least 80,200. So the room a ring's Q has
+  between the two goes from 21% to 9%. A ninth bit closes it.
+- **Half the noise is twice the laser, except where the laser was already
+  large.** And at one laser the rows are worth more than more laser. At 8
+  times B5's, Fashion-MNIST loses 1.19 at version 1's rows and 0.74 with the
+  bit and 30 photons, and 64 times at version 1's rows gets it only to 0.84.
+- **The crosstalk's notch costs nothing new.** B12 packs a bus at 4.61
+  linewidths, where a neighbour is seen at 1.2%, and on its 11 GHz grid a
+  ring at the rate's Q ceiling sees 0.8%, or 1.0% if it settles to 8 bits. A
+  ring of lower Q on that grid is a different matter, and was one at 2%.
+
+Neither set is adopted. Version 1 is what the interface chip is held to, and
+this section's table of requirements has not changed. What is open is whether
+to hold it to one of these, and that is a choice between a point on a harder
+data set and a fifth of a watt at most, a ring whose Q has half the room, and
+a laser of twice the size.
+The activation DAC's seventh bit and half the programming error are what all
+six rows ask beyond the three, they buy the last fifth, and no model here
+prices either.
+
+It is still a model, on networks that were not trained for the tile (§8,
+question 7). And the light's row is the budget's, photons per LSB, held where
+a row puts it while the laser multiplies: a real laser moves both, and a
+balanced pair's shot noise follows all the light it is lit with, which
+[`pta_laser.py`](pta_laser.py) prices and the harness does not have.
 
 *The ADC's row, since the survey (2026-10-04).* Relaxing it saves 3 to 106 mW,
 and the low end is the published state of the art: the cheapest converters that
@@ -2588,6 +2687,16 @@ X1's rows and X3.
    through fully connected layers. So version 1 stays the requirement on the
    interface chip, as the tightest set of rows this plan has. What is
    withdrawn is its price: "a quarter of a point" is MNIST's.
+
+   *What tightening buys was run on 2026-10-06* (§4.3, at the end of its
+   budget; [`pta_tighten.py`](pta_tighten.py)). On Fashion-MNIST version 1's
+   point is in three of its six rows, the ADC's bit and the two noise rows.
+   Version 1 with an 8-bit ADC and both noise rows halved loses 0.15, 0.54 and
+   0.62 on the three sets, and all six rows a notch tighter 0.06, 0.39 and
+   0.50. The first costs a seventh to a fifth of a watt of converters, a ring
+   whose Q has 9% of room where it had 21%, and twice the laser on two of the
+   three sets. Whether the interface chip is held to either is not decided
+   here.
 8. **What kind of light source does the tile need?** *Settled on 2026-10-05, as
    a working topology: a ring bank, lit by a comb (B12, §7). What follows is
    how the question was worked, and reads as it was written.* Asked on
