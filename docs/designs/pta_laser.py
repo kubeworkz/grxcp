@@ -51,6 +51,8 @@ ASSUMED, and marked again where each is used:
     in ten thousand.  Another rule moves every fill
   - one network family, on MNIST, whose images are mostly dark.  A workload
     that lights more of its inputs fills more of the light
+    (Two more data sets were run on 2026-10-05: pta_workload.py.  The fill
+    moved little and not that way, and the laser doubled and doubled again.)
 
 B10 WAS REVISED ON THIS, 2026-10-05: the working tile is 128 x 64, which this
 file calls SMALLER.  It is kept as it was run, with 256 x 64 as WORKING.

@@ -449,6 +449,14 @@ Two bits less clamp 13% and lose a quarter of a point for nothing. The stage
 does not change for it. `PTA_ACT_CLIP_CT` already counts what a shift clamps,
 which is what a program choosing one would watch.
 
+*That bit is MNIST's, 2026-10-05.* On two more data sets (the board plan's §8,
+question 7) one bit less still halves the laser, and clamps 0.90% and 2.75% of
+the units that fire. A second bit, which bought nothing above, pays on
+Fashion-MNIST at every laser tried and clamps 10%. On MNIST inverted it clamps
+22%, and costs at 8 times B5's laser and above. So the shift that is right is
+a workload's, which is the case for its being a field of a command, and for
+the counter.
+
 **It is not S_ACT.** B4's addendum called the cost "a nonlinearity fixed in
 silicon, which S_ACT has designed once already". S_ACT
 (`npu_act_stage_design_note.md` in grx930) is an experiment on all-optical
