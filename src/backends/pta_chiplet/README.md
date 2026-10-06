@@ -305,7 +305,9 @@ Each reads zero in the register that would say otherwise.
 
 - The calibration scheduler (`PTA_CTRL[6:4]`). A calibration runs when
   `PTA_CTRL.CAL_NOW` asks for one. The comparison of schedulers that the
-  calibration document assigns to this twin is still owed.
+  calibration document assigns to this twin is still owed. `PTA_CAL_PER` is
+  stored, in the map's unit of 2¹⁶ cycles, which `pta_twin_cal_per()` converts
+  an interval to. With no scheduler, nothing here counts in it.
 - The loop-order and residency modes (`PTA_CTRL[9:7]`). The model walks one
   order.
 - The activation stage, unless the build asks for one (`PTA_CAPS2[17]`), and

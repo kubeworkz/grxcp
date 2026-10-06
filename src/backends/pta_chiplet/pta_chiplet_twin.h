@@ -60,7 +60,8 @@
  *   - PTA_CTRL[6:4], the calibration scheduler.  Only "off" is built: a
  *     calibration runs when PTA_CTRL.CAL_NOW asks for one.  The field reads
  *     zero whatever is written.  PTA_CAL_PER and PTA_CAL_THR store and read
- *     back, and schedule nothing.
+ *     back, and schedule nothing.  PTA_CAL_PER is in the map's unit, 2^16
+ *     cycles, and pta_twin_cal_per() converts to it; nothing here counts in it.
  *   - PTA_CTRL[9:7], the loop-order and residency modes.  The model walks one
  *     order, the shipped one.  The bits read zero.
  *   - PTA_CTRL[11:10], which on the c930 are its DMA's options.  Read zero.
@@ -145,7 +146,7 @@ extern "C" {
 #define PTA_TWIN_XTALK         0x064u    /* RW   [7:0] Q0.8 */
 #define PTA_TWIN_TW            0x068u    /* RW   cycles a programming */
 #define PTA_TWIN_TS            0x06Cu    /* RW   cycles a shot */
-#define PTA_TWIN_CAL_PER       0x070u    /* RW   stored; no scheduler reads it */
+#define PTA_TWIN_CAL_PER       0x070u    /* RW   in units of 2^16 cycles; stored, and no scheduler reads it */
 #define PTA_TWIN_CAL_THR       0x074u    /* RW   [23:0], stored likewise */
 #define PTA_TWIN_CAL_CT        0x078u    /* R    calibrations that ran to the end */
 #define PTA_TWIN_CAL_CYC       0x07Cu    /* R    cycles spent calibrating, low half */
@@ -172,6 +173,7 @@ extern "C" {
 #define PTA_TWIN_BANKS         2u            /* the model's weight banks */
 #define PTA_TWIN_KIND          3u            /* PTA_CAPS2[19:18]: the model on its own */
 #define PTA_TWIN_CAPS2_CAL     0x00010000u   /* the calibration engine is present */
+#define PTA_TWIN_CAL_PER_LOG2  16u           /* PTA_CAL_PER counts 2^16 cycles: the map's section 4 */
 #define PTA_TWIN_CAPS2_ACT     0x00020000u   /* the activation stage is built */
 #define PTA_TWIN_CAPS2_HOLD_SHIFT 20         /* [24:20] log2 of the operands the stage can hold */
 #define PTA_TWIN_CAPS2_HOLD_MASK  0x01F00000u
@@ -320,6 +322,16 @@ uint32_t  pta_twin_gemm_seed(uint32_t seed, uint32_t index);
 
 /* The seed of calibration `index`, PTA_CAL_CT before it runs. */
 uint32_t  pta_twin_cal_seed(uint32_t cal_seed, uint32_t index);
+
+/*
+ * PTA_CAL_PER for an interval of that many cycles: the map's section 4.  The
+ * register counts units of 2^16 cycles, because 32 bits of single cycles is
+ * 4.3 seconds of a 1 GHz shot clock and a calibration interval is minutes.
+ * Rounds to the nearest unit, a half up.  Zero cycles is zero, which is the
+ * period switched off, and no other interval comes back as zero.  One past
+ * the register's range comes back as its largest value.
+ */
+uint32_t  pta_twin_cal_per(uint64_t cycles);
 
 /*
  * The activation stage's function, for one sum: the map's section 8.

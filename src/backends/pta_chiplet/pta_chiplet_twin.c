@@ -117,6 +117,21 @@ uint32_t pta_twin_cal_seed(uint32_t cal_seed, uint32_t index)
     return cal_seed ^ (index * 0x9E3779B1u);
 }
 
+/* The map's section 4: an interval in cycles, as PTA_CAL_PER holds it. */
+uint32_t pta_twin_cal_per(uint64_t cycles)
+{
+    const uint64_t half = (uint64_t)1 << (PTA_TWIN_CAL_PER_LOG2 - 1);
+    uint64_t units;
+    if (cycles == 0)
+        return 0;
+    if (cycles > UINT64_MAX - half)
+        return UINT32_MAX;
+    units = (cycles + half) >> PTA_TWIN_CAL_PER_LOG2;
+    if (units == 0)
+        return 1;
+    return units > UINT32_MAX ? UINT32_MAX : (uint32_t)units;
+}
+
 /* ---- small things --------------------------------------------------------------- */
 static void raise_irq(pta_twin *t, uint32_t bits)
 {

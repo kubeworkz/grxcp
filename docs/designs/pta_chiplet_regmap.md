@@ -126,7 +126,7 @@ document is a map rather than a diff: `PTA_CTRL`, `PTA_STATUS`, `PTA_IMPAIR`,
 `PTA_CAL_CT`, `PTA_CAL_CYC`, `PTA_SHOT_CT`, `PTA_WLOAD_CT`, `PTA_SAT_CT`,
 `PTA_ERR_MAX`, `PTA_GAIN[j]`, `PTA_OFFS[j]`, `PTA_DRIFT_MAX`.
 
-Four of them behave differently behind a link.
+Five of them behave differently behind a link.
 
 **`PTA_STATUS` gains bit4, BUSY.** On the c930 the dispatcher's BUSY lives in
 the NPU's own CSRs. On the board the engine that issues work is the GPU's and
@@ -190,6 +190,25 @@ weight writes, which do not pass through the core's weight-load state.
 **`PTA_TW` and `PTA_TS` are the emulation's.** They set the modelled settle and
 shot latency on the twin. What they mean on silicon — a read-back of what the
 hardware does, or nothing at all — is open (§7).
+
+**`PTA_CAL_PER` counts 2¹⁶ cycles.** *Settled 2026-10-06.* On the c930 it is a
+count of the core's cycles. Behind a shot clock of 1 GHz, 32 bits of single
+cycles is 4.3 seconds, and the board plan's B15 calibrates every six minutes,
+which is 3.6 × 10¹¹ of them. So here one unit is 65,536 cycles of the shot
+clock: 66 µs at 1 GHz. Six minutes is 5,493,164 units, an hour is 54,931,641,
+and the word reaches 78 hours. Zero is still the period switched off.
+
+The other way to do it was an upper half, as the counters above have. The
+unit was chosen: it is one word to write and not two, and no calibration wants
+a period finer than 66 µs. A host gets cycles from seconds and
+`PTA_CAPS2`'s shot rate, and should not work the unit out for itself:
+`pta_twin_cal_per()` is the conversion. It rounds to the nearest unit, keeps
+zero for off so that no real interval reads as off, and gives the largest
+value for anything past the range. The twin's gate holds it to those three.
+
+The version of this map is still 1. Nothing was built to a period in cycles:
+there is no chiplet, the twin stores the word and no scheduler in it reads it
+(§6), and no driver writes it.
 
 **Three words the engine needs, which C3(b) found missing.** Building the
 calibration engine in grx930 (`c930/rtl/pta/c930_pta_cal.sv`) turned up
@@ -294,8 +313,9 @@ first question was open, and it stays so because the gate runs four tiles. The
 working geometry, 128 × 64 (the board plan's B10, as revised on 2026-10-05),
 is one of them, and so is the 256 × 64 it was first settled at.
 
-**What the gate holds**, in 237 checks at 4 × 4, 8 × 8, 128 × 64 and 256 × 64,
-of which 55 are the activation stage's (§8):
+**What the gate holds**, in 241 checks at 4 × 4, 8 × 8, 128 × 64 and 256 × 64,
+of which 55 are the activation stage's (§8) and four are `PTA_CAL_PER`'s unit
+(§4):
 
 - *The map.* Every section above: identity, the seed and its counter, 64-bit
   counters with a latched upper half, interrupts, the engine's three words, the
@@ -414,7 +434,9 @@ other two where there were 44 and 48 on the one.
     proposal has reserved the flag bits such a command would use and cannot
     define them until this map does. The twin does not model the stage either
     (§6), and those figures use a stand-in for the host's round trip.
-11. **`PTA_CAL_PER` cannot hold the interval it is for** (2026-10-06). It is
+11. ~~**`PTA_CAL_PER` cannot hold the interval it is for.**~~ *Closed by §4,
+    2026-10-06*: it counts 2¹⁶ cycles, by the second of the two ways below.
+    As this item stood (2026-10-06): it is
     32 bits of cycles, as on the c930, where a cycle is the core's. Behind a
     shot clock of 1 GHz that is 4.3 seconds. The board plan's B15 calibrates
     version 2 every six minutes, which is 3.6 × 10¹¹ cycles and 39 bits, and

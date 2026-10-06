@@ -2315,6 +2315,7 @@ the floor under the two schedulers that predict
 | A calibration's probes | 4,096 shots, 4 µs | The same | The calibration note's §3: both banks, a row a shot, 16 probes a cell |
 | Their share of the tile's shots | One in 880 million | One in 88 million | Derived |
 | The period, as a count of shot-clock cycles | 42 bits | 39 bits | Derived. `PTA_CAL_PER` has 32 |
+| The period, in `PTA_CAL_PER`'s units of 2¹⁶ cycles, since that day | 54,931,641 | 5,493,164 | The register map's §4. The word reaches 78 hours |
 
 **What it buys.** On MNIST and Fashion-MNIST drift stays inside a tenth of a
 point between calibrations, so version 2 keeps what B14 bought. With a source
@@ -2331,6 +2332,13 @@ restarting, 240 times a day. No model in this plan prices that.
 had written the interval down as a count. The register map widened its
 counters for the same reason and did not widen this
 ([`pta_chiplet_regmap.md`](pta_chiplet_regmap.md) §7, item 11).
+
+*Closed the same day.* Of the two ways to fix it, an upper half or a coarser
+unit, the unit was chosen: on the chiplet `PTA_CAL_PER` counts 2¹⁶ cycles of
+the shot clock (the register map's §4). Six minutes is 5,493,164 units, and
+the word reaches 78 hours. The twin carries the unit and the conversion, and
+its gate holds both. The map's version is unchanged, since nothing had been
+built to a period in cycles.
 
 **What it does not settle.** The inverted set, where six minutes adds 0.28 ±
 0.27, and the interval that would hold a tenth there was not run. TFLN, whose

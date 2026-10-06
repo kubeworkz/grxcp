@@ -456,8 +456,8 @@ def findings():
     h = [version2.held(w) for w in WORKLOADS]
     print(f"  9. SO B15 CALIBRATES IT EVERY SIX MINUTES AND B16 HOLDS THE SHARED ROW TO 1%.  With both, and")
     print(f"     at the end of an interval, version 2 loses {h[0][0][0]:.2f}, {h[1][0][0]:.2f} and {h[2][0][0]:.2f} points: {h[0][1][0]:.2f}, {h[1][1][0]:.2f} and {h[2][1][0]:.2f} over")
-    print(f"     its budget.  That is {86400 // version2.INTERVAL_S} calibrations a day, a period of {version2.period_bits()} bits of shot-clock cycles")
-    print(f"     where PTA_CAL_PER has {version2.PERIOD_BITS}, and a source's shared noise of {version2.noise.db_hz(version2.ROWS_V2[0]):.0f} dB/Hz over the shot rate.")
+    print(f"     its budget.  That is {86400 // version2.INTERVAL_S} calibrations a day, a period of {version2.period_units():,} of PTA_CAL_PER's units of")
+    print(f"     2^{version2.PERIOD_UNIT_LOG2} cycles, and a source's shared noise of {version2.noise.db_hz(version2.ROWS_V2[0]):.0f} dB/Hz over the shot rate.")
 
 
 def checks():
@@ -630,6 +630,7 @@ def checks():
     assert [version2.held(w)[0][0] for w in WORKLOADS] == [0.19, 0.60, 1.09]
     assert [version2.held(w)[1][0] for w in WORKLOADS] == [0.04, 0.06, 0.48]
     assert version2.period_bits() == 39 > version2.PERIOD_BITS == 32 and 86400 // version2.INTERVAL_S == 240
+    assert version2.period_units() == 5_493_164 < 2 ** version2.PERIOD_BITS and version2.PERIOD_UNIT_LOG2 == 16
     assert version2.FS == FS and version2.TILE == TILE
 
     print()
