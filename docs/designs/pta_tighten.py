@@ -35,31 +35,37 @@ DERIVED here, from the plan's own models, for the working tile at 1 GS/s:
 NOT PRICED, because no model here prices them: the activation DAC's seventh
 bit, and programming error of half an LSB.  Neither is free.
 
-WHAT THIS IS NOT: a decision.  Version 1 is the requirement until the plan says
-otherwise.  And everything pta_workload.py is not: no network here was trained
-with the tile's errors in the loop, the trainer was MNIST's, and all three data
-sets are 28 x 28 images through fully connected layers.
+B14 CHOSE FROM THIS, 2026-10-06: the interface chip is held to version 2, which
+is the middle set here, version 1 with the ADC's bit and half of each noise
+row.  pta_working_point.py restates the working point under it.
+
+WHAT THIS IS NOT: everything pta_workload.py is not.  No network here was
+trained with the tile's errors in the loop, the trainer was MNIST's, and all
+three data sets are 28 x 28 images through fully connected layers.
 
 Standard library only.  Run:  python3 docs/designs/pta_tighten.py
 """
+import math
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import pta_adc_survey as adc
+import pta_geometry as geometry
 import pta_laser as laser
 import pta_power as power
 import pta_rate as rate
 import pta_ring as ring
+import pta_shot_rate as shot
 import pta_source as source
-import pta_working_point as wp
 import pta_workload as workload
 
 MNIST, FASHION, INVERTED = workload.MNIST, workload.FASHION, workload.INVERTED
 WORKLOADS = workload.WORKLOADS
-TILE, FS = wp.TILE, wp.FS                      # 128 x 64 (B10), 1 GS/s (B11)
+TILE, FS = laser.SMALLER, laser.FS             # 128 x 64 (B10), 1 GS/s (B11)
 WITHIN = laser.WITHIN
-V1_BITS = wp.BITS                              # 7: version 1's ADC
+V1, V2 = shot.REQ["v1"], shot.REQ["v2"]
+V1_BITS = V1["adc_bits"]                       # 7: version 1's ADC
 
 # ---- grx930's figures ----------------------------------------------------------
 # Points lost against the same weights on the host: MNIST, Fashion-MNIST, MNIST inverted.
@@ -122,10 +128,13 @@ LASER = {
 }
 VERSIONS = (
     ("v1", "v1", "version 1", V1_BITS),
-    ("adc_noise", "light", "the ADC's bit, half the noise", V1_BITS + 1),
+    ("adc_noise", "light", "version 2: the bit, half the noise", V1_BITS + 1),
     ("all", "all", "all six a notch", V1_BITS + 1),
 )
+ADOPTED = VERSIONS[1]                          # B14
 NOTCH_XTALK = 3 / 256                          # what the model ran for "half of 2%"
+# What grx930 ran as a notch on the ADC and on each noise row: version 2's three.
+NOTCH_REQ = dict(adc_bits=8, rx_noise_lsb=0.25, photons_per_lsb=30)
 
 
 # ---- what follows from grx930's ----------------------------------------------------
@@ -182,13 +191,23 @@ def buses(bits):
 def q_floor():
     """The lowest Q at which the tile's lines a bus still fit one free spectral
     range at B12's spacing: below it the tile needs another bus."""
-    line_max = source.FSR_HZ / (wp.lines_each(TILE) * source.M_SPACING[1])
+    line_max = source.FSR_HZ / (lines_each() * source.M_SPACING[1])
     return ring.linewidth_hz(1.0) / line_max
 
 
 def q_window(bits):
     """How far above that floor the ceiling is: the room a ring's Q has."""
     return q_ceiling(bits) / q_floor() - 1
+
+
+def lines_each():
+    """The lines a bus carries on the working tile: its rows over version 1's buses."""
+    return -(-TILE[0] // buses(V1_BITS))
+
+
+def grid_hz():
+    """B12's grid: the widest whole multiple of the shot rate that fits those lines in one range."""
+    return math.floor(source.FSR_HZ / lines_each() / FS) * FS
 
 
 def crosstalk_at(spacing):
@@ -198,17 +217,19 @@ def crosstalk_at(spacing):
 
 def grid_crosstalk(bits):
     """What B12's grid is, for a ring at the rate's Q ceiling."""
-    return crosstalk_at(wp.grid_hz(TILE) / line_hz(bits))
+    return crosstalk_at(grid_hz() / line_hz(bits))
 
 
 def chip_parts(bits):
-    """pta_working_point.py's parts with the ADC at that many bits, and the
-    weight drive at the swing a ring that settles to them needs."""
-    p = dict(wp.chip_parts(TILE))
-    p["ADCs"] = adcs_w(bits)
+    """pta_rate.py's parts at the working tile, with the ADC at that many bits
+    and the weight drive at the swing a ring that settles to them needs."""
+    k, n = TILE
+    _, lo = power.chip_w(k, n, bits, rate.SWINGS_V[0], True, FS)
+    _, hi = power.chip_w(k, n, bits, rate.SWINGS_V[1], False, FS)
+    p = {name: (lo[name][0], hi[name][1]) for name in lo}
     floor = swing_floor_v(bits)
     p["weight drive"] = tuple(
-        power.weight_drive_w(TILE[0], TILE[1], max(v, floor), c, a, FS)
+        power.weight_drive_w(k, n, max(v, floor), c, a, FS)
         for v, c, a in zip(rate.SWINGS_V, power.C_CELL_F, power.ACTIVITY))
     return p
 
@@ -336,7 +357,7 @@ def findings():
     print(f"  5. THE BIT IS A SEVENTH TO A FIFTH OF A WATT, AND A RING THAT IS HARDER TO HIT.  64")
     print(f"     converters go from {span(a7)} W to {span(a8)} W, on {len(adc.able(V1_BITS + 1, FS))} published parts where there were {len(adc.able(V1_BITS, FS))}.")
     print(f"     A ring has to settle a bit further in the same shot, so its line is at least")
-    print(f"     {line_hz(V1_BITS + 1) / 1e9:.2f} GHz for {line_hz(V1_BITS) / 1e9:.2f} and its Q at most {q_ceiling(V1_BITS + 1):,.0f} for {q_ceiling(V1_BITS):,.0f}.  Two buses of {wp.lines_each(TILE)} lines")
+    print(f"     {line_hz(V1_BITS + 1) / 1e9:.2f} GHz for {line_hz(V1_BITS) / 1e9:.2f} and its Q at most {q_ceiling(V1_BITS + 1):,.0f} for {q_ceiling(V1_BITS):,.0f}.  Two buses of {lines_each()} lines")
     print(f"     want a Q of at least {q_floor():,.0f}.  So the room between the two goes from {q_window(V1_BITS):.0%} to")
     print(f"     {q_window(V1_BITS + 1):.0%}, and a ninth bit closes it: {lines_a_bus(V1_BITS + 2)} lines a bus, and a third bus.")
     print()
@@ -348,7 +369,7 @@ def findings():
     print(f"     at version 1's rows only gets it to {LASER['v1'][f][64][0]:.2f}.")
     print()
     print(f"  7. THE CROSSTALK'S NOTCH IS ALREADY B12'S, AND TWO THINGS ARE NOT PRICED.  B12 packs a")
-    print(f"     bus at {source.M_SPACING[1]} linewidths, where a neighbour is seen at {crosstalk_at(source.M_SPACING[1]):.1%}, and on its {wp.grid_hz(TILE) / 1e9:.0f} GHz grid a ring")
+    print(f"     bus at {source.M_SPACING[1]} linewidths, where a neighbour is seen at {crosstalk_at(source.M_SPACING[1]):.1%}, and on its {grid_hz() / 1e9:.0f} GHz grid a ring")
     print(f"     at the rate's Q ceiling sees {grid_crosstalk(V1_BITS):.1%}, or {grid_crosstalk(V1_BITS + 1):.1%} settling to 8 bits.  The notch the model ran")
     print(f"     is {NOTCH_XTALK:.1%}.  The activation DAC's seventh bit and half the programming error are")
     print("     what all six ask beyond the three, and no model here prices either.")
@@ -358,6 +379,10 @@ def checks():
     """Every claim above, as an assert."""
     f, m, v = i(FASHION), i(MNIST), i(INVERTED)
     assert TILE == (128, 64) and FS == 1e9 and V1_BITS == 7 and (m, f, v) == (0, 1, 2)
+    #    Version 2 is the notch grx930 ran on three rows, and nothing else: a bit
+    #    more of ADC, half the receiver's noise, twice the photons.
+    assert V2 == NOTCH_REQ and ADOPTED[0] == "adc_noise" and ADOPTED[3] == V2["adc_bits"] == V1_BITS + 1
+    assert V2["rx_noise_lsb"] == V1["rx_noise_lsb"] / 2 and V2["photons_per_lsb"] == 2 * V1["photons_per_lsb"]
 
     # 0. The figures agree with each other and with what the plan already holds.
     assert all(LOST["v1"][i(w)] == workload.LOST[w][0] for w in WORKLOADS)
@@ -418,22 +443,29 @@ def checks():
     a7, a8 = adcs_w(7), adcs_w(8)
     assert abs(a7[0] - 0.071) < 0.001 and abs(a7[1] - 0.201) < 0.001
     assert abs(a8[0] - 0.268) < 0.001 and abs(a8[1] - 0.342) < 0.001
-    assert a7 == wp.chip_parts(TILE)["ADCs"]
+    assert a7 == chip_parts(7)["ADCs"] and a8 == chip_parts(8)["ADCs"]
     assert 0.19 < a8[0] - a7[0] < 0.20 and 0.14 < a8[1] - a7[1] < 0.15
     assert len(adc.able(8, FS)) < len(adc.able(7, FS)) and len(adc.able(8, FS)) >= 5
     c7, c8 = chip_w(7), chip_w(8)
-    assert all(abs(x - y) < 1e-12 for x, y in zip(c7, wp.chip_w(TILE)))
+    #    At version 1's bits the chip is pta_geometry.py's at this tile, to a
+    #    milliwatt: its weight drive has no floor, and here it has the rate's.
+    assert all(abs(x - y) < 1e-3 for x, y in zip(c7, geometry.chip_w(*TILE)))
+    assert abs(c7[0] - 0.44) < 0.005 and abs(c7[1] - 4.04) < 0.005
+    #    The weight drive's low end is at the floor, which is over the 2 V end at either width.
+    for bits in (7, 8):
+        at_floor = power.weight_drive_w(TILE[0], TILE[1], swing_floor_v(bits), power.C_CELL_F[0], power.ACTIVITY[0], FS)
+        at_two = power.weight_drive_w(TILE[0], TILE[1], rate.SWINGS_V[0], power.C_CELL_F[0], power.ACTIVITY[0], FS)
+        assert swing_floor_v(bits) > rate.SWINGS_V[0] and chip_parts(bits)["weight drive"][0] == at_floor > at_two
     assert abs(c8[0] - 0.64) < 0.005 and abs(c8[1] - 4.18) < 0.005
     assert abs(line_hz(7) / 1e9 - 1.99) < 0.005 and abs(line_hz(8) / 1e9 - 2.21) < 0.005
     assert abs(q_ceiling(7) - rate.q_ceiling(FS)) < 1e-6 and abs(swing_floor_v(7) - rate.swing_floor_v(FS)) < 1e-9
     assert abs(q_ceiling(8) - 87_662) < 1 and abs(swing_floor_v(8) - 2.53) < 0.005
     assert (lines_a_bus(7), lines_a_bus(8), lines_a_bus(9)) == (77, 69, 63)
-    assert lines_a_bus(7) == wp.lines_a_bus() and (buses(7), buses(8), buses(9)) == (2, 2, 3)
-    assert buses(7) == wp.buses(TILE)
+    assert (buses(7), buses(8), buses(9)) == (2, 2, 3)
     assert (len(adc.able(7, FS)), len(adc.able(8, FS))) == (70, 47)
     assert abs(q_ceiling(8) / q_ceiling(7) - 0.9) < 1e-9 and abs(line_hz(8) / line_hz(7) - 10 / 9) < 1e-9
     #    The window of Q: 21% at 7 bits, 9% at 8, none at 9.
-    assert wp.lines_each(TILE) == 64 and abs(q_floor() - 80_230) < 1
+    assert lines_each() == 64 and abs(q_floor() - 80_230) < 1
     assert abs(q_window(7) - 0.214) < 0.001 and abs(q_window(8) - 0.093) < 0.001 and q_window(9) < 0
     assert abs(ring.swing_v(q_floor()) - 2.76) < 0.005
     #    At the floor a bus holds exactly the tile's lines, and one fewer just under it.
@@ -460,11 +492,11 @@ def checks():
     # 7. Reading 7.  The crosstalk.
     assert abs(crosstalk_at(ring.spacing(ring.XTALK["v1"])) - ring.XTALK["v1"]) < 1e-12
     assert abs(crosstalk_at(source.M_SPACING[1]) - 0.0116) < 0.0001 < NOTCH_XTALK
-    assert abs(NOTCH_XTALK - 0.0117) < 0.0001 and wp.grid_hz(TILE) == 11e9
+    assert abs(NOTCH_XTALK - 0.0117) < 0.0001 and grid_hz() == 11e9
     assert abs(grid_crosstalk(7) - 0.0081) < 0.0001 and abs(grid_crosstalk(8) - 0.0100) < 0.0001
     assert grid_crosstalk(8) < NOTCH_XTALK < ring.XTALK["v1"]
     #    A ring of lower Q on that grid is over version 1's 2% already: the 5 V one sees 3.8%.
-    five = crosstalk_at(wp.grid_hz(TILE) / ring.linewidth_hz(ring.q_for_swing(max(rate.SWINGS_V))))
+    five = crosstalk_at(grid_hz() / ring.linewidth_hz(ring.q_for_swing(max(rate.SWINGS_V))))
     assert abs(five - 0.038) < 0.0005 and five > ring.XTALK["v1"]
 
     print()

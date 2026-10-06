@@ -110,6 +110,13 @@ programming error within one weight LSB. Crosstalk between neighbouring inputs
 must stay under 2%, which is as much a layout constraint on the PIC as an
 electrical one.
 
+*Version 2, since the board plan's B14 (2026-10-06).* Three of those are
+tighter: an **8-bit ADC**, receiver noise within **a quarter of an 8-bit
+ADC's LSB**, and **30 photons per such LSB** at each detector. The activation
+DACs, the programming error and the crosstalk are as above. On this link that
+is a converter with a bit more to settle to, and a receiver whose supply has
+half the noise to spare.
+
 *What the line count does to the package, 2026-10-03.* It decides how the two
 dies sit. The photonic die cannot hold a voltage, so every weight is a line of
 its own, and [`pta_floorplan.py`](pta_floorplan.py) puts 16,704 of them at
@@ -140,6 +147,9 @@ things, of which this document held one:
   1.4–14 W of the same tile at that shift (the board plan's §8, question 7),
   so what this link carries follows the workload and is not fixed by the
   tile.*
+  *Under version 2, since B14 (2026-10-06): **0.7–7 W** for MNIST and
+  **1.4–14 W** for either of the other two, 11 to 110 and 22 to 220 mW a
+  line. The larger is the one this link has to be able to carry.*
   What follows is as it was written. The same light whichever way it is made: one laser of 0.33–3.3 W at
   1 GS/s for a 256 × 64 tile, or an emitter an input row at 1.3–12.8 mW each. An
   emitter of 10 mW a row stands 18.9 dB of loss, where the largest single laser
@@ -203,7 +213,7 @@ the rails, their owners and what must not share them.
 | GPU memory and PHY | GPU package | grxgpu team | GDDR6 |
 | GPU SerDes and UCIe PHY | GPU package | grxgpu team | Two PHYs, one package |
 | EIC digital | PTA chiplet | Chiplet team | |
-| EIC analog | PTA chiplet | Chiplet team | DAC references and receivers. **Must not share a regulator with any digital rail**, because X1's budget is half an 8-bit LSB of receiver noise |
+| EIC analog | PTA chiplet | Chiplet team | DAC references and receivers. **Must not share a regulator with any digital rail**, because X1's budget is half an 8-bit LSB of receiver noise. *A quarter, since B14* |
 | PIC bias | PTA chiplet | Chiplet team | Pockels bias, held by DACs (B5) |
 | Laser module | Board | Board team | Diode current, and temperature control if the module needs it |
 | Controller, clocks, fans | Board | Board team | Up first, down last |

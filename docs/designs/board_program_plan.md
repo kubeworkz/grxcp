@@ -10,10 +10,11 @@
 
 **Status: PLAN, drafted 2026-09-21. All seven decisions of §2 are settled, each
 as recommended: B1 and B3 that day, and B2, B4, B5, B6 and B7 on 2026-09-22.
-Six more were raised and settled later and are in §7: B8, B9, and on
+Seven more were raised and settled later and are in §7: B8, B9, and on
 2026-10-05 B10, the chiplet's working geometry, B11, its working shot rate,
 1 GS/s, B12, its topology, a ring bank lit by a comb, and B13, how it signs a
-weight, a balanced pair of photodiodes. **B10 was settled at 256 × 64 and
+weight, a balanced pair of photodiodes; and on 2026-10-06 B14, the interface
+chip's budget, version 2. **B10 was settled at 256 × 64 and
 revised the same day to 128 × 64.** Two things found that day moved it.
 Published rings put the larger tile past a standard die. And B5's laser, sized
 on a detector's full scale, was low by sixteen times at 256 rows and eight at
@@ -25,7 +26,9 @@ inverted, where it costs a third of a point on MNIST, and the working tile's
 laser is twice and four times MNIST's. What a tighter budget would buy was run
 on 2026-10-06 (§4.3, at the end of its budget): one more bit of ADC with both
 noise rows halved takes Fashion-MNIST from 1.16 points to 0.54, and all six
-rows a notch tighter to 0.39. Neither is adopted.
+rows a notch tighter to 0.39. The first was adopted that day as version 2
+(B14): an 8-bit ADC, receiver noise within a quarter of an 8-bit ADC's LSB,
+30 photons per such LSB, and version 1's other three rows.
 X2 has made its predictions (§3.3), X1 its budget (§4.3), and P0, X3 and X4
 are drafted as [`board_icd.md`](board_icd.md),
 [`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) and
@@ -382,6 +385,12 @@ tenth of a point of its own budget at 8, 16 and 16 times this decision's
 laser on the three data sets, the shift a bit down: 0.7–7 W, 1.4–14 W and
 1.4–14 W. That is twice version 1's on MNIST and on Fashion-MNIST, and no
 more on the inverted set.
+
+*B14 adopted the first of those budgets the same day, as version 2 (§7).* So
+the working tile's laser is 0.7–7 W for MNIST and 1.4–14 W for either of the
+other two data sets, 11 to 110 mW and 22 to 220 mW a line of the comb, with
+the receiver's noise at a thirty-second and a sixty-fourth of one line's
+light ([`pta_working_point.py`](pta_working_point.py), §4).
 
 **B6 — Silicon nodes, and the board before silicon.** grx930's manufacturing
 plan takes the SoC to SKY130 first, then to TSMC N28, and freezes the RTL now.
@@ -1012,6 +1021,12 @@ that works:
 | Crosstalk between neighbouring inputs | 10% | 2% |
 | Recalibration | about hourly at TFLT's fit | hourly costs 0.81 points, six minutes 0.37 |
 
+*Version 2, since 2026-10-06 (B14, §7).* The interface chip is held to this
+table's version 1 with three rows tighter: an **8-bit ADC**, receiver noise of
+**0.25 LSB of an 8-bit ADC**, and **30 photons per such LSB**. The activation
+DAC, the weight resolution, the programming error and the crosstalk are
+version 1's. Why those three is at the end of this section's budget.
+
 v1 costs 0.81 points on the D3 network at hourly calibration, and 0.37 if the
 schedulers can recalibrate every six minutes — which is what C3 had to price.
 It is still one small network (§8). This paragraph went on to say that the
@@ -1454,6 +1469,9 @@ this section's table of requirements has not changed. What is open is whether
 to hold it to one of these, and that is a choice between a point on a harder
 data set and a fifth of a watt at most, a ring whose Q has half the room, and
 a laser of twice the size.
+
+*The first was adopted the same day: B14, §7.* The middle column above is
+version 2, and it is what the interface chip is held to.
 The activation DAC's seventh bit and half the programming error are what all
 six rows ask beyond the three, they buy the last fifth, and no model here
 prices either.
@@ -1950,6 +1968,15 @@ weights re-sent, 0.44 to 4.04 W on the interface chip, 0.7 to 7.0 W of laser
 (97 to 922), 128 G cells written a second at 128 a beat, and two buses. The rate, the shot clock, the converters, the receivers and the weight
 ring's Q and swing are as above: none of them knows the tile's rows.
 
+*Under version 2, since B14 (2026-10-06;
+[`pta_working_point.py`](pta_working_point.py), §4).* The rate stands. What
+it asks of a ring moves, because a level read to 8 bits has to have settled
+further in the same shot: a line of at least 2.21 GHz where it was 1.99, a Q
+of at most 87,700 where it was 97,400, and a swing of at least 2.53 V where it
+was 2.27. The first thing that would reopen this decision is then a driver
+that cannot swing 2.5 V. The converters are 8-bit ones, 0.27 to 0.34 W for the
+64 on 47 published parts, and the interface chip is 0.64 to 4.18 W.
+
 **B12 — The tile's topology: a ring bank, lit by a comb.** *Settled 2026-10-05.*
 
 §8's question 8 asked what kind of light source the tile needs, and found the
@@ -2011,6 +2038,14 @@ second optical element; or a ring that cannot be put on its line and kept
 there, since the drift this program fits is still a modulator's (§8,
 question 1). *Needed by:* L3, P1, P0's link 4, X1's error model and X3.
 
+*Under version 2, since B14 (2026-10-06).* Two buses of 64 lines on the
+11 GHz grid still hold: at the line an 8-bit level needs a bus could carry 69,
+where it could carry 77. What narrows is the ring. To settle in a shot its Q
+is at most 87,700, and for 64 lines to share a bus at this decision's spacing
+it is at least 80,200, so a ring's Q has 9% of room where it had 21%
+([`pta_tighten.py`](pta_tighten.py)). A ring made outside that room is a third
+bus or a slower shot.
+
 **B13 — How the tile signs a weight: a balanced pair.** *Settled 2026-10-05.*
 
 A weight in this plan is signed. The networks are trained with weights between
@@ -2070,6 +2105,88 @@ photonic die on which 512 photodiodes cost more than 26 dB of the source's
 noise is worth; a source quiet enough, about −144 dB/Hz, that the offset would
 do; or a pair that cannot be brought within about 10%. *Needed by:* P1, L3,
 X1's rows and X3.
+
+**B14 — The interface chip's budget: version 2.** *Settled 2026-10-06.*
+
+X1 held the interface chip to version 1 (§4.3). On MNIST that costs a third of
+a point on the working tile. On the two other data sets this plan has run it
+costs 1.16 and 1.23 points (§8, question 7). grx930's harness then ran version
+1 with each of its six rows made better, and found where the point is: on
+Fashion-MNIST in three rows, the ADC's bit and the two noise rows, with the
+other three free to hold where they are (§4.3, at the end of its budget).
+Three budgets were put side by side: version 1; version 1 with those three
+rows a notch tighter; and all six a notch tighter.
+
+*Recommended, and settled as recommended:* **the interface chip is held to
+version 2, which is version 1 with an 8-bit ADC, receiver noise within a
+quarter of an 8-bit ADC's LSB, and 30 photons per such LSB.** The other three
+rows stay version 1's.
+
+| | Version 1 | **Version 2** | From |
+|---|---|---|---|
+| Activation DAC | 6 bits | 6 bits | |
+| ADC | 7 bits | **8 bits** | |
+| Receiver noise, rms | 0.5 LSB of an 8-bit ADC | **0.25 LSB of an 8-bit ADC** | |
+| Light at each detector | 15 photons per such LSB | **30 photons per such LSB** | |
+| Weight programming error, rms | 1 LSB of an 8-bit weight | 1 LSB of an 8-bit weight | |
+| Crosstalk between neighbouring inputs | 2% | 2% | |
+| Points lost on the working tile: MNIST | 0.34 ± 0.07 | 0.15 ± 0.02 | grx930's harness. **Measured in a model**, five networks a data set |
+| Fashion-MNIST | 1.16 ± 0.14 | 0.54 ± 0.22 | The same |
+| MNIST, inverted | 1.23 ± 0.13 | 0.62 ± 0.07 | The same |
+| The 64 converters | 0.07–0.20 W | 0.27–0.34 W | The published survey: the best and the fifth-best part, of 70 and of 47 that reach the bits at 1 GS/s |
+| The interface chip | 0.44–4.04 W | 0.64–4.18 W | Derived |
+| A weight ring's line, at least | 1.99 GHz | 2.21 GHz | Derived: B11's bound, at a bit more |
+| Its Q | 80,200 to 97,400 | 80,200 to 87,700 | Derived: between two buses and settling in a shot |
+| Its swing | 2.27 to 2.76 V | 2.53 to 2.76 V | Derived, at 7.0 pm/V |
+| Buses, lines each, photodiodes | 2, 64, 256 | 2, 64, 256 | Derived: a bus could hold 77, and 69 |
+| Laser, the activation stage's shift a bit down: MNIST | 0.35–3.5 W | 0.7–7 W | B5's method, times grx930's multiple: 4 and 8 |
+| Fashion-MNIST | 0.7–7 W | 1.4–14 W | 8 and 16 |
+| MNIST, inverted | 1.4–14 W | 1.4–14 W | 16 and 16 |
+| A MAC, every cell in use: MNIST | 97–922 fJ | 164–1,368 fJ | Derived |
+| Fashion-MNIST | 140–1,351 fJ | 250–2,226 fJ | Derived |
+| MNIST, inverted | 226–2,209 fJ | 250–2,226 fJ | Derived |
+
+**What it buys.** About half of version 1's loss on every data set run. It
+puts Fashion-MNIST and the inverted set at just over half a point, where
+version 1 put them at over one.
+
+**What it costs.** A seventh to a fifth of a watt of converters. Twice the
+laser on MNIST and on Fashion-MNIST, and so most of a MAC's energy on the
+harder set: 250 fJ at the low end where version 1's was 140. And a ring that
+is harder to hit. Its Q has 9% of room where it had 21%, between a line too
+narrow to settle to 8 bits in a nanosecond and one too wide for 64 lines to
+share a bus.
+
+**What it sets aside.** All six rows a notch tighter lose 0.06, 0.39 and 0.50.
+That is the last fifth to a third of what tightening buys, and what it asks
+beyond version 2 is a seventh bit of activation DAC and half the programming
+error, which no model in this plan prices. It is not ruled out. It is not adopted
+because its cost is not known. And two notches on all six, 0.03, 0.18 and
+0.22, ask a ninth bit of ADC, at which a bus holds 63 lines and the tile
+takes a third.
+
+**What it does not settle, because it was not rerun.** Every figure in this
+plan dated before this decision is version 1's unless it says otherwise.
+[`pta_working_point.py`](pta_working_point.py) §4 restates the working point
+under version 2. Not restated, and not run at it:
+
+- Drift, and how long a calibration holds. Every interval in
+  [`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) and every cost of
+  drift in §4.3 is version 1's.
+- The source's three rows (B12, B13). Each was sized as what costs a tenth of
+  a point over version 1.
+- Depth, and every tile but the working one.
+- The two scorecards of §8's question 1, and the laser at the rule's shift.
+- C3's and X3's measurements, which were made at version 1's settings.
+
+**It is a working budget and not a specification.** Five things would reopen
+it: a network trained with the tile's errors in the loop that does as well at
+version 1, which is the usual remedy and has not been tried; a ring process
+that cannot hold a Q within 9%; a converter of 8 effective bits at 1 GS/s
+that cannot be had near the survey's price; a laser of 1.4 to 14 W that the
+board cannot place (B5); or a price for the seventh activation bit and the
+programming error that makes all six rows worth having. *Needed by:* X1's
+rows, P0's links 3 and 4, P1, L3 and X3.
 
 ---
 
@@ -2696,7 +2813,7 @@ X1's rows and X3.
    0.50. The first costs a seventh to a fifth of a watt of converters, a ring
    whose Q has 9% of room where it had 21%, and twice the laser on two of the
    three sets. Whether the interface chip is held to either is not decided
-   here.
+   here. *It was, the same day: B14 (§7) holds it to the first, as version 2.*
 8. **What kind of light source does the tile need?** *Settled on 2026-10-05, as
    a working topology: a ring bank, lit by a comb (B12, §7). What follows is
    how the question was worked, and reads as it was written.* Asked on

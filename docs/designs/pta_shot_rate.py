@@ -94,6 +94,9 @@ import pta_tw_sweep as sweep
 REQ = {
     "v0": dict(adc_bits=6, rx_noise_lsb=1.0, photons_per_lsb=3),
     "v1": dict(adc_bits=7, rx_noise_lsb=0.5, photons_per_lsb=15),
+    # B14, 2026-10-06: what the interface chip is held to.  Nothing in this file
+    # is rerun at it: pta_working_point.py restates the working point under it.
+    "v2": dict(adc_bits=8, rx_noise_lsb=0.25, photons_per_lsb=30),
 }
 NOISE_LSB_BITS = 8
 
