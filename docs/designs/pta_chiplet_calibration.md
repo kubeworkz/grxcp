@@ -97,6 +97,11 @@ tenth of a point is six minutes on the first two and under that on the third.
 Which interval version 2 is held to is the board plan's to decide, and it has
 not.
 
+*It has since: B15, every six minutes, the same day.* With a source at the
+plan's B16 rows as well, version 2 at the end of such an interval loses 0.19,
+0.60 and 1.09 points on the three data sets: 0.04, 0.06 and 0.48 over its
+budget.
+
 So the question is not whether to calibrate but how often, how long it takes,
 and what it can actually undo.
 
@@ -141,6 +146,12 @@ the working geometry, since the board plan revised B10 on 2026-10-05.) Against a
 duty cycle of about two parts in a billion. **Calibration's cost on this chiplet
 is not its shots.** It is the interruption: draining the tile, rewriting the
 weights and restarting.
+
+*At six minutes, since the board plan's B15 (2026-10-06).* On the working
+tile's 128 rows both banks are 4,096 shots, 4 µs, and against six minutes
+that is one part in 88 million. It is still not the shots. It is 240
+interruptions a day where an hour was 24, and what one costs is still not
+priced.
 
 **Column affine, by two references.** A zero-input shot gives the column's
 offset; a known full-scale pattern gives its gain. A handful of shots, taken
@@ -227,6 +238,14 @@ a row the DMA has not landed yet. What building them settled:
   request is *withdrawn* when the window closes, which is what keeps a shadow
   calibration inside one; a periodic request is held until the tile can take it,
   which is what makes it pay.
+
+*The period, since the board plan's B15 (2026-10-06).* Version 2 is
+calibrated every six minutes, so that is `PTA_CAL_PER` for the periodic
+scheduler and the floor under the other two. It does not fit: 32 bits of
+cycles is 4.3 seconds of a 1 GHz shot clock, and six minutes is 39 bits. The
+register map records it as open (its §7, item 11). The two schedulers that
+predict were built to take fewer calibrations than the period allows, and
+neither has been run at version 2.
 
 ## 6. The engine, and the contract
 
@@ -431,3 +450,10 @@ this is the C reference; the RTL, the FSM and the schedulers are C3(b).
    loop cannot see it. Nor can the cell loop as built: grx930's engine probes
    each cell through a weight of zero, which a line's power multiplies. So a
    line's level is unmeasured. A probe with weights in it would read it.
+
+   *Since the board plan's B16 (2026-10-06) the shot-to-shot row is 1% for
+   version 2, and no loop reaches it still.*
+6. **What an interruption costs** (2026-10-06). B15 takes 240 calibrations a
+   day. §3 says the cost of one is draining the tile, rewriting the weights
+   and restarting, and no model prices that. Until one does, six minutes is a
+   figure for accuracy with no figure for throughput beside it.

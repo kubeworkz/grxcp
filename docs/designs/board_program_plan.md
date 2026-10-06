@@ -10,11 +10,12 @@
 
 **Status: PLAN, drafted 2026-09-21. All seven decisions of §2 are settled, each
 as recommended: B1 and B3 that day, and B2, B4, B5, B6 and B7 on 2026-09-22.
-Seven more were raised and settled later and are in §7: B8, B9, and on
+Nine more were raised and settled later and are in §7: B8, B9, and on
 2026-10-05 B10, the chiplet's working geometry, B11, its working shot rate,
 1 GS/s, B12, its topology, a ring bank lit by a comb, and B13, how it signs a
 weight, a balanced pair of photodiodes; and on 2026-10-06 B14, the interface
-chip's budget, version 2. **B10 was settled at 256 × 64 and
+chip's budget, version 2, B15, how often it is calibrated, every six minutes,
+and B16, the source's shared row, 1%. **B10 was settled at 256 × 64 and
 revised the same day to 128 × 64.** Two things found that day moved it.
 Published rings put the larger tile past a standard die. And B5's laser, sized
 on a detector's full scale, was low by sixteen times at 256 rows and eight at
@@ -33,7 +34,9 @@ source's rows were rerun at it the same day (§4.3, at the end of its budget).
 Drift adds to version 2 what it added to version 1, so an hourly calibration
 takes back more than version 2 bought on the two harder data sets. The
 source's rows hold at version 2 on MNIST and Fashion-MNIST, and not on the
-inverted set at either version.
+inverted set at either version. B15 and B16 chose from that: version 2 is
+calibrated every six minutes, and its source's shared row is 1%. So held, it
+loses 0.19, 0.60 and 1.09 points on the three sets.
 X2 has made its predictions (§3.3), X1 its budget (§4.3), and P0, X3 and X4
 are drafted as [`board_icd.md`](board_icd.md),
 [`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) and
@@ -1030,7 +1033,11 @@ that works:
 table's version 1 with three rows tighter: an **8-bit ADC**, receiver noise of
 **0.25 LSB of an 8-bit ADC**, and **30 photons per such LSB**. The activation
 DAC, the weight resolution, the programming error and the crosstalk are
-version 1's. Why those three is at the end of this section's budget.
+version 1's. Why those three is at the end of this section's budget. *And two
+rows more, the same day:* it is recalibrated **every six minutes** at TFLT's
+fit (B15), and its source's noise is within **1% rms a shot for the lines
+together** (B16), with 5% for a line on its own and the lines level to 5% as
+before.
 
 v1 costs 0.81 points on the D3 network at hourly calibration, and 0.37 if the
 schedulers can recalibrate every six minutes — which is what C3 had to price.
@@ -1533,6 +1540,23 @@ the source's shared row stays at 2%: it is right for MNIST and Fashion-MNIST,
 and a workload that lights most of its rows wants 1%, which is still 14 dB
 easier than this plan first assumed (§8, question 8).
 
+*Both were decided the same day: B15, every six minutes, and B16, 1% (§7).*
+grx930's harness then ran version 2 with both. The source's three rows at 1%,
+5% and 5%, and those at the end of six minutes of drift, which is version 2
+with everything it is held to:
+
+| | MNIST, version 1 | Version 2 | Fashion-MNIST, version 1 | Version 2 | MNIST inverted, version 1 | Version 2 |
+|---|---|---|---|---|---|---|
+| The three rows at 2%, 5% and 5% add | 0.03 ± 0.11 | 0.06 ± 0.03 | 0.06 ± 0.11 | 0.09 ± 0.13 | 0.29 ± 0.17 | 0.37 ± 0.07 |
+| At 1%, 5% and 5% | 0.04 ± 0.10 | 0.04 ± 0.04 | 0.14 ± 0.11 | 0.04 ± 0.11 | 0.15 ± 0.12 | 0.28 ± 0.06 |
+| And after six minutes of drift | 0.06 ± 0.06 | 0.04 ± 0.02 | 0.21 ± 0.13 | 0.06 ± 0.15 | 0.37 ± 0.40 | 0.48 ± 0.29 |
+| Which is, in points lost | 0.40 ± 0.03 | **0.19 ± 0.03** | 1.37 ± 0.23 | **0.60 ± 0.23** | 1.60 ± 0.50 | **1.09 ± 0.36** |
+
+On MNIST and on Fashion-MNIST, version 2 with a source and an interval's drift
+is within a tenth of a point of its budget. On the inverted set it is half a
+point over, and the 1% bought 0.09 of that: the two rows a line carries are
+0.25 and 0.17 by themselves there, and are now most of what a source costs.
+
 It is the same model and the same networks as everything above. The drift is
 a Mach-Zehnder's fit with every cell drifting on its own, the source's term is
 first order on the host's side of the line, and the inverted set's networks
@@ -1599,7 +1623,8 @@ neither set costs more than its three rows summed, and the errors on layer
 section's budget). The three rows hold where they were sized and on
 Fashion-MNIST: together they add 0.06 and 0.09 of a point to version 2 on the
 working tile. On MNIST inverted they add 0.29 to version 1 and 0.37 to version
-2, and the dear one is the 2% the lines share.
+2, and the dear one is the 2% the lines share. *B16 made that 1% for version
+2, the same day (§7).*
 
 - **Through a pair the source may be 20 dB noisier than this plan assumed.**
   §8's question 8 held it to the receiver's own allowance, 0.2% of full scale,
@@ -2141,8 +2166,8 @@ What it fixes, each from a model and none from a device:
 |---|---|---|
 | Photodiodes | 512: two a bus a column, at four buses. Still 64 receivers and 64 converters. *256 at the two buses of 128 inputs, since B10's revision* | Counted |
 | A bank's waveguides | Two out of every bank: the one its rings drop to and the one they pass | The topology |
-| The source's rows of the budget | Version 1's, without the "if": 2% rms a shot for the lines together, 5% for a line on its own, lines level to 5%. A tenth of a point between them. *At version 2 (B14) they add 0.06 and 0.09 on MNIST and Fashion-MNIST and 0.37 on MNIST inverted, where the shared row wants 1%: §4.3, at the end of its budget* | grx930's harness, §4.3 |
-| The source's noise, as a density | About −124 dB/Hz over the shot rate, 20 dB easier than was assumed | [`pta_source_noise.py`](pta_source_noise.py) |
+| The source's rows of the budget | Version 1's, without the "if": 2% rms a shot for the lines together, 5% for a line on its own, lines level to 5%. A tenth of a point between them. *At version 2 (B14) they add 0.06 and 0.09 on MNIST and Fashion-MNIST and 0.37 on MNIST inverted, where the shared row wants 1%: §4.3, at the end of its budget. B16 made it 1% for version 2* | grx930's harness, §4.3 |
+| The source's noise, as a density | About −124 dB/Hz over the shot rate, 20 dB easier than was assumed. *−130 since B16, 14 dB easier* | [`pta_source_noise.py`](pta_source_noise.py) |
 | A pair's match | Its two halves alike to about 10%. A mismatch is an offset of half its size, and at 10% the offset passes as much of the source's noise as the pair does | Derived from the two measured readings, and not run |
 | The converter's span | The difference alone. Behind an offset it would have had to span the offset too | The topology |
 
@@ -2246,11 +2271,12 @@ under version 2. Not restated, and not run at it:
   to version 2 what it added to version 1, and calibration returns version 2
   to its budget. So an hourly calibration takes back more than this decision
   bought on the two harder data sets, and how often version 2 is calibrated
-  is open.*
+  is open. Settled: B15, every six minutes.*
 - ~~The source's three rows (B12, B13).~~ *Run the same day, and on all three
   data sets. They hold at version 2 on MNIST and on Fashion-MNIST. On MNIST
   inverted they add 0.37 of a point, 0.29 at version 1, and the shared row
-  would have to be 1% and not 2%. Whether it should be is open.*
+  would have to be 1% and not 2%. Whether it should be is open. Settled: B16,
+  1%.*
 - Depth, and every tile but the working one.
 - The two scorecards of §8's question 1, and the laser at the rule's shift.
 - C3's and X3's measurements, which were made at version 1's settings.
@@ -2263,6 +2289,109 @@ that cannot be had near the survey's price; a laser of 1.4 to 14 W that the
 board cannot place (B5); or a price for the seventh activation bit and the
 programming error that makes all six rows worth having. *Needed by:* X1's
 rows, P0's links 3 and 4, P1, L3 and X3.
+
+**B15 — How often version 2 is calibrated: every six minutes.** *Settled
+2026-10-06.*
+
+§4.3's table of requirements had "about hourly" for recalibration, from
+version 1 on MNIST. grx930's harness then ran drift at version 2 (§4.3, at the
+end of its budget). Drift adds to version 2 what it added to version 1, to
+within a few hundredths of a point, so an hour of it adds 0.67 and 1.99 points
+on Fashion-MNIST and MNIST inverted, where version 2 had bought 0.62 and 0.61.
+An hourly calibration gives back what B14 was adopted for.
+
+*Recommended, and settled as recommended:* **version 2 is calibrated every six
+minutes, at TFLT's fitted drift.** It is the periodic scheduler's period, and
+the floor under the two schedulers that predict
+([`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) §5).
+
+| | About hourly | **Every six minutes** | From |
+|---|---|---|---|
+| What an interval's drift adds to version 2: MNIST | 0.12 ± 0.05 | −0.06 ± 0.04 | grx930's harness. **Measured in a model**, at TFLT's fit |
+| Fashion-MNIST | 0.67 ± 0.31 | 0.08 ± 0.06 | The same |
+| MNIST, inverted | 1.99 ± 1.26 | 0.28 ± 0.27 | The same |
+| Shots between calibrations, at 1 GS/s | 3.6 × 10¹² | 3.6 × 10¹¹ | Counted |
+| Calibrations a day | 24 | 240 | Counted |
+| A calibration's probes | 4,096 shots, 4 µs | The same | The calibration note's §3: both banks, a row a shot, 16 probes a cell |
+| Their share of the tile's shots | One in 880 million | One in 88 million | Derived |
+| The period, as a count of shot-clock cycles | 42 bits | 39 bits | Derived. `PTA_CAL_PER` has 32 |
+
+**What it buys.** On MNIST and Fashion-MNIST drift stays inside a tenth of a
+point between calibrations, so version 2 keeps what B14 bought. With a source
+at B16's rows as well, it loses 0.19 and 0.60 at the end of an interval.
+
+**What it costs.** Ten times the calibrations. Their probes are nothing: a
+part in 88 million of the tile's shots. The cost is the one the calibration
+note names, the interruption: draining the tile, rewriting its weights and
+restarting, 240 times a day. No model in this plan prices that.
+
+**What it shows up.** The period does not fit its register. `PTA_CAL_PER` is
+32 bits of cycles, which at a shot a nanosecond is 4.3 seconds. Six minutes is
+39 bits, and an hour was 42, so this was true before this decision and nobody
+had written the interval down as a count. The register map widened its
+counters for the same reason and did not widen this
+([`pta_chiplet_regmap.md`](pta_chiplet_regmap.md) §7, item 11).
+
+**What it does not settle.** The inverted set, where six minutes adds 0.28 ±
+0.27, and the interval that would hold a tenth there was not run. TFLN, whose
+hour adds 2.4 to 37 points and whose interval is still "within minutes". A
+ring's drift: every fit here is a Mach-Zehnder's bias (§8, question 1). Cells
+that drift together, which the model does not have. And the predictive and
+shadow schedulers, which were built to take fewer calibrations than the
+period allows and were not rerun at version 2.
+
+**It is a working interval and not a schedule.** Three things would reopen it:
+a measured drift, of a ring, that is not TFLT's fit; an interruption that
+costs enough for 240 a day to matter; or a workload brighter than
+Fashion-MNIST that the board has to serve. *Needed by:* X3, X4's
+`PTA_CAL_PER`, S3.
+
+**B16 — The source's shared row: 1%.** *Settled 2026-10-06.*
+
+B12 and B13 gave the source three rows: its noise within 2% rms a shot for the
+lines together, within 5% for a line on its own, and the lines level to 5%.
+They were sized on MNIST at version 1, to cost a tenth of a point between
+them. grx930's harness then ran them at version 2 and on two more data sets
+(§4.3, at the end of its budget). They hold on MNIST and on Fashion-MNIST. On
+MNIST inverted the three add 0.37 of a point to version 2, and the dear one is
+the row the lines share: 2% adds 0.24 there, and 1% adds 0.13.
+
+*Recommended, and settled as recommended:* **for version 2 the source's noise
+is within 1% rms a shot for the lines together.** The other two rows stay: 5%
+for a line on its own, and the lines level to 5%.
+
+| | At 2% | **At 1%** | From |
+|---|---|---|---|
+| As a density over the shot rate | −124 dB/Hz | −130 dB/Hz | [`pta_source_noise.py`](pta_source_noise.py) |
+| For a receiver that averages over a shot | −121 dB/Hz | −127 dB/Hz | The same |
+| Against what this plan first assumed, −144 dB/Hz | 20 dB easier | 14 dB easier | Derived |
+| The three rows add, to version 2: MNIST | 0.06 ± 0.03 | 0.04 ± 0.04 | grx930's harness. **Measured in a model** |
+| Fashion-MNIST | 0.09 ± 0.13 | 0.04 ± 0.11 | The same |
+| MNIST, inverted | 0.37 ± 0.07 | 0.28 ± 0.06 | The same |
+
+**What it buys, which is less than the row alone suggested.** 0.09 of a point
+on the inverted set, and nothing that can be told from the scatter on the
+other two. The shared row by itself went from 0.24 to 0.13 there. The three
+together went from 0.37 to 0.28, because the two rows a line carries add 0.25
+and 0.17 by themselves on that set and are now most of what a source costs.
+So the source's rows are inside their tenth on MNIST and on Fashion-MNIST, as
+they were, and still not on a workload that lights most of its rows.
+
+**What it costs.** 6 dB of the comb's shared intensity noise. It is still 14
+dB easier than the −144 dB/Hz §8's question 8 first held a source to.
+
+**What it does not settle.** The two rows a line carries. On the inverted set
+a line at 2% and the lines level to 2% add 0.13 and 0.01 alone, where at 5%
+they add 0.25 and 0.17: tightening them was run a row at a time and not
+together, and is not adopted. Nothing on the chiplet measures a line's level
+(the ICD's link 4). And why the shared row is dear on that set is inferred
+from its sums and was not measured shot by shot (§4.3).
+
+**It is a working row and not a source.** Three things would reopen it: a comb
+that cannot be had at −130 dB/Hz; a workload brighter than Fashion-MNIST that
+the board has to serve, which would ask for the other two rows as well; or a
+network trained for the tile, which may not need it. *Needed by:* P0's link
+4, P1, L3.
 
 ---
 

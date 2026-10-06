@@ -171,6 +171,9 @@ things, of which this document held one:
   a workload that lights most of its rows the 2% adds a quarter of a point,
   and 1%, about −130 dB/Hz, adds a tenth. Which of the two this link is held
   to is not decided.*
+  *It was, the same day: the board plan's B16 holds the lines together to
+  **1% rms a shot, about −130 dB/Hz**, which is 14 dB easier than the first
+  figure above. A line on its own and the lines' level stay at 5%.*
 - **Wavelength.** B5's arithmetic is at 1550 nm; the same detector at 1310 nm
   needs 18% more light. The all-optical branch would pin it to 1550 nm within
   2.4 nm, and ring weights would pin it by a figure nobody has.

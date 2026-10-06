@@ -28,6 +28,12 @@ DERIVED here:
   the shared row    the largest size run at which the lines together add about
                     a tenth, and that as a density: pta_source_noise.py's
 
+THE PLAN THEN CHOSE, 2026-10-06.  B15: version 2 is calibrated every six
+minutes.  B16: the row the lines share is 1% and not 2%.  grx930 added the two
+rows that say what that is, the source's three at 1%, 5% and 5%, and the same
+at the end of six minutes of drift, which is version 2 with everything it is
+held to.  Section 4 and readings 6 and 7.
+
 WHAT THIS IS NOT: a measurement of a source or of a drift.  The source's term
 is first order and on the host's side of the line.  The drift is a
 Mach-Zehnder's fit, and every cell drifts on its own.  A pair only: the offset
@@ -50,6 +56,13 @@ import pta_workload as workload
 MNIST, FASHION, INVERTED = workload.MNIST, workload.FASHION, workload.INVERTED
 WORKLOADS = workload.WORKLOADS
 TILE = laser.SMALLER                           # 128 x 64: B10
+FS = laser.FS                                  # 1 GS/s: B11
+INTERVAL_S = 360                               # B15: version 2 is calibrated every six minutes
+HOURLY_S = 3600                                # what section 4.3's table said of version 1: about hourly
+ROWS_V2 = (0.01, 0.05, 0.05)                   # B16: the lines together at 1%; a line and the level as they were
+PERIOD_BITS = 32                               # PTA_CAL_PER, in cycles: the register map's section 4
+CAL_AVERAGE = 16                               # probes a cell: pta_chiplet_calibration.md's section 3
+BANKS = 2
 BUDGET = noise.BUDGET                          # a tenth of a point: what a row of the budget costs
 ROWS3 = noise.ROWS                             # 2%, 5%, 5%: B12's and B13's three rows
 VERSIONS = (1, 2)
@@ -68,6 +81,7 @@ RUN = {
         ("line", 0.2): ((1.89, 0.25), (0.73, 0.15)), ("level", 0.02): ((1.25, 0.17), (0.09, 0.05)),
         ("level", 0.05): ((1.25, 0.17), (0.09, 0.08)), ("level", 0.1): ((1.38, 0.22), (0.22, 0.12)),
         ("all", "rows"): ((1.22, 0.19), (0.06, 0.11)), ("all", 0.05): ((1.36, 0.22), (0.20, 0.12)),
+        ("all", "v2 rows"): ((1.30, 0.21), (0.14, 0.11)), ("interval", "v2 rows"): ((1.37, 0.23), (0.21, 0.13)),
     },
     (FASHION, 2): {
         "budget": ((0.54, 0.22), (0.00, 0.00)), "six": ((0.62, 0.19), (0.08, 0.06)),
@@ -80,6 +94,7 @@ RUN = {
         ("line", 0.2): ((1.29, 0.22), (0.75, 0.14)), ("level", 0.02): ((0.53, 0.19), (-0.01, 0.04)),
         ("level", 0.05): ((0.55, 0.20), (0.01, 0.07)), ("level", 0.1): ((0.74, 0.18), (0.20, 0.15)),
         ("all", "rows"): ((0.63, 0.19), (0.09, 0.13)), ("all", 0.05): ((0.69, 0.19), (0.15, 0.12)),
+        ("all", "v2 rows"): ((0.58, 0.17), (0.04, 0.11)), ("interval", "v2 rows"): ((0.60, 0.23), (0.06, 0.15)),
     },
     (INVERTED, 1): {
         "budget": ((1.23, 0.13), (0.00, 0.00)), "six": ((1.42, 0.35), (0.20, 0.26)),
@@ -92,6 +107,7 @@ RUN = {
         ("line", 0.2): ((3.03, 0.35), (1.81, 0.25)), ("level", 0.02): ((1.20, 0.12), (-0.03, 0.04)),
         ("level", 0.05): ((1.28, 0.20), (0.05, 0.11)), ("level", 0.1): ((1.43, 0.26), (0.21, 0.15)),
         ("all", "rows"): ((1.52, 0.28), (0.29, 0.17)), ("all", 0.05): ((2.20, 0.30), (0.98, 0.18)),
+        ("all", "v2 rows"): ((1.38, 0.24), (0.15, 0.12)), ("interval", "v2 rows"): ((1.60, 0.50), (0.37, 0.40)),
     },
     (INVERTED, 2): {
         "budget": ((0.62, 0.07), (0.00, 0.00)), "six": ((0.90, 0.33), (0.28, 0.27)),
@@ -104,6 +120,7 @@ RUN = {
         ("line", 0.2): ((2.49, 0.29), (1.88, 0.23)), ("level", 0.02): ((0.63, 0.08), (0.01, 0.02)),
         ("level", 0.05): ((0.78, 0.13), (0.17, 0.06)), ("level", 0.1): ((0.90, 0.16), (0.29, 0.10)),
         ("all", "rows"): ((0.98, 0.13), (0.37, 0.07)), ("all", 0.05): ((1.55, 0.23), (0.93, 0.17)),
+        ("all", "v2 rows"): ((0.90, 0.12), (0.28, 0.06)), ("interval", "v2 rows"): ((1.09, 0.36), (0.48, 0.29)),
     },
     (MNIST, 1): {
         "budget": ((0.34, 0.07), (0.00, 0.00)), "six": ((0.33, 0.09), (-0.01, 0.02)),
@@ -116,6 +133,7 @@ RUN = {
         ("line", 0.2): ((0.93, 0.10), (0.59, 0.07)), ("level", 0.02): ((0.37, 0.03), (0.03, 0.05)),
         ("level", 0.05): ((0.40, 0.03), (0.05, 0.06)), ("level", 0.1): ((0.44, 0.05), (0.10, 0.10)),
         ("all", "rows"): ((0.37, 0.07), (0.03, 0.11)), ("all", 0.05): ((0.46, 0.03), (0.12, 0.08)),
+        ("all", "v2 rows"): ((0.38, 0.06), (0.04, 0.10)), ("interval", "v2 rows"): ((0.40, 0.03), (0.06, 0.06)),
     },
     (MNIST, 2): {
         "budget": ((0.15, 0.02), (0.00, 0.00)), "six": ((0.09, 0.03), (-0.06, 0.04)),
@@ -128,6 +146,7 @@ RUN = {
         ("line", 0.2): ((0.70, 0.08), (0.55, 0.08)), ("level", 0.02): ((0.20, 0.02), (0.05, 0.03)),
         ("level", 0.05): ((0.18, 0.03), (0.03, 0.03)), ("level", 0.1): ((0.27, 0.04), (0.12, 0.04)),
         ("all", "rows"): ((0.21, 0.04), (0.06, 0.03)), ("all", 0.05): ((0.24, 0.04), (0.09, 0.03)),
+        ("all", "v2 rows"): ((0.19, 0.04), (0.04, 0.04)), ("interval", "v2 rows"): ((0.19, 0.03), (0.04, 0.02)),
     },
 }
 DRIFT = (("six", "six minutes of TFLT's drift"), ("hour", "an hour"), ("four", "four hours"),
@@ -136,8 +155,10 @@ SOURCE = ((("together", 0.01), "the lines together, 1%"), (("together", 0.02), "
           (("together", 0.1), "10%"), (("line", 0.02), "a line on its own, 2%"), (("line", 0.05), "5%"),
           (("line", 0.1), "10%"), (("line", 0.2), "20%"), (("level", 0.02), "the lines' level, 2%"),
           (("level", 0.05), "5%"), (("level", 0.1), "10%"),
-          (("all", "rows"), "all three, as budgeted: 2%, 5%, 5%"), (("all", 0.05), "all three at 5%"))
+          (("all", "rows"), "all three, as budgeted: 2%, 5%, 5%"), (("all", 0.05), "all three at 5%"),
+          (("all", "v2 rows"), "all three, as B16 has them: 1%, 5%, 5%"))
 THREE = (("together", ROWS3[0]), ("line", ROWS3[1]), ("level", ROWS3[2]))
+HELD = ("interval", "v2 rows")                 # B16's three rows at the end of B15's interval
 
 
 # ---- what follows from them ---------------------------------------------------------
@@ -177,6 +198,33 @@ def together_for_a_tenth(w, v, slack=0.035):
     more than it and a third again, which is inside every such row's error."""
     ok = [x for (kind, x) in (k for k, _ in SOURCE) if kind == "together" and adds(w, v, ("together", x))[0] <= BUDGET + slack]
     return max(ok) if ok else None
+
+
+# ---- B15 and B16 -----------------------------------------------------------------------
+def interval_shots(seconds=INTERVAL_S):
+    """Shots between two calibrations."""
+    return seconds * FS
+
+
+def period_bits(seconds=INTERVAL_S):
+    """Bits a count of shot-clock cycles needs to hold that interval."""
+    return math.ceil(math.log2(interval_shots(seconds)))
+
+
+def cal_shots():
+    """A calibration's probe shots: a row a shot, both banks, each probe averaged."""
+    return BANKS * TILE[0] * CAL_AVERAGE
+
+
+def duty(seconds=INTERVAL_S):
+    """The share of the tile's shots a calibration's probes take."""
+    return cal_shots() / interval_shots(seconds)
+
+
+def held(w, v=2):
+    """A version with everything it is held to: B16's three rows of a source, at
+    the end of B15's interval.  Points lost, and what that adds to its budget."""
+    return RUN[(w, v)][HELD]
 
 
 def pm(x):
@@ -219,6 +267,16 @@ def main():
     print(f"  {'the lines together, for a tenth':<38}" + "".join(
         f"{f'{together_for_a_tenth(w, v):.0%}, {noise.db_hz(together_for_a_tenth(w, v)):.0f} dB/Hz':>22}" for w in WORKLOADS for v in VERSIONS))
 
+    section("4. Version 2 as B15 and B16 hold it")
+    print(f"  Calibrated every {INTERVAL_S // 60} minutes: {interval_shots():.1e} shots apart, {86400 // INTERVAL_S} times a day.  A calibration's")
+    print(f"  probes are {cal_shots():,} shots, {cal_shots() / FS * 1e6:.1f} us, one part in {1 / duty():,.0f} of the tile's.  A count of shot-clock")
+    print(f"  cycles needs {period_bits()} bits to hold the interval, and {period_bits(HOURLY_S)} for an hour; PTA_CAL_PER has {PERIOD_BITS}.")
+    print(f"  The lines together at {ROWS_V2[0]:.0%}: {noise.db_hz(ROWS_V2[0]):.0f} dB/Hz over the shot rate, where {ROWS3[0]:.0%} is {noise.db_hz(ROWS3[0]):.0f}.")
+    table((("budget", "as budgeted, points lost"),), lambda w, v, k: lost(w, v))
+    table((("six", "six minutes of drift adds"), (("all", "rows"), "the three at 2%, 5%, 5% add"),
+           (("all", "v2 rows"), "at 1%, 5%, 5%"), (HELD, "and after six minutes of drift")), adds)
+    table(((HELD, "which is, in points lost"),), lost)
+
     findings()
     checks()
 
@@ -226,7 +284,7 @@ def main():
 def findings():
     m, f, i = WORKLOADS
     print()
-    print("What this says, five readings.")
+    print("What this says, seven readings.")
     print()
     print(f"  1. DRIFT ADDS TO VERSION 2 WHAT IT ADDS TO VERSION 1.  An hour adds {adds(m, 2, 'hour')[0]:.2f}, {adds(f, 2, 'hour')[0]:.2f} and {adds(i, 2, 'hour')[0]:.2f}")
     print(f"     points on MNIST, Fashion-MNIST and MNIST inverted, where it added {adds(m, 1, 'hour')[0]:.2f}, {adds(f, 1, 'hour')[0]:.2f} and {adds(i, 1, 'hour')[0]:.2f}.")
@@ -255,6 +313,18 @@ def findings():
     print(f"  5. AND ON THAT SET A SOURCE COSTS A LITTLE MORE AT VERSION 2.  A tenth more on each row")
     print(f"     that costs anything: {adds(i, 2, THREE[0])[0]:.2f} for {adds(i, 1, THREE[0])[0]:.2f}, {adds(i, 2, THREE[1])[0]:.2f} for {adds(i, 1, THREE[1])[0]:.2f}, {adds(i, 2, THREE[2])[0]:.2f} for {adds(i, 1, THREE[2])[0]:.2f}.  On the other two sets")
     print("     the versions do not differ one way.  Drift did not do this.")
+    print()
+    print(f"  6. B15, SIX MINUTES: VERSION 2 KEEPS WHAT IT BOUGHT ON TWO SETS OF THREE.  With a source at")
+    print(f"     B16's rows and at the end of an interval it loses {held(m)[0][0]:.2f}, {held(f)[0][0]:.2f} and {held(i)[0][0]:.2f} points, which is")
+    print(f"     {held(m)[1][0]:.2f}, {held(f)[1][0]:.2f} and {held(i)[1][0]:.2f} over its budget.  It costs {86400 // INTERVAL_S} calibrations a day where an hour was")
+    print(f"     {86400 // HOURLY_S}, and one part in {1 / duty() / 1e6:.0f} million of the tile's shots.  And it does not fit the register:")
+    print(f"     {period_bits()} bits of cycles at a shot a nanosecond, where PTA_CAL_PER has {PERIOD_BITS}.  Nor did an hour.")
+    print()
+    r2, r1 = adds(i, 2, ("all", "rows"))[0], adds(i, 2, ("all", "v2 rows"))[0]
+    print(f"  7. B16, 1%: IT BUYS {r2 - r1:.2f} OF A POINT ON THE INVERTED SET AND NOTHING ELSEWHERE.  There the")
+    print(f"     three rows add {r1:.2f} where they added {r2:.2f}.  They are not inside a tenth: the two rows a")
+    print(f"     line carries add {adds(i, 2, THREE[1])[0]:.2f} and {adds(i, 2, THREE[2])[0]:.2f} by themselves, and are now most of it.  On MNIST")
+    print(f"     and Fashion-MNIST the three add {adds(m, 2, ('all', 'v2 rows'))[0]:.2f} and {adds(f, 2, ('all', 'v2 rows'))[0]:.2f}, as they did at 2%, within the scatter.")
 
 
 def checks():
@@ -262,8 +332,8 @@ def checks():
     m, f, i = WORKLOADS
     assert TILE == (128, 64) and BUDGET == 0.10 and ROWS3 == (0.02, 0.05, 0.05)
     assert set(RUN) == {(w, v) for w in WORKLOADS for v in VERSIONS}
-    keys = {"budget"} | {k for k, _ in DRIFT} | {k for k, _ in SOURCE}
-    assert all(set(RUN[c]) == keys for c in RUN) and len(keys) == 20
+    keys = {"budget", HELD} | {k for k, _ in DRIFT} | {k for k, _ in SOURCE}
+    assert all(set(RUN[c]) == keys for c in RUN) and len(keys) == 22
 
     # 0. The figures agree with what the plan already holds.
     #    Each version as budgeted is pta_tighten.py's, and adds nothing to itself.
@@ -290,7 +360,7 @@ def checks():
     #    Every figure, counted and summed, as grx930's tables printed them: a
     #    standard error mistyped moves no reading, and would move this.
     figures = [x for c in RUN.values() for cell in c.values() for pair in cell for x in pair]
-    assert len(figures) == 480 and abs(sum(figures) - 891.64) < 1e-6
+    assert len(figures) == 528 and abs(sum(figures) - 907.34) < 1e-6
 
     # 1. Reading 1.  Drift adds the same.
     assert [adds(w, 2, "hour")[0] for w in WORKLOADS] == [0.12, 0.67, 1.99]
@@ -356,6 +426,52 @@ def checks():
     # 5. Reading 5.  A tenth more at version 2 on the inverted set.
     assert [(adds(i, 2, k)[0], adds(i, 1, k)[0]) for k in THREE] == [(0.24, 0.16), (0.25, 0.11), (0.17, 0.05)]
     assert all(0.07 < moved(i, k)[0] < 0.15 for k in THREE) and 0.07 < moved(i, rows)[0] < 0.09
+
+    # 6. Reading 6.  B15: six minutes.
+    assert INTERVAL_S == 360 and FS == 1e9 and interval_shots() == 3.6e11
+    assert 86400 // INTERVAL_S == 240 and 86400 // HOURLY_S == 24
+    assert cal_shots() == 4096 and abs(cal_shots() / FS - 4.096e-6) < 1e-12
+    assert abs(duty() - 1.14e-8) < 0.01e-8 and 87e6 < 1 / duty() < 89e6 and abs(duty() / duty(HOURLY_S) - 10) < 1e-9
+    assert (period_bits(), period_bits(HOURLY_S)) == (39, 42) and period_bits() > PERIOD_BITS
+    assert interval_shots(HOURLY_S) == 3.6e12 and 8.7e8 < 1 / duty(HOURLY_S) < 8.9e8
+    #    A unit of 2^16 cycles would hold 78 hours in the register's 32 bits.
+    assert abs(2 ** (PERIOD_BITS + 16) / FS / 3600 - 78.2) < 0.1 and abs(2 ** 16 / FS - 65.5e-6) < 0.1e-6
+    #    TFLN's hour, at version 2: 2.4 to 37 points.
+    assert (adds(m, 2, "tfln")[0], adds(i, 2, "tfln")[0]) == (2.35, 37.38)
+    assert [adds(w, 2, "hour")[0] for w in WORKLOADS] == [0.12, 0.67, 1.99]
+    assert 2 ** PERIOD_BITS / FS < 4.3                           # 32 bits of cycles is 4.3 seconds
+    assert [held(w)[0][0] for w in WORKLOADS] == [0.19, 0.60, 1.09]
+    assert [held(w)[1][0] for w in WORKLOADS] == [0.04, 0.06, 0.48]
+    assert all(held(w)[1][0] < BUDGET for w in (m, f)) and held(i)[1][0] > 4 * BUDGET
+    #    Against an hour with no source at all, six minutes with one is the
+    #    better on every set, and by half a point and more on the harder two.
+    assert all(held(w)[0][0] < lost(w, 2, "hour")[0] for w in WORKLOADS)
+    assert [round(lost(w, 2, "hour")[0] - held(w)[0][0], 2) for w in WORKLOADS] == [0.08, 0.61, 1.52]
+    #    Version 2 so held loses a little over half what version 1 does as first
+    #    budgeted on two sets, and nine tenths of it on the third.
+    assert [round(held(w)[0][0] / lost(w, 1)[0], 2) for w in WORKLOADS] == [0.56, 0.52, 0.89]
+    #    Version 1 held the same way: 0.40, 1.37 and 1.60.
+    assert [held(w, 1)[0][0] for w in WORKLOADS] == [0.40, 1.37, 1.60]
+
+    # 7. Reading 7.  B16: 1%.
+    assert ROWS_V2 == (0.01, ROWS3[1], ROWS3[2]) and ROWS_V2[0] == ROWS3[0] / 2
+    assert abs(noise.db_hz(ROWS_V2[0]) + 130) < 0.05 and abs(noise.db_hz(ROWS3[0]) - noise.db_hz(ROWS_V2[0]) - 6.02) < 0.01
+    #    For a receiver that averages over a shot: -121 and -127.
+    averaged = dict(noise.bands())["a receiver that averages over a shot"]
+    assert abs(noise.db_hz(ROWS3[0], averaged) + 121) < 0.05 and abs(noise.db_hz(ROWS_V2[0], averaged) + 127) < 0.05
+    assert abs(noise.db_hz(ROWS3[0]) - noise.db_hz(noise.assumed_rms()) - 20.2) < 0.1
+    v2rows = ("all", "v2 rows")
+    assert [adds(w, 2, v2rows)[0] for w in WORKLOADS] == [0.04, 0.04, 0.28]
+    assert [adds(w, 1, v2rows)[0] for w in WORKLOADS] == [0.04, 0.14, 0.15]
+    assert round(adds(i, 2, rows)[0] - adds(i, 2, v2rows)[0], 2) == 0.09
+    assert adds(i, 2, v2rows)[0] > 2 * BUDGET and not adds(i, 2, v2rows)[0] < BUDGET
+    #    The two rows a line carries, alone, are each most of what is left there.
+    assert (adds(i, 2, THREE[1])[0], adds(i, 2, THREE[2])[0]) == (0.25, 0.17)
+    assert adds(i, 2, THREE[1])[0] > adds(i, 2, ("together", ROWS_V2[0]))[0] and adds(i, 2, ("together", ROWS_V2[0]))[0] == 0.13
+    #    On the other two sets 1% and 2% are a draw.
+    assert all(abs(moved_rows) < 0.06 for moved_rows in (adds(w, 2, v2rows)[0] - adds(w, 2, rows)[0] for w in (m, f)))
+    #    A line at 2% and the level at 2% would be 0.13 and 0.01 there: run, and not adopted.
+    assert (adds(i, 2, ("line", 0.02))[0], adds(i, 2, ("level", 0.02))[0]) == (0.13, 0.01)
 
     print()
     print("All checks pass.")
