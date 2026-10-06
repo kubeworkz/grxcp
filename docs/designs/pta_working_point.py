@@ -30,7 +30,9 @@ those say.  Two things are particular to this file:
   the rescale    pta_laser.py's last section: the hidden layer's rescale one bit
                  under the clip rule halves the laser the working tile needs.
                  MEASURED IN A MODEL at 128 x 64 and nowhere else, so every
-                 other tile and both scorecards stay at the rule's rescale
+                 other tile and both scorecards stay at the rule's rescale.
+                 And on MNIST: pta_workload.py has two more data sets, which
+                 take 8 and 16 times B5's laser where MNIST takes 4
   the buses      a ring bank's, for a tile's own inputs: pta_source.py's
                  arithmetic at another input count, by B12's rule, the fewest
                  that hold across the published range of line spacings.  128

@@ -19,6 +19,10 @@ Published rings put the larger tile past a standard die. And B5's laser, sized
 on a detector's full scale, was low by sixteen times at 256 rows and eight at
 128 (B5, at its end), which left the larger tile little cheaper a MAC. Half of
 that eight is the host's to give back, in the activation stage's shift.
+And X1's budget was run on a second data set that day and does not hold (§8,
+question 7): version 1 costs 1.2 points on Fashion-MNIST and on MNIST
+inverted, where it costs a third of a point on MNIST, and the working tile's
+laser is twice and four times MNIST's.
 X2 has made its predictions (§3.3), X1 its budget (§4.3), and P0, X3 and X4
 are drafted as [`board_icd.md`](board_icd.md),
 [`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) and
@@ -330,6 +334,43 @@ It was run at 128 × 64 and nowhere else, on networks trained with no clip in
 the loop. And it gives back the second layer's share only: at twice this
 decision's laser the first layer's noise is an LSB, and nothing done to the
 hidden operands reaches it.
+
+*And all of that is MNIST's, 2026-10-05* ([`pta_workload.py`](pta_workload.py);
+grx930's design note, §5, "Does the budget hold on another workload?"). Two
+more data sets went through grx930's harness on the working tile:
+Fashion-MNIST, and MNIST with every pixel inverted (§8, question 7). Points
+lost, five networks each, with the receiver's noise as a laser of that many
+times this decision's fixes it:
+
+| | MNIST | Fashion-MNIST | MNIST, inverted |
+|---|---|---|---|
+| Version 1 as budgeted | 0.34 ± 0.07 | 1.16 ± 0.14 | 1.23 ± 0.13 |
+| 4 times this decision's laser | 0.75 ± 0.07 | 4.16 ± 0.89 | 5.35 ± 0.90 |
+| 8 times | **0.35 ± 0.06** | 1.93 ± 0.29 | 1.99 ± 0.27 |
+| 16 times | 0.22 ± 0.04 | 1.26 ± 0.14 | **1.27 ± 0.18** |
+| 32 times | 0.20 ± 0.06 | **1.04 ± 0.13** | 1.15 ± 0.16 |
+| The hidden rescale a bit down: 4 times | **0.35 ± 0.06** | 1.93 ± 0.34 | 2.29 ± 0.29 |
+| 8 times | 0.22 ± 0.06 | **1.19 ± 0.13** | 1.37 ± 0.16 |
+| 16 times | not run | 0.96 ± 0.07 | **1.17 ± 0.12** |
+| Within a tenth of a point of its own version 1, the rescale a bit down | 4 times: 0.35–3.5 W | 8 times: 0.7–7 W | 16 times: 1.4–14 W |
+| A MAC at that, every cell in use | 97–922 fJ | 140–1,351 fJ | 226–2,209 fJ |
+
+The rescale still gives back half on both. What it halves is twice MNIST's on
+Fashion-MNIST and four times on the inverted set. Fashion-MNIST at the rule's
+rescale is 0.10 over at 16 times, which is the line and inside its scatter.
+
+So the working tile's laser is 0.35–3.5 W for MNIST and up to 1.4–14 W for a
+workload this plan has run. The lower figure is not withdrawn. It is one
+workload's, and so is every figure built on it: B10's and B11's rows, a MAC's
+energy, and the ICD's link 4.
+
+It did not move the way this decision expected. "A workload that lights more
+of its inputs fills more of the light" held for the first layer of four
+networks in ten. The second layer's inputs are the hidden units, and both sets
+light those about half as much as MNIST does. On Fashion-MNIST the fill hardly
+moved, and the same noise in a converter's LSB costs that network more points.
+On the inverted set the second layer's fill fell on all five networks, by two
+to four times.
 
 **B6 — Silicon nodes, and the board before silicon.** grx930's manufacturing
 plan takes the SoC to SKY130 first, then to TSMC N28, and freezes the RTL now.
@@ -686,7 +727,9 @@ Seven things follow.
   budget has been measured and accepted. That is one network, D3, at 0.24 points
   with hourly calibration and 0.21 at six minutes on the 256 × 64 tile this
   model prices. *It read 0.81 and 0.37 until 2026-10-04*, which are the 8 × 8
-  tile's and were the only figures there were (§4.3).
+  tile's and were the only figures there were (§4.3). *And it is MNIST's: on
+  the two other data sets run on 2026-10-05 the same budget costs over a
+  point, and an hour's drift more again (§8, question 7).*
 - **At 1,536 MACs they are level.** The chiplet spends its time moving one padded
   weight set, 16,384 bytes for a layer of 192 weights, and the GPU's arithmetic
   takes as long.
@@ -1291,6 +1334,37 @@ those two are the rows at every depth tried, and the two DACs are the rows to
 leave alone. It is still fully connected layers on MNIST, and networks trained
 without the impairments in the loop (§8, question 7).
 
+*On a second data set, 2026-10-05: neither the price nor the menu holds.*
+([`pta_workload.py`](pta_workload.py); grx930's design note, §5, "Does the
+budget hold on another workload?") Version 1 costs 1.06 ± 0.26 points on
+Fashion-MNIST and 1.10 ± 0.22 on MNIST inverted on the core's tile, where it
+costs 0.26 on MNIST. On the working tile it is 1.16 ± 0.14 and 1.23 ± 0.13 for
+0.34. The table above again, each of version 1's rows relaxed alone to version
+0's, on the core's tile:
+
+| Row | MNIST | Fashion-MNIST | MNIST, inverted |
+|---|---|---|---|
+| Activation DAC, 6 → 5 bits | 0.10 | 0.30 | 0.59 |
+| ADC, 7 → 6 bits | 0.12 | 0.59 | 0.79 |
+| Receiver noise, 0.5 → 1 LSB of an 8-bit ADC | 0.19 | **0.86** | 0.65 |
+| Light, 15 → 3 photons per such LSB | **0.34** | 0.69 | 1.35 |
+| Weight programming error, 1 → 4 LSB | 0.33 | 0.65 | **1.87** |
+| Crosstalk, 2% → 10% | 0.16 | 0.78 | 1.05 |
+| Summed | 1.24 | 3.87 | 6.30 |
+| Version 0's five rows at once, over what they sum to | 1.08 | 0.87 | 1.19 |
+
+Every row costs two to seven times what it cost. And the advice above does
+not carry. It was to relax the receiver's noise or the ADC's bit, if any row,
+and to leave the two DACs alone. On Fashion-MNIST the receiver's noise is the
+dearest row there is and the activation DAC's bit the cheapest. On the
+inverted set the weight DAC's row is the dearest, as the advice had it, and
+the ADC's bit is 0.79.
+
+So none of this section's prices is a budget's. Each is a budget's on a
+workload. Version 1 is still the tightest set of rows this plan has and still
+what the interface chip is held to. What it buys is a quarter of a point on
+MNIST and a point on either of the other two.
+
 *The ADC's row, since the survey (2026-10-04).* Relaxing it saves 3 to 106 mW,
 and the low end is the published state of the art: the cheapest converters that
 sample this fast already have the seventh bit. So of the two rows, relaxing the
@@ -1401,6 +1475,13 @@ second layer's operands are twice as large, and the same accuracy is had with
 laser on the working tile, where the row above is 8 (B5, at its end). It
 clips 0.65% of the units that fire and costs 0.02 of a point. On the chiplet
 it is the activation stage's shift.
+
+*And on a second data set, a thirty-second and a sixty-fourth, 2026-10-05.*
+That sixteenth is MNIST's. The same test, within a tenth of a point of
+version 1 with the rescale a bit down, takes 8 times B5's laser on the working
+tile for Fashion-MNIST and 16 for MNIST inverted: **the receiver's noise at a
+thirty-second and at a sixty-fourth of one line's light** (B5, at its end; §8,
+question 7).
 
 ### 4.4 To the PTA program
 
@@ -1584,7 +1665,7 @@ What it fixes now, each from a model and none from a device
 | The die | 62 mm² at the smallest ring read, inside a standard 100. 20.3 by the floorplan's bound | 124 mm², and 39.7 |
 | Link 2 | Three modules with the weights re-sent; one with them held | Five; one |
 | Interface chip | 0.44 to 4.04 W | 0.55 to 7.61 W |
-| Laser | 0.7 to 7.0 W, eight times B5's method. *0.35 to 3.5 W, four times, with the hidden layer's rescale one bit under the clip rule: B5, at its end* | 1.4 to 14 W, sixteen times |
+| Laser | 0.7 to 7.0 W, eight times B5's method. *0.35 to 3.5 W, four times, with the hidden layer's rescale one bit under the clip rule: B5, at its end. That is on MNIST; 0.7 to 7 and 1.4 to 14 W on the two other data sets run: §8, question 7* | 1.4 to 14 W, sixteen times |
 | A MAC, every cell in use | 140 to 1,351 fJ. *97 to 922 at that laser* | 120 to 1,323 fJ |
 | The 4096-square layer | 131 µs | 65.7 µs |
 | What the interface chip holds | 8,192 weights a bank in two banks, written 128 cells a beat; 64 receivers and 7-bit converters | 16,384, written 256 a beat |
@@ -2421,6 +2502,11 @@ X1's rows and X3.
    One bit under that, the working tile's laser is half of what they show,
    0.35–3.5 W at 1 GS/s, and a MAC 97–922 fJ (B5, at its end). That was run at
    128 × 64 alone, so no other column moves here.
+
+   And both tables are MNIST's. On the two other data sets since run, the
+   working tile's laser with the rescale a bit down is 0.7–7 W and 1.4–14 W,
+   and a MAC 140–1,351 and 226–2,209 fJ (question 7). The first of those is
+   what the tables show for this tile, and the second is twice it.
 2. **What does the development kit cost, and how many are built?** That settles
    B1 and B2 more than any technical argument does.
 3. **Does the GRX930's NPU keep a PTA of its own?** The c930 PTM work is built
@@ -2449,6 +2535,59 @@ X1's rows and X3.
    network trained with the impairments in the loop, which may tolerate more.
    Depth was the cheapest second workload to try and it changed which rows are
    dear; another kind of network may do so again.
+
+   *Another data set was run on 2026-10-05, and the answer is: no.*
+   ([`pta_workload.py`](pta_workload.py); grx930's design note, §5, "Does the
+   budget hold on another workload?") Two went through grx930's harness, with
+   its own trainer and nothing retuned. Fashion-MNIST is MNIST's size and
+   shape, and harder. MNIST with every pixel inverted was meant as a control
+   for light, and is not a clean one, because the trainer does worse on it.
+
+   | | MNIST | Fashion-MNIST | MNIST, inverted |
+   |---|---|---|---|
+   | The networks, on their host | 97.2–97.8% | 86.9–88.0% | 91.3–94.5% |
+   | Rows of the working tile a shot lights on layer 1, at the mean | 12% | 25% | 74% |
+   | Version 1, points lost: the core's tile | 0.26 ± 0.06 | 1.06 ± 0.26 | 1.10 ± 0.22 |
+   | The working tile | 0.34 ± 0.07 | 1.16 ± 0.14 | 1.23 ± 0.13 |
+   | Version 0, the working tile | 2.17 ± 0.12 | 5.27 ± 0.43 | 8.57 ± 0.63 |
+   | Error at the outputs under version 1, of their rms | 7.9% | 7.8% | 12.4% |
+   | The median image's lead, in multiples of that error | 7.8 | 3.6 | 5.4 |
+   | An hour of TFLT's drift, over version 1 | +0.17 | +0.68 | +1.95 |
+   | Four hours | +0.40 | +2.34 | +16.5 |
+   | An hour, then calibrated | −0.13 | +0.02 | −0.09 |
+   | The laser, the rescale a bit down (B5, at its end) | 4 times B5's | 8 times | 16 times |
+
+   Six things.
+
+   - **The budget does not hold.** Version 1 costs three and a half times
+     MNIST's on both, five and six standard errors clear on the working tile.
+   - **On Fashion-MNIST the tile is no worse.** Its outputs come back 7.8%
+     wrong where MNIST's come back 7.9%. The network is right 87% of the time
+     and its answers are closer together: the median image leads by 3.6 errors
+     where MNIST's leads by 7.8. The same error turns more of them.
+   - **The menu does not hold either** (§4.3, at the end of its budget). Every
+     row costs two to seven times as much to relax. The dearest is the
+     receiver's noise on one and programming error on the other, where on
+     MNIST it was the light.
+   - **Drift is dearer, and on a bright workload far dearer.** An hour costs
+     four times what it cost on MNIST on Fashion-MNIST, and over eleven times
+     on the inverted set. Calibration returns all three to version 1. The
+     intervals of [`pta_chiplet_calibration.md`](pta_chiplet_calibration.md)
+     were priced on MNIST.
+   - **The laser is twice and four times MNIST's** (B5, at its end).
+   - **The activation stage's shift still gives half of it back, and writing
+     weights larger is worse than useless.** On the inverted set a gain that
+     saturates 0.15% of the first layer's weights costs three points.
+
+   What this does not say is what to do about it. No network here was trained
+   with the tile's errors in the loop, which is the usual remedy and may give
+   much of the point back. Nothing was run to say what tightening which rows
+   would buy: inside version 1, both noise rows halved again buy a fifth of a
+   point on either set, so most of the rest is in the converters, the
+   programming error and the crosstalk. And both sets are still 28 × 28 images
+   through fully connected layers. So version 1 stays the requirement on the
+   interface chip, as the tightest set of rows this plan has. What is
+   withdrawn is its price: "a quarter of a point" is MNIST's.
 8. **What kind of light source does the tile need?** *Settled on 2026-10-05, as
    a working topology: a ring bank, lit by a comb (B12, §7). What follows is
    how the question was worked, and reads as it was written.* Asked on

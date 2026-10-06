@@ -50,6 +50,23 @@ needs 5 V and 0.084 on one that needs 1 V
 ([`pta_ring.py`](pta_ring.py)). Nothing has refitted drift for a ring. Until
 something does, these intervals describe a tile of modulators.
 
+*And they are MNIST's, 2026-10-05.* Every cost of drift above is on D3
+trained on MNIST. On two more data sets (the board plan's §8, question 7;
+[`pta_workload.py`](pta_workload.py)) the same drift costs more. On the
+working tile's 128 × 64, in points:
+
+| What TFLT's drift adds to version 1 | MNIST | Fashion-MNIST | MNIST, inverted |
+|---|---|---|---|
+| Six minutes | −0.01 | +0.08 | +0.19 |
+| An hour | +0.17 | +0.68 | +1.95 |
+| Four hours | +0.40 | +2.34 | +16.5 |
+| An hour, then calibrated | −0.13 | +0.02 | −0.09 |
+
+Calibration undoes all of it on all three, so the method stands. The interval
+does not carry. An hour costs a sixth of a point on MNIST and two points on a
+workload that lights three rows in four, because a drifted weight is wrong by
+what it is lit with. An interval is a workload's as much as a material's.
+
 So the question is not whether to calibrate but how often, how long it takes,
 and what it can actually undo.
 
