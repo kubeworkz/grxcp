@@ -77,6 +77,26 @@ moves the right way: a probe is read against the receiver's noise, which is a
 quarter of an 8-bit ADC's LSB where §3 has it at half, so the same averaging
 measures a cell twice as finely.
 
+*It was rerun the same day* ([`pta_version2.py`](pta_version2.py); the board
+plan's §4.3, at the end of its budget). The same drift does cost what it did.
+What TFLT's drift adds to each version, in points, on the working tile:
+
+| | MNIST, version 1 | Version 2 | Fashion-MNIST, version 1 | Version 2 | MNIST inverted, version 1 | Version 2 |
+|---|---|---|---|---|---|---|
+| As budgeted, points lost | 0.34 | 0.15 | 1.16 | 0.54 | 1.23 | 0.62 |
+| Six minutes adds | −0.01 ± 0.02 | −0.06 ± 0.04 | 0.08 ± 0.10 | 0.08 ± 0.06 | 0.20 ± 0.26 | 0.28 ± 0.27 |
+| An hour | 0.17 ± 0.05 | 0.12 ± 0.05 | 0.69 ± 0.33 | 0.67 ± 0.31 | 1.95 ± 1.29 | 1.99 ± 1.26 |
+| Four hours | 0.40 ± 0.08 | 0.37 ± 0.08 | 2.34 ± 0.43 | 2.36 ± 0.57 | 16.54 ± 3.01 | 16.07 ± 3.09 |
+| An hour, then calibrated | −0.13 ± 0.03 | −0.06 ± 0.03 | 0.03 ± 0.15 | 0.02 ± 0.11 | −0.09 ± 0.08 | −0.01 ± 0.05 |
+
+So the method stands at version 2: calibration returns it to its budget on all
+three. The interval does not. An hour's drift is 80% of version 2's budget on
+MNIST, 124% on Fashion-MNIST and three times it on the inverted set, where it
+was 50%, 59% and 159% of version 1's. An interval that keeps drift inside a
+tenth of a point is six minutes on the first two and under that on the third.
+Which interval version 2 is held to is the board plan's to decide, and it has
+not.
+
 So the question is not whether to calibrate but how often, how long it takes,
 and what it can actually undo.
 
