@@ -23,8 +23,9 @@ B14 THEN MOVED THE BUDGET, 2026-10-06.  The interface chip is held to version
 ADC's LSB, and 30 photons such an LSB.  Sections 1 to 3 are version 1's and
 are kept as they were run.  Section 4 is the working point under version 2,
 beside version 1's, from pta_tighten.py: grx930's sweep, and the plan's models
-asked for a bit more.  Nothing else in this plan has been rerun at version 2,
-and section 4 says what has not.
+asked for a bit more.  Drift and the source's rows were then rerun at version
+2 (pta_version2.py) and are in section 4 too.  Nothing else in this plan has
+been, and section 4 says what has not.
 
 WHAT KIND OF NUMBER EACH ROW IS is what it was in the model it came from, and
 those say.  Two things are particular to this file:
@@ -64,6 +65,7 @@ import pta_ring as ring
 import pta_shot_rate as shot
 import pta_source as source
 import pta_tighten as tighten
+import pta_version2 as version2
 import pta_workload as workload
 
 TILE = (128, 64)                           # B10, as revised
@@ -265,6 +267,21 @@ def section(title):
     print(f"\n{title}\n{'-' * len(title)}")
 
 
+def workload_rows(w):
+    """Section 4's rows for one data set: a label, and the cell for a version."""
+    return (
+        ("points lost, as budgeted", lambda v: f"{lost(v, w)[0]:.2f} +-{lost(v, w)[1]:.2f}"),
+        ("laser, the shift a bit down", lambda v: f"{times_at(v, w)} times, {laser_at_w(v, w)[0]:.2f}-{laser_at_w(v, w)[1]:.1f} W"),
+        ("a line of the comb", lambda v: f"{line_at_w(v, w)[0] * 1e3:.0f}-{line_at_w(v, w)[1] * 1e3:.0f} mW"),
+        ("the receiver's noise, of a line's light", lambda v: f"1/{receiver_share(v, w):.0f}"),
+        ("a MAC, every cell in use", lambda v: f"{fj_mac_at(v, w)[0]:.0f}-{fj_mac_at(v, w)[1]:,.0f} fJ"),
+        ("six minutes of TFLT's drift adds", lambda v: version2.pm(version2.adds(w, v, "six"))),
+        ("an hour of it adds", lambda v: version2.pm(version2.adds(w, v, "hour"))),
+        ("an hour, then calibrated", lambda v: version2.pm(version2.adds(w, v, "cal"))),
+        ("the source's three rows add", lambda v: version2.pm(version2.adds(w, v, ("all", "rows")))),
+    )
+
+
 def main():
     print("The working point as it stands, and the two scorecards at the corrected laser.")
     print(f"{name(TILE)} (B10, as revised) at {FS / 1e9:g} GS/s (B11), a ring bank (B12) read by balanced pairs (B13).")
@@ -353,18 +370,11 @@ def main():
         print(f"  {label:<44}" + "".join(f"{f(v):>26}" for v in both))
     for w in WORKLOADS:
         print(f"  {w}")
-        wrows = (
-            ("points lost, as budgeted", lambda v: f"{lost(v, w)[0]:.2f} +-{lost(v, w)[1]:.2f}"),
-            ("laser, the shift a bit down", lambda v: f"{times_at(v, w)} times, {laser_at_w(v, w)[0]:.2f}-{laser_at_w(v, w)[1]:.1f} W"),
-            ("a line of the comb", lambda v: f"{line_at_w(v, w)[0] * 1e3:.0f}-{line_at_w(v, w)[1] * 1e3:.0f} mW"),
-            ("the receiver's noise, of a line's light", lambda v: f"1/{receiver_share(v, w):.0f}"),
-            ("a MAC, every cell in use", lambda v: f"{fj_mac_at(v, w)[0]:.0f}-{fj_mac_at(v, w)[1]:,.0f} fJ"),
-        )
-        for label, f in wrows:
+        for label, f in workload_rows(w):
             print(f"    {label:<42}" + "".join(f"{f(v):>26}" for v in both))
-    print("  Not rerun at version 2, so still version 1's wherever this plan quotes them: drift and")
-    print("  how long a calibration holds; the source's rows; depth; every tile but this one; the")
-    print("  two scorecards above; and C3's and X3's measurements.")
+    print("  Drift and the source's rows are pta_version2.py's: grx930 ran both at each version.")
+    print("  Not rerun at version 2, so still version 1's wherever this plan quotes them: depth;")
+    print("  every tile but this one; the two scorecards above; and C3's and X3's measurements.")
 
     findings()
     checks()
@@ -372,7 +382,7 @@ def main():
 
 def findings():
     print()
-    print("What this says, seven readings.")
+    print("What this says, eight readings.")
     print()
     a, b = fj_mac(TILE), fj_mac(FIRST)
     print(f"  1. THE MOVE HALVES WHAT THE TILE COSTS AND BARELY MOVES WHAT A MAC COSTS.  {lines_between(TILE):,} lines for {lines_between(FIRST):,},")
@@ -422,6 +432,13 @@ def findings():
     print(f"     is {span(*chip_at_w(2))} W for {span(*chip_at_w(1))}.  Two buses of {lines_each(TILE)} lines still hold, and a weight ring's")
     print(f"     Q has {tighten.q_window(BITS2):.0%} of room where it had {tighten.q_window(BITS):.0%}.  A MAC is {fj_mac_at(2, m)[0]:.0f}-{fj_mac_at(2, m)[1]:,.0f} fJ on MNIST and")
     print(f"     {fj_mac_at(2, f)[0]:.0f}-{fj_mac_at(2, f)[1]:,.0f} on the others.")
+    print()
+    hour, rows = "hour", ("all", "rows")
+    print(f"  8. AND AT VERSION 2 THE INTERVAL AND THE SOURCE ARE THE WORKLOAD'S.  An hour of drift adds")
+    print(f"     {version2.adds(m, 2, hour)[0]:.2f}, {version2.adds(f, 2, hour)[0]:.2f} and {version2.adds(i, 2, hour)[0]:.2f} points to version 2, as it did to version 1, which on the two")
+    print(f"     harder sets is more than version 2 bought.  Six minutes adds {version2.adds(f, 2, 'six')[0]:.2f} and {version2.adds(i, 2, 'six')[0]:.2f} there.")
+    print(f"     The source's three rows add {version2.adds(m, 2, rows)[0]:.2f}, {version2.adds(f, 2, rows)[0]:.2f} and {version2.adds(i, 2, rows)[0]:.2f}: inside their tenth on two sets,")
+    print("     and nearly four tenths on the one that lights three rows in four.")
 
 
 def checks():
@@ -563,6 +580,30 @@ def checks():
     assert abs(tighten.q_window(BITS) - 0.21) < 0.005 and abs(tighten.q_window(BITS2) - 0.09) < 0.005
     assert abs(tighten.swing_floor_v(BITS2) - 2.53) < 0.005 and abs(ring.swing_v(tighten.q_floor()) - 2.76) < 0.005
     assert (len(tighten.adc.able(BITS, FS)), len(tighten.adc.able(BITS2, FS))) == (70, 47)
+
+    # 9. Reading 8: pta_version2.py's, held to this file where the two overlap.
+    assert version2.TILE == TILE and version2.WORKLOADS == WORKLOADS
+    assert all(version2.lost(w, v) == lost(v, w) for w in WORKLOADS for v in (1, 2))
+    assert [version2.adds(w, 2, "hour")[0] for w in WORKLOADS] == [0.12, 0.67, 1.99]
+    assert [version2.adds(w, 1, "hour")[0] for w in WORKLOADS] == [0.17, 0.69, 1.95]
+    assert [version2.adds(w, 2, "six")[0] for w in WORKLOADS] == [-0.06, 0.08, 0.28]
+    assert [version2.adds(w, 2, ("all", "rows"))[0] for w in WORKLOADS] == [0.06, 0.09, 0.37]
+    bought = [lost(1, w)[0] - lost(2, w)[0] for w in WORKLOADS]
+    assert all(version2.adds(w, 2, "hour")[0] > b for w, b in zip(WORKLOADS[1:], bought[1:]))
+    assert version2.adds(m, 2, "hour")[0] < bought[0]
+    #    And section 4's cells for Fashion-MNIST, as they print: version 1, then version 2.
+    cells = {label: [cell(v) for v in (1, 2)] for label, cell in workload_rows(f)}
+    assert cells == {
+        "points lost, as budgeted": ["1.16 +-0.14", "0.54 +-0.22"],
+        "laser, the shift a bit down": ["8 times, 0.70-7.0 W", "16 times, 1.41-14.1 W"],
+        "a line of the comb": ["11-110 mW", "22-220 mW"],
+        "the receiver's noise, of a line's light": ["1/32", "1/64"],
+        "a MAC, every cell in use": ["140-1,351 fJ", "250-2,226 fJ"],
+        "six minutes of TFLT's drift adds": ["0.08 +-0.10", "0.08 +-0.06"],
+        "an hour of it adds": ["0.69 +-0.33", "0.67 +-0.31"],
+        "an hour, then calibrated": ["0.03 +-0.15", "0.02 +-0.11"],
+        "the source's three rows add": ["0.06 +-0.11", "0.09 +-0.13"],
+    }, cells
 
     print()
     print("All checks pass.")

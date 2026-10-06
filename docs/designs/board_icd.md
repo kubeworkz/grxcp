@@ -166,6 +166,11 @@ things, of which this document held one:
   offset, the figure above is about what it stands. *It reads them through a
   pair: the board plan's B13, settled the same day.* And the lines have to be
   level to 5%, 0.2 dB, which nothing on the chiplet measures.
+  *At version 2, and on two more data sets, 2026-10-06 (the board plan's §4.3,
+  at the end of its budget): those rows hold on MNIST and on Fashion-MNIST. On
+  a workload that lights most of its rows the 2% adds a quarter of a point,
+  and 1%, about −130 dB/Hz, adds a tenth. Which of the two this link is held
+  to is not decided.*
 - **Wavelength.** B5's arithmetic is at 1550 nm; the same detector at 1310 nm
   needs 18% more light. The all-optical branch would pin it to 1550 nm within
   2.4 nm, and ring weights would pin it by a figure nobody has.
