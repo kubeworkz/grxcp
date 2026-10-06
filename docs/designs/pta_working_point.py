@@ -18,6 +18,14 @@ another tile, and the checks hold each to the model it came from: at 256 x 64
 this reproduces pta_rate.py's rows to the last figure, and at every tile
 pta_geometry.py's.
 
+B14 THEN MOVED THE BUDGET, 2026-10-06.  The interface chip is held to version
+2: version 1 with an 8-bit ADC, receiver noise within a quarter of an 8-bit
+ADC's LSB, and 30 photons such an LSB.  Sections 1 to 3 are version 1's and
+are kept as they were run.  Section 4 is the working point under version 2,
+beside version 1's, from pta_tighten.py: grx930's sweep, and the plan's models
+asked for a bit more.  Nothing else in this plan has been rerun at version 2,
+and section 4 says what has not.
+
 WHAT KIND OF NUMBER EACH ROW IS is what it was in the model it came from, and
 those say.  Two things are particular to this file:
 
@@ -55,12 +63,17 @@ import pta_rate as rate
 import pta_ring as ring
 import pta_shot_rate as shot
 import pta_source as source
+import pta_tighten as tighten
+import pta_workload as workload
 
 TILE = (128, 64)                           # B10, as revised
 FIRST = shot.X2_TILE                       # 256 x 64: B10 as first settled, and every model's
 FS = shot.X2_FS                            # 1 GS/s: B11
 V1 = shot.REQ["v1"]
 BITS = V1["adc_bits"]
+V2 = shot.REQ["v2"]                        # B14
+BITS2 = V2["adc_bits"]
+WORKLOADS = workload.WORKLOADS             # MNIST, Fashion-MNIST, MNIST inverted
 BATCH = link.BIG["mb"]
 WIDE = (link.BIG["kin"], link.BIG["nout"])
 LOSS_DB = shot.LOSS_DB
@@ -190,6 +203,46 @@ def line_w(tile, fs=FS):
     return lo / lines_each(tile, fs), hi / lines_each(tile, fs)
 
 
+# ---- under B14: version 2 ------------------------------------------------------------
+def budget(v):
+    """pta_tighten.py's name for a version's rows as budgeted, its name for them
+    under a laser, and its ADC."""
+    return {1: ("v1", "v1", BITS), 2: ("adc_noise", "light", BITS2)}[v]
+
+
+def lost(v, w):
+    """Points lost on that data set with the version's rows as budgeted."""
+    return tighten.LOST[budget(v)[0]][WORKLOADS.index(w)]
+
+
+def times_at(v, w):
+    """The multiple of B5's laser that version takes on that data set, the
+    activation stage's shift a bit down."""
+    return tighten.times(budget(v)[1], w)
+
+
+def laser_at_w(v, w):
+    return laser.laser_w(TILE, times_at(v, w))
+
+
+def chip_at_w(v):
+    return tighten.chip_w(budget(v)[2])
+
+
+def fj_mac_at(v, w):
+    return tighten.fj_mac(budget(v)[1], budget(v)[2], w)
+
+
+def line_at_w(v, w):
+    lo, hi = laser_at_w(v, w)
+    return lo / lines_each(TILE), hi / lines_each(TILE)
+
+
+def receiver_share(v, w):
+    """The receiver's noise, as one over that many of one line's light, at that laser."""
+    return times_at(v, w) / laser.b5_fraction(TILE)
+
+
 # ---- the dies --------------------------------------------------------------------------
 def lines_between(tile):
     return tile[0] * tile[1] + tile[0] + tile[1]
@@ -278,13 +331,48 @@ def main():
     print("  the lines at the kind spacing.  Buses are at the worst, as B12 counts them.")
     print(f"  The laser is {times(TILE):.0f} times B5's at every rate: what it needs is a fraction of a line's light.")
 
+    section(f"4. Under B14: {name(TILE)} at {rate.gs(FS)}, held to version 2")
+    both = (1, 2)
+    print(f"  {'':<44}{'version 1':>26}{'version 2':>26}")
+    rows = (
+        ("the ADC", lambda v: f"{budget(v)[2]} bits"),
+        ("receiver noise, of an 8-bit ADC's LSB", lambda v: f"{shot.REQ[f'v{v}']['rx_noise_lsb']:g}"),
+        ("photons such an LSB", lambda v: f"{shot.REQ[f'v{v}']['photons_per_lsb']}"),
+        ("published converters that reach it", lambda v: f"{len(tighten.adc.able(budget(v)[2], FS))}"),
+        ("the 64 converters", lambda v: span(*tighten.adcs_w(budget(v)[2])) + " W"),
+        ("interface chip", lambda v: span(*chip_at_w(v)) + " W"),
+        ("a weight ring's line, at least", lambda v: f"{tighten.line_hz(budget(v)[2]) / 1e9:.2f} GHz"),
+        ("its Q, from and to", lambda v: f"{tighten.q_floor():,.0f} to {tighten.q_ceiling(budget(v)[2]):,.0f}"),
+        ("the room that is", lambda v: f"{tighten.q_window(budget(v)[2]):.0%}"),
+        ("its swing, from and to", lambda v: f"{tighten.swing_floor_v(budget(v)[2]):.2f} to {ring.swing_v(tighten.q_floor()):.2f} V"),
+        ("lines a bus could hold", lambda v: f"{tighten.lines_a_bus(budget(v)[2])}"),
+        ("the ring bank's buses, and lines each", lambda v: f"{tighten.buses(budget(v)[2])} of {lines_each(TILE)}"),
+        ("photodiodes", lambda v: f"{2 * tighten.buses(budget(v)[2]) * TILE[1]}"),
+    )
+    for label, f in rows:
+        print(f"  {label:<44}" + "".join(f"{f(v):>26}" for v in both))
+    for w in WORKLOADS:
+        print(f"  {w}")
+        wrows = (
+            ("points lost, as budgeted", lambda v: f"{lost(v, w)[0]:.2f} +-{lost(v, w)[1]:.2f}"),
+            ("laser, the shift a bit down", lambda v: f"{times_at(v, w)} times, {laser_at_w(v, w)[0]:.2f}-{laser_at_w(v, w)[1]:.1f} W"),
+            ("a line of the comb", lambda v: f"{line_at_w(v, w)[0] * 1e3:.0f}-{line_at_w(v, w)[1] * 1e3:.0f} mW"),
+            ("the receiver's noise, of a line's light", lambda v: f"1/{receiver_share(v, w):.0f}"),
+            ("a MAC, every cell in use", lambda v: f"{fj_mac_at(v, w)[0]:.0f}-{fj_mac_at(v, w)[1]:,.0f} fJ"),
+        )
+        for label, f in wrows:
+            print(f"    {label:<42}" + "".join(f"{f(v):>26}" for v in both))
+    print("  Not rerun at version 2, so still version 1's wherever this plan quotes them: drift and")
+    print("  how long a calibration holds; the source's rows; depth; every tile but this one; the")
+    print("  two scorecards above; and C3's and X3's measurements.")
+
     findings()
     checks()
 
 
 def findings():
     print()
-    print("What this says, six readings.")
+    print("What this says, seven readings.")
     print()
     a, b = fj_mac(TILE), fj_mac(FIRST)
     print(f"  1. THE MOVE HALVES WHAT THE TILE COSTS AND BARELY MOVES WHAT A MAC COSTS.  {lines_between(TILE):,} lines for {lines_between(FIRST):,},")
@@ -325,6 +413,15 @@ def findings():
     print(f"     clip rule the working tile needs {times_down(TILE)} times B5's laser and not {times(TILE)}: {laser_down_w(TILE)[0]:.2f} to {laser_down_w(TILE)[1]:.1f} W, and")
     print(f"     a MAC is {d[0]:.0f} to {d[1]:.0f} fJ.  It is the activation stage's shift, a field of a command,")
     print("     and it was run at this tile alone: the two scorecards above are at the rule's.")
+    print()
+    m, f, i = WORKLOADS
+    print(f"  7. UNDER B14 THE POINT IS HALVED AND THE LASER DOUBLED.  Version 2 loses {lost(2, m)[0]:.2f}, {lost(2, f)[0]:.2f} and")
+    print(f"     {lost(2, i)[0]:.2f} on MNIST, Fashion-MNIST and MNIST inverted, where version 1 loses {lost(1, m)[0]:.2f}, {lost(1, f)[0]:.2f}")
+    print(f"     and {lost(1, i)[0]:.2f}.  Its laser, the shift a bit down, is {times_at(2, m)}, {times_at(2, f)} and {times_at(2, i)} times B5's for {times_at(1, m)}, {times_at(1, f)}")
+    print(f"     and {times_at(1, i)}: {laser_at_w(2, m)[0]:.1f}-{laser_at_w(2, m)[1]:.0f} W for MNIST and {laser_at_w(2, f)[0]:.1f}-{laser_at_w(2, f)[1]:.0f} W for the other two.  The interface chip")
+    print(f"     is {span(*chip_at_w(2))} W for {span(*chip_at_w(1))}.  Two buses of {lines_each(TILE)} lines still hold, and a weight ring's")
+    print(f"     Q has {tighten.q_window(BITS2):.0%} of room where it had {tighten.q_window(BITS):.0%}.  A MAC is {fj_mac_at(2, m)[0]:.0f}-{fj_mac_at(2, m)[1]:,.0f} fJ on MNIST and")
+    print(f"     {fj_mac_at(2, f)[0]:.0f}-{fj_mac_at(2, f)[1]:,.0f} on the others.")
 
 
 def checks():
@@ -435,6 +532,37 @@ def checks():
     gap = geometry.ACC[TILE]["v1"][0] - geometry.ACC[FIRST]["v1"][0]
     assert 1.4 < gap / math.hypot(geometry.ACC[TILE]["v1"][1], geometry.ACC[FIRST]["v1"][1]) < 1.8
     assert laser.LOST[TILE][8][0] - laser.LOST[FIRST][16][0] < math.hypot(0.06, 0.06)
+
+    # 8. Section 4 and reading 7: under B14.  pta_tighten.py stands on the models
+    #    below this one, so first hold it to this file where the two overlap.
+    assert tighten.TILE == TILE and tighten.FS == FS and tighten.V1_BITS == BITS and BITS2 == BITS + 1
+    assert V2 == dict(adc_bits=8, rx_noise_lsb=0.25, photons_per_lsb=30) == tighten.NOTCH_REQ
+    tp, wp_ = tighten.chip_parts(BITS), chip_parts(TILE)
+    assert set(tp) == set(wp_) and all(abs(tp[k][j] - wp_[k][j]) < 1e-12 for k in tp for j in (0, 1))
+    assert all(abs(x - y) < 1e-12 for x, y in zip(chip_at_w(1), chip_w(TILE)))
+    assert tighten.lines_a_bus(BITS) == lines_a_bus() and tighten.buses(BITS) == buses(TILE)
+    assert tighten.lines_each() == lines_each(TILE) and tighten.grid_hz() == grid_hz(TILE)
+    assert abs(tighten.q_ceiling(BITS) - rate.q_ceiling(FS)) < 1e-6
+    #    Version 1's column is this file's own: the laser with the rescale a bit
+    #    down, and a MAC at it, on MNIST.
+    m, f, i = WORKLOADS
+    assert times_at(1, m) == times_down(TILE) and laser_at_w(1, m) == laser_down_w(TILE)
+    assert all(abs(x - y) < 1e-9 for x, y in zip(fj_mac_at(1, m), fj_mac_down(TILE)))
+    assert [times_at(1, w) for w in WORKLOADS] == [4, 8, 16] and [times_at(2, w) for w in WORKLOADS] == [8, 16, 16]
+    #    Version 2's.
+    assert [lost(2, w)[0] for w in WORKLOADS] == [0.15, 0.54, 0.62] and [lost(1, w)[0] for w in WORKLOADS] == [0.34, 1.16, 1.23]
+    assert all(lost(2, w)[0] < 0.51 * lost(1, w)[0] for w in WORKLOADS)
+    assert abs(chip_at_w(2)[0] - 0.64) < 0.005 and abs(chip_at_w(2)[1] - 4.18) < 0.005
+    assert [f"{laser_at_w(2, w)[0]:.1f}-{laser_at_w(2, w)[1]:.0f}" for w in WORKLOADS] == ["0.7-7", "1.4-14", "1.4-14"]
+    assert [(round(lo), round(hi)) for lo, hi in (fj_mac_at(2, w) for w in WORKLOADS)] == [(164, 1368), (250, 2226), (250, 2226)]
+    assert [round(receiver_share(2, w)) for w in WORKLOADS] == [32, 64, 64]
+    assert [round(receiver_share(1, w)) for w in WORKLOADS] == [16, 32, 64]
+    assert [round(x * 1e3) for x in line_at_w(2, m)] == [11, 110] and [round(x * 1e3) for x in line_at_w(2, f)] == [22, 220]
+    assert tighten.buses(BITS2) == buses(TILE) == 2 and 2 * tighten.buses(BITS2) * TILE[1] == photodiodes(TILE) == 256
+    assert (tighten.lines_a_bus(BITS), tighten.lines_a_bus(BITS2)) == (77, 69)
+    assert abs(tighten.q_window(BITS) - 0.21) < 0.005 and abs(tighten.q_window(BITS2) - 0.09) < 0.005
+    assert abs(tighten.swing_floor_v(BITS2) - 2.53) < 0.005 and abs(ring.swing_v(tighten.q_floor()) - 2.76) < 0.005
+    assert (len(tighten.adc.able(BITS, FS)), len(tighten.adc.able(BITS2, FS))) == (70, 47)
 
     print()
     print("All checks pass.")

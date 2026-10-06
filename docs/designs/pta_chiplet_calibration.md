@@ -67,6 +67,16 @@ does not carry. An hour costs a sixth of a point on MNIST and two points on a
 workload that lights three rows in four, because a drifted weight is wrong by
 what it is lit with. An interval is a workload's as much as a material's.
 
+*And they are version 1's, 2026-10-06.* The board plan's B14 holds the
+interface chip to version 2: an 8-bit ADC, and half of each noise row. Drift
+was not rerun at it. Version 2 loses half what version 1 does before any
+drift. If the same drift costs what it did, it is a larger share of what is
+left, and whether it does, and so whether an interval that held at version 1
+holds at version 2, is not known. One thing
+moves the right way: a probe is read against the receiver's noise, which is a
+quarter of an 8-bit ADC's LSB where §3 has it at half, so the same averaging
+measures a cell twice as finely.
+
 So the question is not whether to calibrate but how often, how long it takes,
 and what it can actually undo.
 
