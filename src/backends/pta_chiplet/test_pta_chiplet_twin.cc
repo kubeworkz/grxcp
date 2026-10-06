@@ -1122,12 +1122,33 @@ void t_unbuilt() {
   pta_twin_write32(t, PTA_TWIN_CTRL, 0xFFFFFFF5u);   // every bit but CAL_NOW and MODEL_RST
   check("PTA_CTRL: the scheduler, the loop orders and the c930's feed options do not stick",
         pta_twin_read32(t, PTA_TWIN_CTRL) == PTA_TWIN_CTRL_EN);
-  pta_twin_write32(t, PTA_TWIN_CAL_PER, 1000);
+  // Six minutes of a 1 GHz shot clock, the board plan's B15, in the map's unit.
+  const uint64_t GHZ = 1000000000ull;
+  const uint32_t six_minutes = pta_twin_cal_per(360 * GHZ);
+  pta_twin_write32(t, PTA_TWIN_CAL_PER, six_minutes);
   pta_twin_write32(t, PTA_TWIN_CAL_THR, 0xFFFFFFFFu);
   pta_twin_run(t, 1u << 20);
   check("PTA_CAL_PER and PTA_CAL_THR store and read back, and schedule nothing",
-        pta_twin_read32(t, PTA_TWIN_CAL_PER) == 1000 && pta_twin_read32(t, PTA_TWIN_CAL_THR) == 0xFFFFFFu &&
+        pta_twin_read32(t, PTA_TWIN_CAL_PER) == six_minutes && pta_twin_read32(t, PTA_TWIN_CAL_THR) == 0xFFFFFFu &&
             pta_twin_read32(t, PTA_TWIN_CAL_CT) == 0 && !busy(t));
+  // The period's unit: the map's section 4.  It was single cycles, and six
+  // minutes of them does not fit the word.
+  check("PTA_CAL_PER counts 2^16 cycles: six minutes of a 1 GHz clock is 5,493,164, and an hour 54,931,641",
+        PTA_TWIN_CAL_PER_LOG2 == 16 && six_minutes == 5493164u && pta_twin_cal_per(3600 * GHZ) == 54931641u &&
+            360 * GHZ > 0xFFFFFFFFull);
+  check("and what it holds is the interval, to half a unit either way",
+        360 * GHZ - (static_cast<uint64_t>(six_minutes) << 16) < (1u << 15) &&
+            (static_cast<uint64_t>(six_minutes + 1) << 16) - 360 * GHZ > (1u << 15) &&
+            pta_twin_cal_per(65536) == 1 && pta_twin_cal_per(98303) == 1 && pta_twin_cal_per(98304) == 2 &&
+            pta_twin_cal_per(163839) == 2 && pta_twin_cal_per(163840) == 3);
+  check("zero is the period switched off, and no other interval reads as it",
+        pta_twin_cal_per(0) == 0 && pta_twin_cal_per(1) == 1 && pta_twin_cal_per(32767) == 1 &&
+            pta_twin_cal_per(32768) == 1);
+  check("an interval past the word's range is its largest value: 78 hours at 1 GHz",
+        pta_twin_cal_per(0xFFFFFFFFull << 16) == 0xFFFFFFFFu && pta_twin_cal_per((0xFFFFFFFFull << 16) - 32768) == 0xFFFFFFFFu &&
+            pta_twin_cal_per((0xFFFFFFFFull << 16) - 32769) == 0xFFFFFFFEu && pta_twin_cal_per(1ull << 48) == 0xFFFFFFFFu &&
+            pta_twin_cal_per(1ull << 60) == 0xFFFFFFFFu && pta_twin_cal_per(0xFFFFFFFFFFFFFFFFull) == 0xFFFFFFFFu &&
+            (0xFFFFFFFFull << 16) / GHZ / 3600 == 78);
   // Field widths, as the c930's register file has them.
   pta_twin_write32(t, PTA_TWIN_IMPAIR, 0xFFFFFFFFu);
   pta_twin_write32(t, PTA_TWIN_BITS, 0xFFFFFFFFu);

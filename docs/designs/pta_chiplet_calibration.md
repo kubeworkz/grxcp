@@ -247,6 +247,12 @@ register map records it as open (its §7, item 11). The two schedulers that
 predict were built to take fewer calibrations than the period allows, and
 neither has been run at version 2.
 
+*Closed the same day.* The map counts `PTA_CAL_PER` in units of 2¹⁶ cycles on
+the chiplet (its §4): 66 µs a unit at 1 GHz, six minutes is 5,493,164 of them,
+and the word reaches 78 hours. On the c930 it is still the core's cycles, and
+grx930's engine compares it so; a chiplet's engine would compare the cycles
+since the last calibration, less their low sixteen bits.
+
 ## 6. The engine, and the contract
 
 The FSM lives on the interface chip (B4) and owns: the probe sequence, the

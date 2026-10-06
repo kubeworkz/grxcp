@@ -60,7 +60,8 @@ FS = laser.FS                                  # 1 GS/s: B11
 INTERVAL_S = 360                               # B15: version 2 is calibrated every six minutes
 HOURLY_S = 3600                                # what section 4.3's table said of version 1: about hourly
 ROWS_V2 = (0.01, 0.05, 0.05)                   # B16: the lines together at 1%; a line and the level as they were
-PERIOD_BITS = 32                               # PTA_CAL_PER, in cycles: the register map's section 4
+PERIOD_BITS = 32                               # PTA_CAL_PER's width: the register map's section 4
+PERIOD_UNIT_LOG2 = 16                          # and its unit there, 2^16 cycles, since 2026-10-06
 CAL_AVERAGE = 16                               # probes a cell: pta_chiplet_calibration.md's section 3
 BANKS = 2
 BUDGET = noise.BUDGET                          # a tenth of a point: what a row of the budget costs
@@ -211,6 +212,16 @@ def period_bits(seconds=INTERVAL_S):
     return math.ceil(math.log2(interval_shots(seconds)))
 
 
+def period_units(seconds=INTERVAL_S):
+    """That interval as PTA_CAL_PER holds it: the nearest whole unit of 2^16 shot-clock cycles."""
+    return int(interval_shots(seconds) / 2 ** PERIOD_UNIT_LOG2 + 0.5)
+
+
+def period_reach_hours():
+    """The longest interval the word can hold."""
+    return (2 ** PERIOD_BITS - 1) * 2 ** PERIOD_UNIT_LOG2 / FS / 3600
+
+
 def cal_shots():
     """A calibration's probe shots: a row a shot, both banks, each probe averaged."""
     return BANKS * TILE[0] * CAL_AVERAGE
@@ -271,6 +282,8 @@ def main():
     print(f"  Calibrated every {INTERVAL_S // 60} minutes: {interval_shots():.1e} shots apart, {86400 // INTERVAL_S} times a day.  A calibration's")
     print(f"  probes are {cal_shots():,} shots, {cal_shots() / FS * 1e6:.1f} us, one part in {1 / duty():,.0f} of the tile's.  A count of shot-clock")
     print(f"  cycles needs {period_bits()} bits to hold the interval, and {period_bits(HOURLY_S)} for an hour; PTA_CAL_PER has {PERIOD_BITS}.")
+    print(f"  So it counts 2^{PERIOD_UNIT_LOG2} of them: {period_units():,} units for the interval, {period_units(HOURLY_S):,} for an hour,")
+    print(f"  and {period_reach_hours():.0f} hours at the most.")
     print(f"  The lines together at {ROWS_V2[0]:.0%}: {noise.db_hz(ROWS_V2[0]):.0f} dB/Hz over the shot rate, where {ROWS3[0]:.0%} is {noise.db_hz(ROWS3[0]):.0f}.")
     table((("budget", "as budgeted, points lost"),), lambda w, v, k: lost(w, v))
     table((("six", "six minutes of drift adds"), (("all", "rows"), "the three at 2%, 5%, 5% add"),
@@ -317,8 +330,9 @@ def findings():
     print(f"  6. B15, SIX MINUTES: VERSION 2 KEEPS WHAT IT BOUGHT ON TWO SETS OF THREE.  With a source at")
     print(f"     B16's rows and at the end of an interval it loses {held(m)[0][0]:.2f}, {held(f)[0][0]:.2f} and {held(i)[0][0]:.2f} points, which is")
     print(f"     {held(m)[1][0]:.2f}, {held(f)[1][0]:.2f} and {held(i)[1][0]:.2f} over its budget.  It costs {86400 // INTERVAL_S} calibrations a day where an hour was")
-    print(f"     {86400 // HOURLY_S}, and one part in {1 / duty() / 1e6:.0f} million of the tile's shots.  And it does not fit the register:")
-    print(f"     {period_bits()} bits of cycles at a shot a nanosecond, where PTA_CAL_PER has {PERIOD_BITS}.  Nor did an hour.")
+    print(f"     {86400 // HOURLY_S}, and one part in {1 / duty() / 1e6:.0f} million of the tile's shots.  As single cycles it did not fit")
+    print(f"     the register: {period_bits()} bits at a shot a nanosecond, where PTA_CAL_PER has {PERIOD_BITS}, and an hour did not")
+    print(f"     either.  The map now counts 2^{PERIOD_UNIT_LOG2} of them, and six minutes is {period_units():,} units.")
     print()
     r2, r1 = adds(i, 2, ("all", "rows"))[0], adds(i, 2, ("all", "v2 rows"))[0]
     print(f"  7. B16, 1%: IT BUYS {r2 - r1:.2f} OF A POINT ON THE INVERTED SET AND NOTHING ELSEWHERE.  There the")
@@ -440,6 +454,12 @@ def checks():
     assert (adds(m, 2, "tfln")[0], adds(i, 2, "tfln")[0]) == (2.35, 37.38)
     assert [adds(w, 2, "hour")[0] for w in WORKLOADS] == [0.12, 0.67, 1.99]
     assert 2 ** PERIOD_BITS / FS < 4.3                           # 32 bits of cycles is 4.3 seconds
+    #    In the map's unit both fit, to half a unit, and the word reaches 78 hours.
+    assert (period_units(), period_units(HOURLY_S)) == (5_493_164, 54_931_641)
+    assert all(period_units(s) < 2 ** PERIOD_BITS for s in (INTERVAL_S, HOURLY_S))
+    assert all(abs(period_units(s) * 2 ** PERIOD_UNIT_LOG2 - interval_shots(s)) <= 2 ** (PERIOD_UNIT_LOG2 - 1)
+               for s in (INTERVAL_S, HOURLY_S))
+    assert 78 < period_reach_hours() < 78.3 and period_bits() - PERIOD_UNIT_LOG2 < PERIOD_BITS
     assert [held(w)[0][0] for w in WORKLOADS] == [0.19, 0.60, 1.09]
     assert [held(w)[1][0] for w in WORKLOADS] == [0.04, 0.06, 0.48]
     assert all(held(w)[1][0] < BUDGET for w in (m, f)) and held(i)[1][0] > 4 * BUDGET
