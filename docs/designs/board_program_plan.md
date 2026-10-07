@@ -63,6 +63,14 @@ its own budget a reference network loses what an old one does, and by the
 plan's rule the three sets need 8, 8 and 16 times B5's where the old networks
 need 8, 16 and 16. The laser a board has to place is its brightest workload's
 and is unchanged, 1.4 to 14 W.
+The third sweep on them, the same day, drifted both kinds of network for
+three minutes to four hours (§4.3, at the end of its budget). In the mean,
+B15's six minutes holds a tenth of a point on all three sets for the
+reference networks, where it did not on the inverted set for the old ones,
+and nothing longer does. Under heavy drift a reference network loses half to
+two thirds of what an old one does. And a calibration leaves the reference
+networks about a tenth of a point short of their budget on two sets, which
+no row in this plan had looked for.
 X2 has made its predictions (§3.3), X1 its budget (§4.3), and P0, X3 and X4
 are drafted as [`board_icd.md`](board_icd.md),
 [`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) and
@@ -1838,6 +1846,87 @@ held: no drift and no source's noise. Version 2 and the working tile only.
 Whether to spend what B17 bought on a smaller laser is not decided here, and
 nothing in this plan asks for it yet (B14, at its end).
 
+*How long a calibration holds for the reference networks, 2026-10-07.*
+([`pta_reference_drift.py`](pta_reference_drift.py); grx930's design note, §5,
+"How long a calibration holds for a trained network".) B15's six minutes was
+chosen on the networks trained before, and it left one thing unrun even for
+them: the interval that would hold a tenth of a point on the inverted set,
+where six minutes adds 0.28. B17's reference networks had been drifted for six
+minutes and no longer. grx930's harness drifted both kinds for three minutes
+to four hours at version 2, five networks of each, by TFLT's fit.
+
+| | MNIST: trained before | Reference | Fashion-MNIST: trained before | Reference | MNIST inverted: trained before | Reference |
+|---|---|---|---|---|---|---|
+| As budgeted, points lost | 0.15 ± 0.02 | 0.07 ± 0.05 | 0.54 ± 0.22 | 0.47 ± 0.13 | 0.62 ± 0.07 | 0.52 ± 0.05 |
+| What drift adds to the budget: 3 minutes of TFLT's | +0.00 ± 0.03 | +0.03 ± 0.01 | −0.01 ± 0.10 | +0.08 ± 0.04 | +0.14 ± 0.11 | −0.01 ± 0.07 |
+| **6 minutes, B15's interval** | −0.06 ± 0.04 | +0.01 ± 0.01 | +0.08 ± 0.06 | +0.07 ± 0.09 | +0.28 ± 0.27 | +0.08 ± 0.11 |
+| 15 minutes | +0.00 ± 0.03 | +0.07 ± 0.03 | +0.19 ± 0.08 | +0.08 ± 0.04 | +0.33 ± 0.44 | +0.46 ± 0.25 |
+| 30 minutes | +0.04 ± 0.03 | +0.11 ± 0.02 | +0.27 ± 0.14 | +0.18 ± 0.08 | +0.54 ± 0.56 | +0.64 ± 0.22 |
+| An hour | +0.12 ± 0.05 | +0.07 ± 0.03 | +0.67 ± 0.31 | +0.32 ± 0.09 | +1.99 ± 1.26 | +1.26 ± 0.46 |
+| 2 hours | +0.25 ± 0.04 | +0.13 ± 0.04 | +1.41 ± 0.28 | +0.57 ± 0.04 | +5.75 ± 1.75 | +3.30 ± 0.93 |
+| 4 hours | +0.37 ± 0.08 | +0.36 ± 0.03 | +2.36 ± 0.57 | +1.31 ± 0.26 | +16.07 ± 3.09 | +7.18 ± 1.53 |
+| An hour, then calibrated | −0.06 ± 0.03 | +0.09 ± 0.02 | +0.02 ± 0.11 | +0.13 ± 0.10 | −0.01 ± 0.05 | −0.01 ± 0.05 |
+| An hour of TFLN's | +2.35 ± 0.17 | +1.11 ± 0.18 | +7.29 ± 1.50 | +4.23 ± 1.00 | +37.38 ± 5.74 | +25.12 ± 5.09 |
+| Held, with B16's source: at the end of 6 minutes | +0.04 ± 0.02 | +0.04 ± 0.03 | +0.06 ± 0.15 | +0.15 ± 0.08 | +0.48 ± 0.29 | +0.24 ± 0.20 |
+| 30 minutes | +0.15 ± 0.06 | +0.08 ± 0.04 | +0.39 ± 0.13 | +0.20 ± 0.08 | +0.76 ± 0.67 | +0.87 ± 0.39 |
+| An hour | +0.19 ± 0.03 | +0.12 ± 0.03 | +0.82 ± 0.34 | +0.29 ± 0.12 | +2.26 ± 1.34 | +1.53 ± 0.60 |
+| **How long a calibration holds, by the rule** | **30 minutes** | **15 minutes** | **6 minutes** | **15 minutes** | **under 3 minutes** | **6 minutes** |
+
+The rule is the one a row of the budget is sized by: the longest interval run
+at which drift adds under a tenth of a point, every shorter one doing so too.
+
+| | MNIST | Fashion-MNIST | MNIST, inverted |
+|---|---|---|---|
+| What drift adds, the reference less the old, seed by seed: 30 minutes | +0.06 ± 0.04 | −0.09 ± 0.12 | +0.10 ± 0.45 |
+| What drift adds, the reference less the old, seed by seed: an hour | −0.06 ± 0.08 | −0.35 ± 0.23 | −0.74 ± 0.90 |
+| What drift adds, the reference less the old, seed by seed: 2 hours | −0.11 ± 0.05 | **−0.83 ± 0.25** | −2.45 ± 1.46 |
+| What drift adds, the reference less the old, seed by seed: 4 hours | −0.02 ± 0.08 | −1.05 ± 0.77 | −8.89 ± 3.63 |
+| What drift adds, the reference less the old, seed by seed: an hour of TFLN's | **−1.24 ± 0.30** | **−3.06 ± 0.79** | **−12.26 ± 4.30** |
+| Held, right: the reference at the end of 30 minutes, less at the end of 6 minutes | −0.03 ± 0.06 | −0.05 ± 0.09 | **−0.63 ± 0.20** |
+| Held, right: the reference at the end of an hour, less at the end of 6 minutes | **−0.07 ± 0.02** | −0.15 ± 0.13 | **−1.30 ± 0.43** |
+| The reference held at an hour, less the old held at 6 minutes | +0.31 ± 0.12 | +0.24 ± 0.13 | +1.06 ± 1.04 |
+
+- **In the mean, B15's six minutes holds a tenth on all three sets for the
+  reference networks.** It adds 0.01, 0.07 and 0.08 of a point to their
+  budget. Two of the three have errors their own size: five networks put them
+  under 0.04, 0.32 and 0.38 at one in twenty, and no nearer a tenth than that.
+  For the old networks on the inverted set no interval that was run holds a
+  tenth even in the mean: three minutes adds 0.14 ± 0.11. That is the thing
+  B15 left unrun.
+- **And nothing longer does.** A quarter of an hour adds 0.46 ± 0.25 on the
+  inverted set. By the rule a calibration holds 15, 15 and 6 minutes for the
+  reference networks, and 30 minutes, 6 minutes and under 3 for the old ones.
+  The inverted set sizes the interval for both, and the interval is B15's.
+- **Under heavy drift a reference network loses half to two thirds of what
+  an old one does.** An hour of TFLN's adds 1.11, 4.23 and 25.12 points for
+  2.35, 7.29 and 37.38, and seed by seed that is clear on all three sets. Two
+  hours of TFLT's on Fashion-MNIST is clear, 0.57 for 1.41. An hour of it is
+  0.32 for 0.67 and 1.26 for 1.99, and is not clear. So unlike the laser,
+  drift is something the training buys back, where there is a lot of it.
+- **At half an hour and under nothing can be told between them.** None of the
+  twelve differences is clear, and on the inverted set the reference networks
+  are no better: 0.46 for 0.33 at a quarter of an hour. What training buys
+  against drift, it buys at intervals this plan does not mean to run at.
+- **A calibration leaves the reference networks about a tenth short on two
+  sets.** After an hour and a calibration they are 0.09 ± 0.02, 0.13 ± 0.10
+  and −0.01 ± 0.05 from their budget, where the old ones are −0.06, 0.02 and
+  −0.01. MNIST's is clear, and is nine images in ten thousand. Every drift
+  row in this plan starts from weights as they were written and not from a
+  calibration, so what a calibrated and then drifted tile costs has not been
+  run for either kind.
+- **A way back, if 240 calibrations a day cost too much.** Held, with B16's
+  source at the end of the interval, half an hour costs the reference networks
+  0.03, 0.05 and 0.63 of a point against six minutes, and an hour 0.07, 0.15
+  and 1.30. At an hour, 24 a day, they are 0.31, 0.24 and 1.06 points ahead of
+  the old networks at six minutes in the mean, and clear on none of the three.
+
+It is the same model as everything above. Both fits are a Mach-Zehnder's
+bias, every cell drifts on its own and none together, and the intervals are
+the seven that were run. The reference networks were trained with Gaussian
+noise on their sums and not against a drifted weight. By the rule the
+interval is six minutes for the reference networks as it was for the old
+ones, so nothing here asks B15 to move.
+
 *The ADC's row, since the survey (2026-10-04).* Relaxing it saves 3 to 106 mW,
 and the low end is the published state of the art: the cheapest converters that
 sample this fast already have the seventh bit. So of the two rows, relaxing the
@@ -2641,6 +2730,19 @@ the word reaches 78 hours. The twin carries the unit and the conversion, and
 its gate holds both. The map's version is unchanged, since nothing had been
 built to a period in cycles.
 
+*On the reference networks, 2026-10-07* (§4.3, at the end of its budget;
+[`pta_reference_drift.py`](pta_reference_drift.py)). By the rule above the
+interval is still six minutes. For B17's reference networks six minutes adds
+0.01, 0.07 and 0.08 of a point on the three sets, which is under a tenth on
+all of them in the mean and is not shown to be on the two harder ones, and a
+quarter of an hour adds 0.46 on the inverted set. On the third thing that
+would reopen this, an interruption that costs too much: half an hour, 48 a
+day, costs the reference networks 0.03, 0.05 and 0.63 of a point held, and an
+hour, 24 a day, 0.07, 0.15 and 1.30. And one thing it shows up: after a
+calibration the reference networks are 0.09 and 0.13 of a point short of
+their budget on MNIST and Fashion-MNIST, and no row here starts from a
+calibration.
+
 **What it does not settle.** The inverted set, where six minutes adds 0.28 ±
 0.27, and the interval that would hold a tenth there was not run. TFLN, whose
 hour adds 2.4 to 37 points and whose interval is still "within minutes". A
@@ -2777,9 +2879,10 @@ points lower on its host on the two harder sets.
 networks': which of version 1's rows carry its cost, the menu, drift by the
 hour, the source's rows one at a time, the laser's multiples, depth, and
 every tile but the working one. None of it had been run on the reference
-networks when this was decided. *Two things have been since, on 2026-10-07
-(§4.3, at the end of its budget): the source's rows, and the laser, which is
-8, 8 and 16 times for the old networks' 8, 16 and 16.*
+networks when this was decided. *Three things have been since, on 2026-10-07
+(§4.3, at the end of its budget): the source's rows; the laser, which is
+8, 8 and 16 times for the old networks' 8, 16 and 16; and drift by the
+interval, which leaves B15's six minutes where it was.*
 What was run on them is the working tile at v1 and at version 2, as budgeted
 and as held. Over those four and the three sets, what the tile costs them in
 points lost is smaller than it cost the old ones in 11 cells of 12, and in
