@@ -50,6 +50,11 @@ the same, because version 2 is worth as much to those networks as to the old
 ones, and they were made the reference for every later sweep (B17). Held at
 version 2 they are right 97.64, 87.27 and 94.63% of the time and lose 0.11,
 0.62 and 0.76 points to it.
+The first sweep on those networks, on 2026-10-07, ran them at B16's 1% and at
+the 2% it replaced (§4.3, at the end of its budget). Held as the chip is held,
+the 1% buys them nothing on any of the three sets, where it bought the old
+networks a tenth of a point on the inverted set. Whether B16 keeps it is open
+(§7).
 X2 has made its predictions (§3.3), X1 its budget (§4.3), and P0, X3 and X4
 are drafted as [`board_icd.md`](board_icd.md),
 [`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) and
@@ -1678,6 +1683,77 @@ networks trained for eight epochs with 10% of noise are the reference from
 here on (B17): a sweep run after 2026-10-06 is of those, and every figure
 above this block is of the networks trained before.
 
+*The reference networks at the 2% and at the 1%, 2026-10-07.*
+([`pta_shared_row.py`](pta_shared_row.py); grx930's design note, §5, "Does a
+trained network need the 1%?".) B16 holds the row a source's lines share to 1%
+and not 2%, on what the networks trained before lost on the inverted set, and
+lists a network trained for the tile as one that may not need it. B17's
+reference networks had been held at the 1% only. grx930's harness has now run
+them at both, in the first sweep on the reference networks, with the networks
+trained before beside them row for row. Version 2 on the working tile, five
+networks of each kind.
+
+What a row adds to version 2 as budgeted, in points, network by network:
+
+| | MNIST: trained before | Reference | Fashion-MNIST: trained before | Reference | MNIST inverted: trained before | Reference |
+|---|---|---|---|---|---|---|
+| The lines together, 1% | 0.01 ± 0.02 | 0.03 ± 0.02 | 0.04 ± 0.04 | 0.02 ± 0.03 | 0.13 ± 0.08 | 0.00 ± 0.03 |
+| 2% | 0.02 ± 0.02 | 0.06 ± 0.03 | 0.03 ± 0.04 | −0.06 ± 0.02 | 0.24 ± 0.05 | 0.05 ± 0.05 |
+| 5% | 0.02 ± 0.05 | 0.08 ± 0.03 | 0.01 ± 0.08 | 0.06 ± 0.03 | 0.90 ± 0.13 | 0.46 ± 0.10 |
+| A line on its own, 5% | 0.05 ± 0.05 | 0.04 ± 0.04 | 0.14 ± 0.12 | 0.16 ± 0.08 | 0.25 ± 0.07 | 0.00 ± 0.03 |
+| The lines' level, 5% | 0.03 ± 0.03 | 0.02 ± 0.02 | 0.01 ± 0.07 | 0.02 ± 0.05 | 0.17 ± 0.06 | 0.12 ± 0.20 |
+| All three: 2%, 5%, 5% | 0.06 ± 0.03 | 0.06 ± 0.03 | 0.09 ± 0.13 | 0.06 ± 0.06 | 0.37 ± 0.07 | 0.24 ± 0.24 |
+| All three: 1%, 5%, 5% | 0.04 ± 0.04 | 0.07 ± 0.04 | 0.04 ± 0.11 | 0.03 ± 0.05 | 0.28 ± 0.06 | 0.16 ± 0.19 |
+| Six minutes of TFLT's drift | −0.06 ± 0.04 | 0.01 ± 0.01 | 0.08 ± 0.06 | 0.07 ± 0.09 | 0.28 ± 0.27 | 0.08 ± 0.11 |
+| Six minutes and 2%, 5%, 5% | 0.09 ± 0.02 | 0.02 ± 0.04 | 0.07 ± 0.14 | 0.11 ± 0.09 | 0.59 ± 0.32 | 0.20 ± 0.20 |
+| Six minutes and 1%, 5%, 5% | 0.04 ± 0.02 | 0.04 ± 0.03 | 0.06 ± 0.15 | 0.15 ± 0.08 | 0.48 ± 0.29 | 0.24 ± 0.20 |
+
+And the question itself: how often a network is right with the shared row at
+1%, less how often at 2%, in points, network by network.
+
+| | MNIST: trained before | Reference | Fashion-MNIST: trained before | Reference | MNIST inverted: trained before | Reference |
+|---|---|---|---|---|---|---|
+| The lines together, alone | +0.02 ± 0.02 | +0.03 ± 0.01 | −0.01 ± 0.03 | **−0.08 ± 0.02** | +0.11 ± 0.06 | +0.04 ± 0.03 |
+| Among the three | +0.02 ± 0.02 | −0.01 ± 0.01 | +0.05 ± 0.02 | +0.03 ± 0.03 | **+0.09 ± 0.02** | +0.08 ± 0.06 |
+| Held: the three, six minutes on | **+0.04 ± 0.00** | −0.02 ± 0.02 | +0.01 ± 0.04 | −0.03 ± 0.04 | +0.12 ± 0.06 | −0.04 ± 0.04 |
+
+The two rows of a pair run from one seed and share the source's draws at half
+the size, so a pair's difference has an error of a few hundredths. A hundredth
+of a point is one image in ten thousand. Those in bold are outside chance at
+one in twenty for five networks. One of them is four images. And one is the
+other way: with the row alone, on Fashion-MNIST, the reference networks are
+right eight images more often at 2% than at 1%.
+
+- **Held as the chip is held, the 1% buys the reference networks nothing.** At
+  the end of six minutes, with a line and the level at 5%, they are right
+  97.66, 87.30 and 94.67% of the time with the shared row at 2%, and 97.64,
+  87.27 and 94.63% at 1%. The difference is the wrong way on all three sets
+  and clear on none, and five networks put it under 0.02, 0.08 and 0.08 of a
+  point at one in twenty. A row of the budget is sized to a tenth.
+- **As budgeted it may buy them what it bought the old ones, and that is not
+  shown.** With no drift, among the three rows, the 1% is worth 0.08 ± 0.06 on
+  the inverted set, where it was worth 0.09 ± 0.02 to the networks trained
+  before. The same size at nearly four times the error.
+- **It did buy the old networks what B16 said.** The 0.09 on the inverted set
+  is five of its errors. Held it is 0.12 ± 0.06 there.
+- **The rows themselves cost a trained network less on the inverted set.** The
+  lines together at 2% add 0.05 where they added 0.24, and at 5% 0.46 for
+  0.90. A line on its own at 5% adds nothing where it added 0.25, and that is
+  the one difference of the ten that is clear, 0.24 ± 0.05 seed by seed. For
+  the shared row to add about a tenth there it can be 2% for the reference
+  networks, where it had to be 1%.
+- **And the three together are still not shown inside a tenth there, at either
+  size.** 0.24 ± 0.24 at 2% and 0.16 ± 0.19 at 1%. It is one network of the
+  five: the lines' level at 5% costs seed 4 0.86 of a point, and the other
+  four between a quarter of a point gained and 0.17 lost. On MNIST and on
+  Fashion-MNIST the three add 0.06 at 2%.
+
+It is the same model as everything above. The source's term is first order
+and on the host's side of the line, the drift is a Mach-Zehnder's fit, and the
+reference networks were trained with Gaussian noise and not with a source's.
+The two rows a line carries were run at 5% and at no other size. Whether B16
+keeps its 1% is not decided here (§7).
+
 *The ADC's row, since the survey (2026-10-04).* Relaxing it saves 3 to 106 mW,
 and the low end is the published state of the art: the cheapest converters that
 sample this fast already have the seventh bit. So of the two rows, relaxing the
@@ -2533,6 +2609,22 @@ network trained for the tile, which may not need it. *Needed by:* P0's link
 budget). They were held at this decision's 1% and not at 2%, so the third of
 those is still untested.
 
+*They were run at both on 2026-10-07* (§4.3, at the end of its budget;
+[`pta_shared_row.py`](pta_shared_row.py)), which by then were B17's reference
+networks. Held as this plan holds the chip, at the end of six minutes with a
+line and the level at 5%, the 1% is worth −0.02 ± 0.02, −0.03 ± 0.04 and
+−0.04 ± 0.04 of a point to them on the three sets, and under a tenth on each
+at one in twenty. So the third of those is met: held, a network trained for
+the tile does not need this decision. For the networks it was made on, the
+record above stands, 0.09 ± 0.02 of a point on the inverted set, and 0.12 ±
+0.06 held.
+
+What that leaves to weigh. The 1% costs 6 dB of the comb's shared noise and
+no comb has been chosen, so nothing here says it is dear. It buys the
+reference networks nothing where the chip is held. And it still buys a tenth
+of a point for a network that was not trained for the tile, on a workload that
+lights most of its rows. **Whether B16 keeps the 1% is not decided here.**
+
 **B17 — The networks the budget is run on: eight epochs, with noise of 10% on
 their sums.** *Settled 2026-10-06.*
 
@@ -2586,8 +2678,9 @@ and as held. Over those four and the three sets, what the tile costs them in
 points lost is smaller than it cost the old ones in 11 cells of 12, and in
 none by more than 1.8 of its errors. So the prices B14, B15 and B16 were
 chosen on are not shown to be wrong for these networks, and are not shown to
-be right for them either. Whether a trained network needs B16's 1% is still
-untested. And the accuracies this plan quotes for the inverted set before this
+be right for them either. ~~Whether a trained network needs B16's 1% is still
+untested.~~ *Run on 2026-10-07: held, it does not (B16, at its end).* And the
+accuracies this plan quotes for the inverted set before this
 decision stay about two points low.
 
 **It is a working reference and not a network trained for the tile.** Three
