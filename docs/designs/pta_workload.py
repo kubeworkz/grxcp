@@ -39,11 +39,14 @@ DERIVED here:
 WHAT THIS IS NOT:
 
   - a network trained for the tile.  None of these was trained with the tile's
-    errors in the loop, and one that was may take more of them
+    errors in the loop, and one that was may take more of them.  (Tried on
+    2026-10-06: pta_trained.py)
   - a network trained well.  The trainer was MNIST's, unchanged.  It does not
     take its inputs less their mean, which is the likely reason the inverted
     set trains worse and was not tested; and a network that did would still
-    need that mean sent as light
+    need that mean sent as light.  (Half of it was something else, found on
+    2026-10-06: the trainer's rule had stopped those networks after three to
+    seven epochs.  At eight they are two points better.  pta_trained.py)
   - another kind of network.  Fashion-MNIST is MNIST's size and shape.  No
     convolution, no residual path, no attention has been run
   - a measurement of a tile
