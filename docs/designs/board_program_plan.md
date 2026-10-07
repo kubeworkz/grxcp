@@ -53,8 +53,16 @@ version 2 they are right 97.64, 87.27 and 94.63% of the time and lose 0.11,
 The first sweep on those networks, on 2026-10-07, ran them at B16's 1% and at
 the 2% it replaced (§4.3, at the end of its budget). Held as the chip is held,
 the 1% buys them nothing on any of the three sets, where it bought the old
-networks a tenth of a point on the inverted set. Whether B16 keeps it is open
-(§7).
+networks a tenth of a point on the inverted set. B16 keeps the 1% all the
+same, decided that day: nothing says it is dear, and it still buys that tenth
+for a network that was not trained for the tile. If a comb cannot be had at
+−130 dB/Hz, 2% is known to cost the reference networks nothing (§7).
+The second sweep on them, the same day, put version 2's rows under a laser
+(§4.3, at the end of its budget). Training with noise does not buy laser: over
+its own budget a reference network loses what an old one does, and by the
+plan's rule the three sets need 8, 8 and 16 times B5's where the old networks
+need 8, 16 and 16. The laser a board has to place is its brightest workload's
+and is unchanged, 1.4 to 14 W.
 X2 has made its predictions (§3.3), X1 its budget (§4.3), and P0, X3 and X4
 are drafted as [`board_icd.md`](board_icd.md),
 [`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) and
@@ -1751,8 +1759,84 @@ right eight images more often at 2% than at 1%.
 It is the same model as everything above. The source's term is first order
 and on the host's side of the line, the drift is a Mach-Zehnder's fit, and the
 reference networks were trained with Gaussian noise and not with a source's.
-The two rows a line carries were run at 5% and at no other size. Whether B16
-keeps its 1% is not decided here (§7).
+The two rows a line carries were run at 5% and at no other size. ~~Whether B16
+keeps its 1% is not decided here (§7).~~ *It keeps it: decided the same day
+(B16, at its end).*
+
+*The laser the reference networks need, 2026-10-07.*
+([`pta_reference_laser.py`](pta_reference_laser.py); grx930's design note, §5,
+"The laser a trained network needs".) The laser is most of what a MAC costs,
+and B14's table has it at 8, 16 and 16 times B5's on the three data sets. Those
+are the networks trained before. B17's reference networks were trained with
+Gaussian noise on their sums, and a receiver's noise is Gaussian noise on a
+sum, so of everything in this plan they were the likeliest to need less laser.
+grx930's harness put version 2's rows under lasers of 2 to 32 times B5's on
+both kinds of network, five of each, with the hidden layer's rescale a bit down
+and at the rule's.
+
+| | MNIST: trained before | Reference | Fashion-MNIST: trained before | Reference | MNIST inverted: trained before | Reference |
+|---|---|---|---|---|---|---|
+| As budgeted, points lost | 0.15 ± 0.02 | 0.07 ± 0.05 | 0.54 ± 0.22 | 0.47 ± 0.13 | 0.62 ± 0.07 | 0.52 ± 0.05 |
+| Over that, the rescale a bit down: 2 times B5's laser | +0.67 ± 0.06 | +0.65 ± 0.10 | +3.53 ± 0.89 | +4.06 ± 0.32 | +4.68 ± 0.82 | +4.23 ± 0.35 |
+| 4 times | +0.10 ± 0.05 | +0.18 ± 0.03 | +1.03 ± 0.30 | +1.10 ± 0.13 | +1.14 ± 0.16 | +0.96 ± 0.12 |
+| 8 times | −0.04 ± 0.03 | +0.03 ± 0.02 | +0.20 ± 0.14 | +0.09 ± 0.06 | +0.30 ± 0.10 | +0.17 ± 0.07 |
+| 16 times | −0.06 ± 0.04 | +0.03 ± 0.02 | +0.01 ± 0.08 | −0.10 ± 0.10 | +0.02 ± 0.08 | −0.02 ± 0.06 |
+| 32 times | −0.03 ± 0.04 | +0.02 ± 0.03 | −0.12 ± 0.06 | −0.17 ± 0.08 | +0.01 ± 0.07 | −0.08 ± 0.04 |
+| **The laser it needs, by the rule** | **8 times** | **8 times** | **16 times** | **8 times** | **16 times** | **16 times** |
+| Which is | 0.7–7 W | 0.7–7 W | 1.4–14 W | 0.7–7 W | 1.4–14 W | 1.4–14 W |
+| A MAC at it, every cell in use | 164–1,368 fJ | 164–1,368 fJ | 250–2,226 fJ | 164–1,368 fJ | 250–2,226 fJ | 250–2,226 fJ |
+| At the rule's rescale it needs | 8 times | 16 times | 32 times | 32 times | 32 times | 32 times |
+
+The rule is [`pta_tighten.py`](pta_tighten.py)'s, as B14 used it: the least
+laser at which a kind of network is within a tenth of a point of what it loses
+as budgeted, every larger one being so too.
+
+| | MNIST | Fashion-MNIST | MNIST, inverted |
+|---|---|---|---|
+| Right, percent: the reference networks at 16 times | 97.65 | 87.51 | 94.88 |
+| At 8 times | 97.65 | 87.33 | 94.70 |
+| 8 times less 16, network by network | −0.01 ± 0.02 | −0.19 ± 0.08 | **−0.19 ± 0.02** |
+| The networks trained before, at 16 times | 97.36 | 86.92 | 92.72 |
+| The reference at 8, less those at 16, seed by seed | **+0.29 ± 0.09** | +0.40 ± 0.17 | **+1.97 ± 0.56** |
+| What 8 times costs over the budget: the reference less the old, seed by seed | +0.07 ± 0.04 | −0.11 ± 0.13 | −0.13 ± 0.13 |
+
+- **Training with noise does not buy laser.** Under each laser a reference
+  network is over its own budget by what an old one is over its own. At 4
+  times it is 0.18, 1.10 and 0.96 of a point, for 0.10, 1.03 and 1.14. Seed by
+  seed, on the two harder sets, none of the twenty differences is clear. Why
+  not is not shown here. It is not that the laser's noise was the wrong size
+  to have trained for: grx930's note has what its probe says a small laser
+  puts on a sum, and it is about the tenth of an rms these networks were
+  trained with.
+- **So by the rule they need 8, 8 and 16 times, where the old ones need 8, 16
+  and 16.** One of three is halved, and by a hundredth of a point: on
+  Fashion-MNIST at 8 times they are 0.09 ± 0.06 over their budget, against the
+  rule's tenth. That is not a result to build on. And the laser a board has to
+  place is its brightest workload's, which is 16 times and 1.4 to 14 W for
+  both kinds.
+- **The rule reads means to the hundredth, and one figure in B14's table turns
+  on that too.** On MNIST at 4 times the old networks are 0.096 of a point
+  over, which the rule reads as a tenth and not within it. Read exactly they
+  would need 4 times and not 8. B14's table has 8, and it stays: MNIST does not
+  size the laser.
+- **Half the laser costs a reference network a fifth of a point on the two
+  harder sets.** 0.19 on each, where it costs the old networks 0.19 and 0.28.
+- **And at half the laser they are still ahead of the old networks at all of
+  it**, by 0.29, 0.40 and 1.97 points. That is what B17 bought, and none of it
+  is the laser's doing. It is there to spend if a laser of 1.4 to 14 W cannot
+  be placed: 8 times is 0.7 to 7 W and a MAC of 164 to 1,368 fJ on every set.
+- **The rescale a bit down still halves the laser at version 2, for both
+  kinds.** At the rule's rescale the old networks need 8, 32 and 32 times and
+  the reference 16, 32 and 32. Only the old networks on MNIST get nothing from
+  it. That is the laser at the rule's shift, which B14 listed as not rerun.
+
+It is the same model as everything above. Under a laser the receiver's noise
+is Gaussian, and the light's row stays the budget's 30 photons while the laser
+multiplies, where a real laser moves both. The multiples are octaves: "8
+times" is somewhere above 4 and no more than 8. Nothing under a laser was
+held: no drift and no source's noise. Version 2 and the working tile only.
+Whether to spend what B17 bought on a smaller laser is not decided here, and
+nothing in this plan asks for it yet (B14, at its end).
 
 *The ADC's row, since the survey (2026-10-04).* Relaxing it saves 3 to 106 mW,
 and the low end is the published state of the art: the cheapest converters that
@@ -2462,6 +2546,9 @@ under version 2. Not restated, and not run at it:
   1%.*
 - Depth, and every tile but the working one.
 - The two scorecards of §8's question 1, and the laser at the rule's shift.
+  *The laser at the rule's shift was run at version 2 on 2026-10-07, on the
+  working tile (§4.3, at the end of its budget): 8, 32 and 32 times, where a
+  bit down it is 8, 16 and 16. The scorecards were not.*
 - C3's and X3's measurements, which were made at version 1's settings.
 
 **It is a working budget and not a specification.** Five things would reopen
@@ -2473,6 +2560,16 @@ that cannot be had near the survey's price; a laser of 1.4 to 14 W that the
 board cannot place (B5); or a price for the seventh activation bit and the
 programming error that makes all six rows worth having. *Needed by:* X1's
 rows, P0's links 3 and 4, P1, L3 and X3.
+
+*On the fourth, 2026-10-07* (§4.3, at the end of its budget;
+[`pta_reference_laser.py`](pta_reference_laser.py)). The laser was run on
+B17's reference networks, and they need what the old ones need on the
+workload that sizes it: 16 times, 1.4 to 14 W. Training does not buy laser.
+What it leaves is a way back, if that laser cannot be placed. At 8 times, 0.7
+to 7 W, the reference networks give up 0.01, 0.19 and 0.19 of a point, and
+are still 0.29, 0.40 and 1.97 points ahead of the old networks at 16. And one
+figure in the table above turns on a hundredth of a point: MNIST's 8 times at
+version 2 is 4 if the rule is read exactly.
 
 *The first of the five was tried on 2026-10-06* (§4.3, at the end of its
 budget; [`pta_trained.py`](pta_trained.py)). As it is worded above, it is
@@ -2623,7 +2720,14 @@ What that leaves to weigh. The 1% costs 6 dB of the comb's shared noise and
 no comb has been chosen, so nothing here says it is dear. It buys the
 reference networks nothing where the chip is held. And it still buys a tenth
 of a point for a network that was not trained for the tile, on a workload that
-lights most of its rows. **Whether B16 keeps the 1% is not decided here.**
+lights most of its rows. ~~Whether B16 keeps the 1% is not decided here.~~
+
+*Decided the same day:* **B16 keeps the 1%.** Nothing says it is dear, and it
+is the only one of the source's rows that a network not trained for the tile
+is known to need on a bright workload. What the run leaves behind is a way
+back. If a comb cannot be had at −130 dB/Hz, which is the first of the three
+things above, 2% and −124 dB/Hz cost the reference networks nothing where the
+chip is held, and this plan can take that without another sweep.
 
 **B17 — The networks the budget is run on: eight epochs, with noise of 10% on
 their sums.** *Settled 2026-10-06.*
@@ -2672,7 +2776,10 @@ points lower on its host on the two harder sets.
 **What it does not settle.** Everything dated before this decision is the old
 networks': which of version 1's rows carry its cost, the menu, drift by the
 hour, the source's rows one at a time, the laser's multiples, depth, and
-every tile but the working one. None of it was run on the reference networks.
+every tile but the working one. None of it had been run on the reference
+networks when this was decided. *Two things have been since, on 2026-10-07
+(§4.3, at the end of its budget): the source's rows, and the laser, which is
+8, 8 and 16 times for the old networks' 8, 16 and 16.*
 What was run on them is the working tile at v1 and at version 2, as budgeted
 and as held. Over those four and the three sets, what the tile costs them in
 points lost is smaller than it cost the old ones in 11 cells of 12, and in
