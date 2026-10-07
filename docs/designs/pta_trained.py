@@ -43,6 +43,11 @@ the seeds as strangers, and it can differ in the last digit from the difference
 of two rounded means: grx930's note subtracts the means and says 0.47, 0.25, 0.64
 and 1.68 where this says 0.46, 0.24, 0.65 and 1.67.
 
+THE PLAN THEN CHOSE, 2026-10-06.  B14 stands: the chip is held to version 2, for
+reading 5's reason.  And B17: the networks trained for eight epochs with noise of
+10% are the reference from that day.  A sweep run since uses them, and no sweep
+before it was run again.  Section 7 and reading 8 are the working point on them.
+
 HOW SURE.  Five networks.  A difference has to be 2.8 of its own errors to be
 outside chance at one in twenty, and well over a hundred differences are printed
 below, so half a dozen would reach that with nothing behind them.  The readings
@@ -79,6 +84,7 @@ CONTROL = 0.0                                  # eight epochs, no noise
 NOISES = (0.05, 0.1, 0.2)                      # eight epochs, with that much
 KINDS = (BEFORE, CONTROL) + NOISES
 TILE_SIZED = 0.1                               # the probe puts a v1 tile's error at about a tenth of a sum's rms
+REFERENCE = TILE_SIZED                         # B17: eight epochs with that much noise are the reference networks
 EPOCHS = 8
 SEEDS = 5
 HOST, V1, V2, V1_HELD, V2_HELD = range(5)      # a network's five figures
@@ -272,6 +278,22 @@ def holding_adds(w, kind, version):
     return over(w, kind, V1 if version == 1 else V2, kind, V1_HELD if version == 1 else V2_HELD)
 
 
+def reference_rows(w):
+    """Section 7's rows for one data set: a label, the networks trained before, the
+    reference networks, and the second over the first seed by seed."""
+    def row(label, col, what):
+        d = over(w, REFERENCE, col, BEFORE, col) if what is acc else lost_moved(w, REFERENCE, col)
+        return label, pm(what(w, BEFORE, col)), pm(what(w, REFERENCE, col)), dpm(d)
+    return (
+        row("right, percent: on its host", HOST, acc),
+        row("version 2 as budgeted", V2, acc),
+        row("version 2 as held", V2_HELD, acc),
+        row("points lost: v1 as budgeted", V1, lost),
+        row("version 2 as budgeted", V2, lost),
+        row("version 2 as held", V2_HELD, lost),
+    )
+
+
 def errors(x):
     """A difference in its own standard errors."""
     return x[0] / x[1] if x[1] else 0.0
@@ -366,6 +388,13 @@ def main():
     for k, name in kinds[1:]:
         print(f"  {name:<26}" + "".join(f"{dpm(both(w, k)):>18}{'':>18}" for w in WORKLOADS))
 
+    section(f"7. B17: the reference networks, {EPOCHS} epochs with noise of {REFERENCE:.0%}, beside the ones trained before")
+    for w in WORKLOADS:
+        print(f"  {w:<30}{'trained before':>18}{'the reference':>18}{'over them':>18}")
+        for name, was, now, moved in reference_rows(w):
+            print(f"    {name:<28}{was:>18}{now:>18}{moved:>18}")
+    print("  Epochs: " + ", ".join(f"{EPOCHS} for {stat(STOPPED[w])[0]:.1f} on {w}" for w in WORKLOADS) + ".")
+
     said = io.StringIO()
     with contextlib.redirect_stdout(said):
         findings()
@@ -377,7 +406,7 @@ def findings():
     m, f, i = WORKLOADS
     ten = TILE_SIZED
     print()
-    print("What this says, seven readings.")
+    print("What this says, eight readings.")
     print()
     print("  1. THE RULE THAT STOPS A TRAINING HAD LEFT THE INVERTED SET'S NETWORKS HALF TRAINED.  Eight")
     print(f"     epochs with no noise make them {dpm(epochs_buy(i, HOST))} points better on their host,")
@@ -433,6 +462,18 @@ def findings():
     print(f"     it was worth before.  The {ten:.0%} network at version 2 is {dpm(both(m))}, {dpm(both(f))} and")
     print(f"     {dpm(both(i))} over the old one at v1, and {dpm(over(m, ten, V2, BEFORE, V2))}, {dpm(over(f, ten, V2, BEFORE, V2))} and {dpm(over(i, ten, V2, BEFORE, V2))} over")
     print("     the old one at version 2.  Whether that reopens B14 is the plan's to say.")
+    print("     (It said so the same day: B14 stands.)")
+    print()
+    ref = REFERENCE
+    print("  8. B17: THE REFERENCE NETWORKS ARE 0.4 OF A POINT TO OVER TWO POINTS BETTER WHERE THE CHIP IS")
+    print(f"     HELD, AND LOSE NO MORE TO IT.  Held at version 2 they are right {acc(m, ref, V2_HELD)[0]:.2f}, {acc(f, ref, V2_HELD)[0]:.2f} and {acc(i, ref, V2_HELD)[0]:.2f}% of")
+    print(f"     the time, where the old ones were right {acc(m, BEFORE, V2_HELD)[0]:.2f}, {acc(f, BEFORE, V2_HELD)[0]:.2f} and {acc(i, BEFORE, V2_HELD)[0]:.2f}%: {dpm(over(m, ref, V2_HELD, BEFORE, V2_HELD))},")
+    print(f"     {dpm(over(f, ref, V2_HELD, BEFORE, V2_HELD))} and {dpm(over(i, ref, V2_HELD, BEFORE, V2_HELD))} more, all three clear.  They lose {pm(lost(m, ref, V2_HELD))},")
+    print(f"     {pm(lost(f, ref, V2_HELD))} and {pm(lost(i, ref, V2_HELD))} points to it, for {lost(m, BEFORE, V2_HELD)[0]:.2f}, {lost(f, BEFORE, V2_HELD)[0]:.2f} and {lost(i, BEFORE, V2_HELD)[0]:.2f}.  Over the four")
+    twelve = [lost_moved(w, ref, c) for w in WORKLOADS for c in ON_TILE]
+    print(f"     tiles and three sets the loss is smaller in {sum(x[0] < 0 for x in twelve)} cells of {len(twelve)}, and in none by")
+    print(f"     more than {max(abs(errors(x)) for x in twelve):.1f} of its errors.  So the prices of sweeps run before B17 are not")
+    print("     shown to be wrong for these networks, and were not run on them.")
 
 
 def checks(said):
@@ -602,7 +643,40 @@ def checks(said):
     #    The best row on a version 2 tile, held, is the 10% network on every set.
     assert all(max(KINDS, key=lambda k: acc(w, k, V2_HELD)[0]) == ten for w in WORKLOADS)
 
-    # 8. And the readings say those figures, each in its place: a reading that
+    # 8. Reading 8, and section 7.  B17: the reference networks.
+    ref = REFERENCE
+    assert ref == ten == 0.1 and EPOCHS == 8 and ref in NOISES
+    assert [round(acc(w, ref, HOST)[0], 2) for w in WORKLOADS] == [97.75, 87.89, 95.38]
+    assert [round(acc(w, BEFORE, HOST)[0], 2) for w in WORKLOADS] == [97.45, 87.48, 93.36]
+    assert [r2(over(w, ref, HOST, BEFORE, HOST)) for w in WORKLOADS] == [(0.30, 0.06), (0.41, 0.23), (2.02, 0.43)]
+    assert [r2(lost(w, ref, V2_HELD)) for w in WORKLOADS] == [(0.11, 0.05), (0.62, 0.13), (0.76, 0.22)]
+    assert [r2(lost(w, BEFORE, V2_HELD)) for w in WORKLOADS] == [(0.19, 0.03), (0.60, 0.23), (1.09, 0.36)]
+    assert [round(lost(w, ref, V1)[0], 2) for w in WORKLOADS] == [0.26, 1.12, 0.97]
+    assert [round(lost(w, ref, V2)[0], 2) for w in WORKLOADS] == [0.07, 0.47, 0.52]
+    twelve = [lost_moved(w, ref, c) for w in WORKLOADS for c in ON_TILE]
+    assert len(twelve) == 12 and sum(x[0] < 0 for x in twelve) == 11 and not any(clear(x) for x in twelve)
+    assert 1.7 < max(abs(errors(x)) for x in twelve) < 1.9
+    assert r2(lost_moved(f, ref, V2_HELD)) == (0.02, 0.20)
+    #    Why 10% and not none: the best row held at version 2 on all three sets,
+    #    by 0.07, 0.22 and 0.11 over eight epochs with no noise, and none of those clear.
+    assert [r2(noise_buys(w, ref, V2_HELD)) for w in WORKLOADS] == [(0.07, 0.06), (0.22, 0.16), (0.11, 0.10)]
+    assert not any(clear(noise_buys(w, ref, V2_HELD)) for w in WORKLOADS)
+    assert all(max(KINDS, key=lambda k: acc(w, k, V2_HELD)[0]) == ref for w in WORKLOADS)
+    #    About twice the training: eight epochs for three to four.
+    assert [round(EPOCHS / stat(STOPPED[w])[0], 1) for w in WORKLOADS] == [2.7, 2.1, 1.9]
+    #    Section 7's cells for Fashion-MNIST, as they print.
+    assert reference_rows(f) == (
+        ("right, percent: on its host", "87.48 +-0.19", "87.89 +-0.16", "+0.41 +-0.23"),
+        ("version 2 as budgeted", "86.94 +-0.20", "87.41 +-0.13", "+0.48 +-0.20"),
+        ("version 2 as held", "86.88 +-0.09", "87.27 +-0.13", "+0.39 +-0.07"),
+        ("points lost: v1 as budgeted", "1.16 +-0.14", "1.12 +-0.22", "-0.04 +-0.20"),
+        ("version 2 as budgeted", "0.54 +-0.22", "0.47 +-0.13", "-0.07 +-0.20"),
+        ("version 2 as held", "0.60 +-0.23", "0.62 +-0.13", "+0.02 +-0.20"),
+    ), reference_rows(f)
+    #    On the inverted set the three accuracies are 2.0 to 2.4 over the old ones', and clear.
+    assert all(2.0 < over(i, ref, c, BEFORE, c)[0] < 2.4 and clear(over(i, ref, c, BEFORE, c)) for c in (HOST, V2, V2_HELD))
+
+    # 9. And the readings say those figures, each in its place: a reading that
     #    printed another column's would pass everything above.
     for words in (
         "make them +2.19 +-0.49 points better on their host, +2.04 +-0.68 on a v1 tile and +2.14 +-0.52 at version 2",
@@ -611,7 +685,7 @@ def checks(said):
         "On Fashion-MNIST it is +0.18 +-0.28 and -0.02 +-0.22: nothing",
         "networks lose 0.17, 0.61 and 1.04 points where the old ones lose 0.19, 0.60 and 1.09",
         "As budgeted at v1 it is 0.21, 1.35 and 1.37 for 0.34, 1.16 and 1.23",
-        "by more than 1.8 of its errors",
+        "and none of those nine moves by more than 1.8 of its errors",
         "At 10%, over the same network trained with none: +0.46 +-0.18 on a v1 tile, which is 2.5 of its errors",
         "short of the 2.8 five networks need, and +0.29 +-0.07 at version 2, which is 3.9",
         "On the inverted set +0.24 +-0.28 and -0.02 +-0.18, and on MNIST -0.03 +-0.07 and +0.02 +-0.06",
@@ -631,6 +705,10 @@ def checks(said):
         "the network is -0.63 +-0.16, behind by 4.0 of its errors",
         "at version 2 is +0.57 +-0.12, +1.09 +-0.24 and +2.73 +-0.45 over the old one at v1",
         "and +0.38 +-0.11, +0.48 +-0.20 and +2.12 +-0.45 over the old one at version 2",
+        "right 97.64, 87.27 and 94.63% of the time, where the old ones were right 97.26, 86.88 and 92.27%",
+        "92.27%: +0.38 +-0.11, +0.39 +-0.07 and +2.36 +-0.65 more, all three clear",
+        "They lose 0.11 +-0.05, 0.62 +-0.13 and 0.76 +-0.22 points to it, for 0.19, 0.60 and 1.09.",
+        "the loss is smaller in 11 cells of 12, and in none by more than 1.8 of its errors",
     ):
         assert said.count(words) == 1, words
 
