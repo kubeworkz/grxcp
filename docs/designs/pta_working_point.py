@@ -29,6 +29,12 @@ version 2 is calibrated every six minutes, and its source's shared row is 1%.
 Nothing else in this plan has been rerun at version 2, and section 4 says what
 has not.
 
+B17 THEN MOVED THE NETWORKS, 2026-10-06.  Every figure here is of networks
+grx930's trainer had stopped after two to seven epochs.  The reference since
+that day is the same networks trained for eight, with noise of 10% on their
+sums (pta_trained.py).  Section 4's last two rows and reading 10 are the
+working point as held, on those.  Nothing else here was run on them.
+
 WHAT KIND OF NUMBER EACH ROW IS is what it was in the model it came from, and
 those say.  Two things are particular to this file:
 
@@ -67,6 +73,7 @@ import pta_ring as ring
 import pta_shot_rate as shot
 import pta_source as source
 import pta_tighten as tighten
+import pta_trained as trained
 import pta_version2 as version2
 import pta_workload as workload
 
@@ -277,8 +284,23 @@ def held_to(v):
     return every, f"{row:.0%}, {version2.noise.db_hz(row):.0f} dB/Hz"
 
 
+def reference_held(w, v, what=None):
+    """B17's reference networks on a version as held: what they lose to it, or with
+    `what` their accuracy there."""
+    col = {1: trained.V1_HELD, 2: trained.V2_HELD}[v]
+    return (what or trained.lost)(w, trained.REFERENCE, col)
+
+
+def reference_point():
+    """Reading 10's figures: what the reference networks lose to version 2 as held,
+    and how often they are right there, a data set each."""
+    return ([reference_held(w, 2)[0] for w in WORKLOADS], [reference_held(w, 2, trained.acc)[0] for w in WORKLOADS])
+
+
 def workload_rows(w):
     """Section 4's rows for one data set: a label, and the cell for a version."""
+    def right(kind, v):
+        return trained.acc(w, kind, {1: trained.V1_HELD, 2: trained.V2_HELD}[v])[0]
     return (
         ("points lost, as budgeted", lambda v: f"{lost(v, w)[0]:.2f} +-{lost(v, w)[1]:.2f}"),
         ("laser, the shift a bit down", lambda v: f"{times_at(v, w)} times, {laser_at_w(v, w)[0]:.2f}-{laser_at_w(v, w)[1]:.1f} W"),
@@ -290,6 +312,8 @@ def workload_rows(w):
         ("an hour, then calibrated", lambda v: version2.pm(version2.adds(w, v, "cal"))),
         ("the source's three rows add", lambda v: version2.pm(version2.adds(w, v, ("all", "rows")))),
         ("with B16's source, six minutes on", lambda v: version2.pm(version2.held(w, v)[0])),
+        ("so held, B17's reference networks", lambda v: trained.pm(reference_held(w, v))),
+        ("and are right, percent, for the old", lambda v: f"{right(trained.REFERENCE, v):.2f} for {right(trained.BEFORE, v):.2f}"),
     )
 
 
@@ -386,6 +410,7 @@ def main():
         for label, f in workload_rows(w):
             print(f"    {label:<42}" + "".join(f"{f(v):>26}" for v in both))
     print("  Drift and the source's rows are pta_version2.py's: grx930 ran both at each version.")
+    print("  The last two rows are pta_trained.py's.  Every other row is of the networks trained before.")
     print("  Not rerun at version 2, so still version 1's wherever this plan quotes them: depth;")
     print("  every tile but this one; the two scorecards above; and C3's and X3's measurements.")
 
@@ -395,7 +420,7 @@ def main():
 
 def findings():
     print()
-    print("What this says, nine readings.")
+    print("What this says, ten readings.")
     print()
     a, b = fj_mac(TILE), fj_mac(FIRST)
     print(f"  1. THE MOVE HALVES WHAT THE TILE COSTS AND BARELY MOVES WHAT A MAC COSTS.  {lines_between(TILE):,} lines for {lines_between(FIRST):,},")
@@ -458,6 +483,12 @@ def findings():
     print(f"     at the end of an interval, version 2 loses {h[0][0][0]:.2f}, {h[1][0][0]:.2f} and {h[2][0][0]:.2f} points: {h[0][1][0]:.2f}, {h[1][1][0]:.2f} and {h[2][1][0]:.2f} over")
     print(f"     its budget.  That is {86400 // version2.INTERVAL_S} calibrations a day, a period of {version2.period_units():,} of PTA_CAL_PER's units of")
     print(f"     2^{version2.PERIOD_UNIT_LOG2} cycles, and a source's shared noise of {version2.noise.db_hz(version2.ROWS_V2[0]):.0f} dB/Hz over the shot rate.")
+    print()
+    r, a = reference_point()
+    print(f"  10. AND B17 MOVES THE NETWORKS, NOT THE CHIP.  Trained for {trained.EPOCHS} epochs with noise of {trained.REFERENCE:.0%} on")
+    print(f"     their sums, the reference networks lose {r[0]:.2f}, {r[1]:.2f} and {r[2]:.2f} points to version 2 so held,")
+    print(f"     where the old ones lose {h[0][0][0]:.2f}, {h[1][0][0]:.2f} and {h[2][0][0]:.2f}, and are right {a[0]:.2f}, {a[1]:.2f} and {a[2]:.2f}% of the time.")
+    print("     Every other figure in this file is of the old networks and was not run again.")
 
 
 def checks():
@@ -623,6 +654,8 @@ def checks():
         "an hour, then calibrated": ["0.03 +-0.15", "0.02 +-0.11"],
         "the source's three rows add": ["0.06 +-0.11", "0.09 +-0.13"],
         "with B16's source, six minutes on": ["1.37 +-0.23", "0.60 +-0.23"],
+        "so held, B17's reference networks": ["1.20 +-0.22", "0.62 +-0.13"],
+        "and are right, percent, for the old": ["86.69 for 86.11", "87.27 for 86.88"],
     }, cells
 
     # 10. Reading 9: B15 and B16.
@@ -632,6 +665,23 @@ def checks():
     assert version2.period_bits() == 39 > version2.PERIOD_BITS == 32 and 86400 // version2.INTERVAL_S == 240
     assert version2.period_units() == 5_493_164 < 2 ** version2.PERIOD_BITS and version2.PERIOD_UNIT_LOG2 == 16
     assert version2.FS == FS and version2.TILE == TILE
+
+    # 11. Reading 10: B17.  pta_trained.py's, held to this file where the two overlap.
+    assert trained.TILE == TILE and trained.WORKLOADS == WORKLOADS and (trained.EPOCHS, trained.REFERENCE) == (8, 0.1)
+    #     The old networks there are the ones this file has had all along.
+    assert all(trained.r2(trained.lost(w, trained.BEFORE, trained.V1)) == lost(1, w) for w in WORKLOADS)
+    assert all(trained.r2(trained.lost(w, trained.BEFORE, trained.V2)) == lost(2, w) for w in WORKLOADS)
+    assert all(trained.r2(trained.lost(w, trained.BEFORE, c)) == version2.held(w, v)[0]
+               for w in WORKLOADS for v, c in ((1, trained.V1_HELD), (2, trained.V2_HELD)))
+    #     The reference networks, held: reading 10's six figures.
+    assert [[round(x, 2) for x in part] for part in reference_point()] == [[0.11, 0.62, 0.76], [97.64, 87.27, 94.63]]
+    assert [round(reference_held(w, 2)[0], 2) for w in WORKLOADS] == [0.11, 0.62, 0.76]
+    assert [round(reference_held(w, 1)[0], 2) for w in WORKLOADS] == [0.31, 1.20, 1.21]
+    assert [round(reference_held(w, 2, trained.acc)[0], 2) for w in WORKLOADS] == [97.64, 87.27, 94.63]
+    assert [round(reference_held(w, 1, trained.acc)[0], 2) for w in WORKLOADS] == [97.44, 86.69, 94.18]
+    #     Held, version 2 still buys them what B14 was adopted for.
+    assert all(trained.clear(trained.v2_buys(w, trained.REFERENCE, True)) for w in WORKLOADS)
+    assert [round(trained.v2_buys(w, trained.REFERENCE, True)[0], 2) for w in WORKLOADS] == [0.19, 0.58, 0.45]
 
     print()
     print("All checks pass.")

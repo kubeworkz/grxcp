@@ -10,12 +10,13 @@
 
 **Status: PLAN, drafted 2026-09-21. All seven decisions of §2 are settled, each
 as recommended: B1 and B3 that day, and B2, B4, B5, B6 and B7 on 2026-09-22.
-Nine more were raised and settled later and are in §7: B8, B9, and on
+Ten more were raised and settled later and are in §7: B8, B9, and on
 2026-10-05 B10, the chiplet's working geometry, B11, its working shot rate,
 1 GS/s, B12, its topology, a ring bank lit by a comb, and B13, how it signs a
 weight, a balanced pair of photodiodes; and on 2026-10-06 B14, the interface
 chip's budget, version 2, B15, how often it is calibrated, every six minutes,
-and B16, the source's shared row, 1%. **B10 was settled at 256 × 64 and
+B16, the source's shared row, 1%, and B17, the networks its budget is run on,
+trained for eight epochs with noise of 10%. **B10 was settled at 256 × 64 and
 revised the same day to 128 × 64.** Two things found that day moved it.
 Published rings put the larger tile past a standard die. And B5's laser, sized
 on a detector's full scale, was low by sixteen times at 256 rows and eight at
@@ -44,8 +45,11 @@ this plan are that much low. Noise of the tile's size on their sums while
 they train is worth 0.3 to 0.5 of a point on Fashion-MNIST and nothing five
 networks can tell on the other two. What a tile costs a network in points
 lost is unchanged, and version 2 buys a trained network what it bought the
-others. B14's first test is met as B14 worded it, and whether that reopens
-B14 is open (§7).
+others. B14's first test is met as B14 worded it. B14 was kept that day all
+the same, because version 2 is worth as much to those networks as to the old
+ones, and they were made the reference for every later sweep (B17). Held at
+version 2 they are right 97.64, 87.27 and 94.63% of the time and lose 0.11,
+0.62 and 0.76 points to it.
 X2 has made its predictions (§3.3), X1 its budget (§4.3), and P0, X3 and X4
 are drafted as [`board_icd.md`](board_icd.md),
 [`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) and
@@ -1669,6 +1673,11 @@ chosen once and not searched. The networks trained here were held at B16's 1%
 and not at 2%, so whether a trained network needs B16 was not run. And
 nothing above this block was rerun on them.
 
+*Both things it raised were decided the same day (§7).* B14 stands. And the
+networks trained for eight epochs with 10% of noise are the reference from
+here on (B17): a sweep run after 2026-10-06 is of those, and every figure
+above this block is of the networks trained before.
+
 *The ADC's row, since the survey (2026-10-04).* Relaxing it saves 3 to 106 mW,
 and the low end is the published state of the art: the cheapest converters that
 sample this fast already have the seventh bit. So of the two rows, relaxing the
@@ -2405,7 +2414,9 @@ network, and that is what it was worth to the old one: 0.19 ± 0.04,
 and 0.61. Its costs above are a chip's and do not change with the network.
 So the trade this decision made is the same trade on a better network: one
 that starts 0.38, 0.48 and 2.12 points higher at version 2 than the old one
-did. **Whether that reopens B14 is not decided here.**
+did. ~~Whether that reopens B14 is not decided here.~~ *Decided the same
+day: it does not.* **B14 stands**, for the reason in the paragraph above, and
+the networks that met its test became the reference (B17).
 
 **B15 — How often version 2 is calibrated: every six minutes.** *Settled
 2026-10-06.*
@@ -2521,6 +2532,69 @@ network trained for the tile, which may not need it. *Needed by:* P0's link
 *Networks were trained for the tile on 2026-10-06* (§4.3, at the end of its
 budget). They were held at this decision's 1% and not at 2%, so the third of
 those is still untested.
+
+**B17 — The networks the budget is run on: eight epochs, with noise of 10% on
+their sums.** *Settled 2026-10-06.*
+
+Every figure in this plan up to that day is of networks that grx930's trainer
+stopped at the first epoch whose held-out accuracy failed to rise, which was
+after two to seven, and that had never been shown a tile's errors. That day
+the same networks were trained for eight epochs, with and without noise on
+their sums, and run beside the old ones (§4.3, at the end of its budget;
+[`pta_trained.py`](pta_trained.py)).
+
+*Recommended, and settled as recommended:* **from 2026-10-06 the reference
+networks are each seed's 6-bit network trained for eight epochs, with
+Gaussian noise of 10% of a layer's rms on every sum the layer forms while it
+trains. A sweep run from that day uses them. No sweep before it is run
+again.**
+
+| | MNIST | Fashion-MNIST | MNIST, inverted | From |
+|---|---|---|---|---|
+| Epochs, at the mean: as trained before | 3.0 | 3.8 | 4.2 | grx930's trainer, by its own rule |
+| The reference networks | 8 | 8 | 8 | This decision |
+| Right, percent, on its host: as trained before | 97.45 | 87.48 | 93.36 | grx930's harness. **Measured in a model** |
+| The reference networks | 97.75 | 87.89 | 95.38 | The same |
+| Held at version 2 (B14, B15, B16): as trained before | 97.26 | 86.88 | 92.27 | The same |
+| The reference networks | **97.64** | **87.27** | **94.63** | The same |
+| Those, over the old ones, seed by seed | +0.38 ± 0.11 | +0.39 ± 0.07 | +2.36 ± 0.65 | Derived, [`pta_trained.py`](pta_trained.py) |
+| Points lost, held at version 2: as trained before | 0.19 ± 0.03 | 0.60 ± 0.23 | 1.09 ± 0.36 | grx930's harness |
+| The reference networks | 0.11 ± 0.05 | 0.62 ± 0.13 | 0.76 ± 0.22 | The same |
+
+**What it buys.** Where the chip is held, 0.4 of a point on MNIST and on
+Fashion-MNIST and 2.4 points on the inverted set, each clear of chance with
+five networks. Most of the 2.4 is the epochs and not the noise. And an
+inverted set whose accuracies are no longer two points low.
+
+**What it costs.** Nothing on the chip. About twice the training. And
+continuity: a sweep run from here is of other networks than the sweeps before
+it, and its accuracies are not to be read against theirs.
+
+**Why 10%, of what was run.** It is the best row held at version 2 on all
+three sets, and it is the size B14's own test asked about. Over eight epochs
+with no noise it is ahead there by 0.07, 0.22 and 0.11 of a point, and none of
+those is clear, so between those two this is a working choice. 5% is not
+shown to differ from none. 20% loses least to a tile and starts 0.4 and 1.4
+points lower on its host on the two harder sets.
+
+**What it does not settle.** Everything dated before this decision is the old
+networks': which of version 1's rows carry its cost, the menu, drift by the
+hour, the source's rows one at a time, the laser's multiples, depth, and
+every tile but the working one. None of it was run on the reference networks.
+What was run on them is the working tile at v1 and at version 2, as budgeted
+and as held. Over those four and the three sets, what the tile costs them in
+points lost is smaller than it cost the old ones in 11 cells of 12, and in
+none by more than 1.8 of its errors. So the prices B14, B15 and B16 were
+chosen on are not shown to be wrong for these networks, and are not shown to
+be right for them either. Whether a trained network needs B16's 1% is still
+untested. And the accuracies this plan quotes for the inverted set before this
+decision stay about two points low.
+
+**It is a working reference and not a network trained for the tile.** Three
+things would reopen it: a trainer with the tile's own model in its forward
+pass, where this one has Gaussian noise; a search over the epochs and the
+noise, which were each chosen once; or a kind of network other than one
+hidden layer on 28 × 28 images. *Needed by:* X1's sweeps from here on.
 
 ---
 
@@ -3160,7 +3234,8 @@ those is still untested.
    set's are two points better: the table above has them at 91.3–94.5% on
    their host, and they are at 94.3–96.4%. Neither changes what a tile costs
    in points lost, so the budget's prices stand. And version 2 is worth to a
-   trained network what it was worth to the others.
+   trained network what it was worth to the others. *B14 was kept the same
+   day, and those networks were made the reference (B17, §7).*
 8. **What kind of light source does the tile need?** *Settled on 2026-10-05, as
    a working topology: a ring bank, lit by a comb (B12, §7). What follows is
    how the question was worked, and reads as it was written.* Asked on
