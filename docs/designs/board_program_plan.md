@@ -37,6 +37,15 @@ source's rows hold at version 2 on MNIST and Fashion-MNIST, and not on the
 inverted set at either version. B15 and B16 chose from that: version 2 is
 calibrated every six minutes, and its source's shared row is 1%. So held, it
 loses 0.19, 0.60 and 1.09 points on the three sets.
+Networks trained for the tile were run that day too (§4.3, at the end of its
+budget). Training them for eight epochs, where a rule had stopped them after
+two to seven, is worth two points on the inverted set, whose accuracies in
+this plan are that much low. Noise of the tile's size on their sums while
+they train is worth 0.3 to 0.5 of a point on Fashion-MNIST and nothing five
+networks can tell on the other two. What a tile costs a network in points
+lost is unchanged, and version 2 buys a trained network what it bought the
+others. B14's first test is met as B14 worded it, and whether that reopens
+B14 is open (§7).
 X2 has made its predictions (§3.3), X1 its budget (§4.3), and P0, X3 and X4
 are drafted as [`board_icd.md`](board_icd.md),
 [`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) and
@@ -1571,6 +1580,95 @@ a row puts it while the laser multiplies: a real laser moves both, and a
 balanced pair's shot noise follows all the light it is lit with, which
 [`pta_laser.py`](pta_laser.py) prices and the harness does not have.
 
+*Networks trained for the tile, 2026-10-06.* ([`pta_trained.py`](pta_trained.py);
+grx930's design note, §5, "A network trained for the tile".) Every network
+above was trained on its host and met the tile afterwards. grx930's trainer
+now takes two options and its harness a mode: each seed's 6-bit network
+again, from the same 8-bit one, for eight epochs, with Gaussian noise of 0, 5,
+10 and 20% of a layer's rms on every sum the layer forms while it trains. 10%
+is the tile's size: the probe puts a v1 tile's error at about a tenth of a
+sum's rms. The network with no noise is a control, and it turned out to be
+needed. The trainer has always stopped at the first epoch whose held-out
+accuracy fails to rise, which was after two to seven of them.
+
+Accuracy on the working tile, percent, five networks a row. Held is with the
+source's three rows at B16's sizes, at the end of B15's six minutes:
+
+| | On its host | v1 | Version 2 | v1, held | Version 2, held |
+|---|---|---|---|---|---|
+| MNIST, trained as before | 97.45 ± 0.10 | 97.11 ± 0.13 | 97.30 ± 0.11 | 97.05 ± 0.10 | 97.26 ± 0.10 |
+| Eight epochs, no noise | 97.74 ± 0.10 | 97.52 ± 0.10 | 97.66 ± 0.10 | 97.46 ± 0.10 | 97.57 ± 0.09 |
+| Eight epochs, noise of 10% | 97.75 ± 0.06 | 97.49 ± 0.06 | 97.68 ± 0.04 | 97.44 ± 0.04 | 97.64 ± 0.07 |
+| Fashion-MNIST, trained as before | 87.48 ± 0.19 | 86.32 ± 0.18 | 86.94 ± 0.20 | 86.11 ± 0.14 | 86.88 ± 0.09 |
+| Eight epochs, no noise | 87.66 ± 0.16 | 86.30 ± 0.22 | 87.13 ± 0.13 | 86.28 ± 0.18 | 87.04 ± 0.16 |
+| Eight epochs, noise of 10% | 87.89 ± 0.16 | 86.77 ± 0.26 | 87.41 ± 0.13 | 86.69 ± 0.25 | 87.27 ± 0.13 |
+| MNIST inverted, trained as before | 93.36 ± 0.54 | 92.13 ± 0.56 | 92.74 ± 0.55 | 91.76 ± 0.65 | 92.27 ± 0.63 |
+| Eight epochs, no noise | 95.55 ± 0.36 | 94.17 ± 0.59 | 94.88 ± 0.46 | 93.63 ± 0.70 | 94.51 ± 0.53 |
+| Eight epochs, noise of 10% | 95.38 ± 0.33 | 94.42 ± 0.37 | 94.86 ± 0.36 | 94.18 ± 0.54 | 94.63 ± 0.53 |
+
+A row's error is the scatter of its five networks, and most of that scatter
+is the networks' own. So each comparison is taken seed by seed, and its error
+is the error of the five differences:
+
+| | MNIST | Fashion-MNIST | MNIST, inverted |
+|---|---|---|---|
+| Eight epochs with no noise, over trained as before: on its host | +0.29 ± 0.14 | +0.18 ± 0.28 | **+2.19 ± 0.49** |
+| On a v1 tile | +0.41 ± 0.15 | −0.02 ± 0.22 | **+2.04 ± 0.68** |
+| Noise of 10%, over none: on a v1 tile | −0.03 ± 0.07 | +0.46 ± 0.18 | +0.24 ± 0.28 |
+| At version 2 | +0.02 ± 0.06 | **+0.29 ± 0.07** | −0.02 ± 0.18 |
+| Version 2 over v1, the same network: trained as before | **+0.19 ± 0.06** | **+0.62 ± 0.10** | **+0.61 ± 0.06** |
+| Trained with noise of 10% | **+0.19 ± 0.04** | **+0.65 ± 0.15** | **+0.44 ± 0.03** |
+| The 10% network at v1, over the old one at version 2 | +0.19 ± 0.10 | −0.17 ± 0.24 | **+1.67 ± 0.46** |
+| The 10% network at version 2, over the old one at v1 | **+0.57 ± 0.12** | **+1.09 ± 0.24** | **+2.73 ± 0.45** |
+
+With five networks a difference has to be 2.8 of its own errors to be outside
+chance at one in twenty. Those in bold are. The model prints well over a
+hundred such differences, so a few would reach that with nothing behind them,
+and none of what follows rests on one cell.
+
+- **The epochs were the larger thing, and nothing had predicted them.** The
+  inverted set's networks had stopped after three to seven epochs. At eight
+  they are two points better on their host and on every tile. On MNIST it is
+  a third of a point, at two to three of its errors, and on Fashion-MNIST
+  nothing that can be told. So every accuracy this plan gives for the
+  inverted set is about two points low for it. And half of what §8's question
+  7 put down to that set's inputs was this: its networks were 4.1 points
+  behind MNIST's on the host, and at eight epochs they are 2.2 behind.
+- **What a tile costs a network is what was said.** Held at version 2 the
+  better trained networks lose 0.17, 0.61 and 1.04 points, where the old ones
+  lose 0.19, 0.60 and 1.09. As budgeted at v1 it is 0.21, 1.35 and 1.37 for
+  0.34, 1.16 and 1.23, and none of those moves by two of its errors. This
+  section's prices are in points lost, and they stand. B14, B15 and B16 were
+  chosen on them.
+- **Noise of the tile's size is worth 0.3 to 0.5 of a point on Fashion-MNIST,
+  and is not shown on the other two.** It costs nothing that can be told on
+  the host. 5% does nothing. 20% is a different trade: such a network loses
+  0.46 of a point to a v1 tile on Fashion-MNIST where the one with no noise
+  loses 1.35, and it starts 0.38 lower on its host, and 1.43 lower on the
+  inverted set. On a version 2 tile it is no better than no noise at all on
+  Fashion-MNIST and 1.14 points worse on the inverted set. Points lost is the
+  wrong score for a network that was trained to lose fewer.
+- **Version 2 buys a trained network what it bought the others.** The same
+  network on the two tiles: 0.19, 0.65 and 0.44 of a point with 10% of noise,
+  for 0.19, 0.62 and 0.61 as the networks were. It is less on the inverted
+  set and the same on the other two, and every one of the six is clear.
+- **So training does not stand in for version 2. It adds to it.** The 10%
+  network on a v1 tile is level with the old one at version 2 on
+  Fashion-MNIST, 0.17 ± 0.24 short, and ahead of it on the other two, where
+  it is the epochs that put it ahead. That is the test B14 set, and as B14
+  worded it the test is met (§7). But the same network at version 2 is
+  better again by what version 2 was adopted for. Held at version 2 the 10%
+  networks are at 97.64, 87.27 and 94.63%, which is 0.38, 0.39 and 2.36
+  points over the old ones there.
+
+This is not the tile in the loop. The noise is Gaussian, the same fraction on
+every layer and independent from sum to sum, and a tile's error has a
+quantiser's steps, crosstalk that follows the image and a programming error
+that stays put for a GEMM. Eight epochs and the three sizes of noise were
+chosen once and not searched. The networks trained here were held at B16's 1%
+and not at 2%, so whether a trained network needs B16 was not run. And
+nothing above this block was rerun on them.
+
 *The ADC's row, since the survey (2026-10-04).* Relaxing it saves 3 to 106 mW,
 and the low end is the published state of the art: the cheapest converters that
 sample this fast already have the seventh bit. So of the two rows, relaxing the
@@ -2283,12 +2381,31 @@ under version 2. Not restated, and not run at it:
 
 **It is a working budget and not a specification.** Five things would reopen
 it: a network trained with the tile's errors in the loop that does as well at
-version 1, which is the usual remedy and has not been tried; a ring process
+version 1, which is the usual remedy ~~and has not been tried~~ *(tried on
+2026-10-06, below)*; a ring process
 that cannot hold a Q within 9%; a converter of 8 effective bits at 1 GS/s
 that cannot be had near the survey's price; a laser of 1.4 to 14 W that the
 board cannot place (B5); or a price for the seventh activation bit and the
 programming error that makes all six rows worth having. *Needed by:* X1's
 rows, P0's links 3 and 4, P1, L3 and X3.
+
+*The first of the five was tried on 2026-10-06* (§4.3, at the end of its
+budget; [`pta_trained.py`](pta_trained.py)). As it is worded above, it is
+met. A network trained with noise of the tile's size on its sums, on a v1
+tile, against the network this decision was made on at version 2: 0.19 ± 0.10
+ahead on MNIST, 0.17 ± 0.24 short on Fashion-MNIST, and 1.67 ± 0.46 ahead on
+MNIST inverted. On two of the three that is not the noise. It is that the old
+networks had been stopped early, and eight epochs with no noise put them
+ahead by themselves; on Fashion-MNIST eight epochs alone leave a network
+0.63 ± 0.16 short, and the noise closes it.
+
+What the wording did not ask is what version 2 is worth to the trained
+network, and that is what it was worth to the old one: 0.19 ± 0.04,
+0.65 ± 0.15 and 0.44 ± 0.03 of a point, where this decision had 0.19, 0.62
+and 0.61. Its costs above are a chip's and do not change with the network.
+So the trade this decision made is the same trade on a better network: one
+that starts 0.38, 0.48 and 2.12 points higher at version 2 than the old one
+did. **Whether that reopens B14 is not decided here.**
 
 **B15 — How often version 2 is calibrated: every six minutes.** *Settled
 2026-10-06.*
@@ -2400,6 +2517,10 @@ that cannot be had at −130 dB/Hz; a workload brighter than Fashion-MNIST that
 the board has to serve, which would ask for the other two rows as well; or a
 network trained for the tile, which may not need it. *Needed by:* P0's link
 4, P1, L3.
+
+*Networks were trained for the tile on 2026-10-06* (§4.3, at the end of its
+budget). They were held at this decision's 1% and not at 2%, so the third of
+those is still untested.
 
 ---
 
@@ -3027,6 +3148,19 @@ network trained for the tile, which may not need it. *Needed by:* P0's link
    whose Q has 9% of room where it had 21%, and twice the laser on two of the
    three sets. Whether the interface chip is held to either is not decided
    here. *It was, the same day: B14 (§7) holds it to the first, as version 2.*
+
+   *Networks were trained for the tile on 2026-10-06* (§4.3, at the end of
+   its budget; [`pta_trained.py`](pta_trained.py)). The remedy this answer
+   twice called usual gives back under half of Fashion-MNIST's point and
+   nothing that can be told elsewhere: noise of the tile's size on a
+   network's sums while it trains is worth 0.46 ± 0.18 of a point at v1
+   there, 0.24 ± 0.28 on the inverted set and nothing on MNIST. Something
+   this answer did not look for gives back more. The trainer's rule had
+   stopped every network after two to seven epochs, and at eight the inverted
+   set's are two points better: the table above has them at 91.3–94.5% on
+   their host, and they are at 94.3–96.4%. Neither changes what a tile costs
+   in points lost, so the budget's prices stand. And version 2 is worth to a
+   trained network what it was worth to the others.
 8. **What kind of light source does the tile need?** *Settled on 2026-10-05, as
    a working topology: a ring bank, lit by a comb (B12, §7). What follows is
    how the question was worked, and reads as it was written.* Asked on
