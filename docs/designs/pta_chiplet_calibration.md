@@ -471,6 +471,46 @@ this is the C reference; the RTL, the FSM and the schedulers are C3(b).
    each cell through a weight of zero, which a line's power multiplies. So a
    line's level is unmeasured. A probe with weights in it would read it.
 
+   **One does, in grx930's harness** (2026-10-08;
+   [`pta_reference_level.py`](pta_reference_level.py), the board plan's §4.3 at
+   the end of its budget). Measured in a model, and in no engine.
+
+   - *What it shoots.* Two patterns: the rows of one parity at a full-scale
+     weight on every column and the others at zero, then the other parity.
+     Under each, one row a shot at full scale, P shots a row. The rows either
+     side of a lit row hold a weight of zero, so crosstalk brings it nothing.
+   - *What a shot gives.* Its sum over what was asked for is one plus that
+     line's error: its level, and the source's noise that shot. A line lights
+     a row on every bus, so a line's reading is the mean of P shots on each
+     of its rows, and of every column in each.
+   - *What it leaves.* The source's noise on a shot over the root of the shots
+     a line gets. At B16's rows, 1% together and 5% a line, on two buses:
+     3.6% at one shot a row, 0.9% at sixteen, and 1% at 14, with a correction
+     in steps of 1/256. It left that on lines 5%, 20% and 40% off alike.
+   - *What it takes.* Two programmings, 128 × P shots and the bank's weights
+     programmed again: 2,240 beats at sixteen shots a row, 2.2 µs, on one
+     bank, which is 3% to 12% of §3's cell calibration. One bank is enough: a
+     line's level is the source's and not a bank's.
+   - *What it buys.* Lines 20% off cost B17's reference networks 0.35, 0.40
+     and 1.63 of a point left alone, and lines 40% off 2.01, 2.26 and 7.79.
+     Read first, both cost what level lines do, to 0.03 of a point.
+   - *What it cannot tell apart.* Anything else that scales a row: a
+     modulator's gain would read as its line's level. A correction a row at
+     a time would take both off together, and one a line at a time would
+     not. The model has no such error, so this is not measured.
+
+   What is still open. **Where what it reads is applied.** The model takes it
+   off the line's level exactly, which no chip does. Each place a chip could
+   apply it would cost something that is not counted: on the weights as
+   written, range, since a dim line's row cannot be written above full scale;
+   on a row's drive, hardware nothing here has; on a row's inputs at the
+   host, their range in the same way. **How often.** A comb's lines are held still for a run here,
+   and how fast they move is in no document. **The engine.** grx930's RTL
+   engine has no such mode, and the register map has no register for it.
+   **The converter's range.** The probe reads at a range that spans a line at
+   twice its level, and in the model a line's light does not pass the
+   converter at all.
+
    *Since the board plan's B16 (2026-10-06) the shot-to-shot row is 1% for
    version 2, and no loop reaches it still.*
 6. ~~**What an interruption costs**~~ (2026-10-06). B15 takes 240 calibrations a

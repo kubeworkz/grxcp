@@ -98,7 +98,16 @@ B15 was kept at six minutes on that (2026-10-08). And what one of its 240
 interruptions a day costs, which nothing had priced, is counted (B15, at its
 end): 18 µs by the twin's formula and 68 µs with everything the formula leaves
 out, one part in 5.3 million of the tile's time. For it to matter an
-interruption would have to last a third of a second.
+interruption would have to last a third of a second. Asked again with that
+counted, the choice was six minutes again (2026-10-08).
+**And a comb line's level, which nothing built measured, can be read**
+(§4.3, at the end of its budget; 2026-10-08). grx930's harness has a
+probe for it: a row at full scale through a full-scale weight. Left alone,
+lines 20% off cost the reference networks 0.35, 0.40 and 1.63 of a point on
+the three sets and lines 40% off 2.01, 2.26 and 7.79, where the tile itself
+costs them 0.13, 0.50 and 0.48. Read first with sixteen shots a row they cost
+nothing that can be seen, and a read takes 2.2 µs. It is a reading and not
+yet a correction: where a chip would apply it is not modelled.
 X2 has made its predictions (§3.3), X1 its budget (§4.3), and P0, X3 and X4
 are drafted as [`board_icd.md`](board_icd.md),
 [`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) and
@@ -2283,6 +2292,126 @@ together; the pairing takes out the noise and leaves the other two. It is one
 calibration and not a schedule, at version 2 on the working tile. B15 is not
 changed here: what this asks of it is under B15.
 
+*A line's level, read, 2026-10-08.*
+([`pta_reference_level.py`](pta_reference_level.py); grx930's design note, §5,
+"A line's level, and a probe that reads it".) This section's source rows ask
+for a comb's lines level to 5%, and say below that nothing built measures a
+line's level. The calibration note's open question 5 said a probe with
+weights in it would. grx930's harness has that probe now. It lights one row
+at full scale against a full-scale weight on every column, with the rows
+either side at a weight of zero so that crosstalk brings it nothing, and a
+shot's sum over what was asked for is one plus that line's error. What it
+reads is taken off the line, to a step of 1/256. It draws from a seed of its
+own, so a run meets the same noise with it and without it, which the cell
+calibration does not do (the block before the last).
+
+It was run at version 2 on the working tile, on three draws, with both kinds
+of network. Every lit row has the source's noise at B16's two rows, 1% for
+the lines together and 5% for a line on its own. The lines are then level, or
+off by this plan's 5%, by 20% or by 40% rms, each left alone and each read
+first. What a row costs is read over the level row of its own draw.
+
+| | MNIST: trained before | Reference | Fashion-MNIST: trained before | Reference | MNIST inverted: trained before | Reference |
+|---|---|---|---|---|---|---|
+| Lines 5% off, 0.2 dB, this plan's row: left alone | −0.01 ± 0.03 | +0.00 ± 0.01 | −0.04 ± 0.05 | −0.04 ± 0.04 | +0.10 ± 0.11 | +0.16 ± 0.08 |
+| read first, sixteen shots a row | +0.01 ± 0.01 | **−0.02 ± 0.00** | −0.02 ± 0.02 | +0.00 ± 0.01 | +0.04 ± 0.03 | +0.01 ± 0.01 |
+| Lines 20% off, 0.8 dB: left alone | **+0.41 ± 0.05** | **+0.35 ± 0.01** | **+0.62 ± 0.16** | **+0.40 ± 0.13** | **+1.69 ± 0.38** | **+1.63 ± 0.54** |
+| read first, sixteen shots a row | +0.00 ± 0.00 | **−0.02 ± 0.00** | −0.01 ± 0.02 | +0.01 ± 0.02 | +0.05 ± 0.03 | −0.01 ± 0.01 |
+| Lines 40% off, 1.5 dB: left alone | **+2.43 ± 0.19** | **+2.01 ± 0.07** | **+3.19 ± 0.75** | **+2.26 ± 0.45** | **+8.38 ± 1.16** | **+7.79 ± 2.26** |
+| read first, sixteen shots a row | +0.01 ± 0.01 | **−0.02 ± 0.00** | −0.03 ± 0.01 | +0.00 ± 0.01 | +0.05 ± 0.03 | +0.00 ± 0.01 |
+| Level lines, read | +0.01 ± 0.01 | **−0.02 ± 0.00** | −0.03 ± 0.02 | +0.00 ± 0.01 | +0.04 ± 0.03 | +0.00 ± 0.01 |
+| Lines 20% off, read with one shot a row | **+0.02 ± 0.01** | +0.00 ± 0.02 | −0.03 ± 0.04 | +0.05 ± 0.05 | +0.15 ± 0.11 | +0.05 ± 0.02 |
+| read with sixty-four | +0.01 ± 0.01 | +0.00 ± 0.00 | +0.00 ± 0.01 | **+0.02 ± 0.00** | +0.02 ± 0.01 | −0.01 ± 0.01 |
+
+The errors are five networks', each averaged over its three draws. In bold,
+what they put outside chance at one in twenty.
+
+| What a read of the lines… | Finds, rms | Leaves, rms | Should leave, by count | Shots | Beats, one bank |
+|---|---|---|---|---|---|
+| sixteen shots a row, lines 5% off | 5.0% | 0.92% | 0.91% | 2,048 | 2,240 |
+| lines 20% off | 20.1% | 0.91% | 0.91% | 2,048 | 2,240 |
+| lines 40% off | 40.2% | 0.92% | 0.91% | 2,048 | 2,240 |
+| level lines | 0.0% | 0.91% | 0.91% | 2,048 | 2,240 |
+| one shot a row, lines 20% off | 20.1% | 3.61% | 3.61% | 128 | 320 |
+| sixty-four, lines 20% off | 20.1% | 0.45% | 0.46% | 8,192 | 8,384 |
+
+| | MNIST: trained before | Reference | Fashion-MNIST: trained before | Reference | MNIST inverted: trained before | Reference |
+|---|---|---|---|---|---|---|
+| Held as the chip is, over the tile as budgeted on the same draws | +0.07 ± 0.03 | +0.01 ± 0.02 | +0.18 ± 0.11 | +0.04 ± 0.07 | **+0.53 ± 0.17** | **+0.28 ± 0.07** |
+| held, with the lines read first | +0.06 ± 0.03 | +0.01 ± 0.03 | **+0.21 ± 0.07** | +0.05 ± 0.04 | **+0.54 ± 0.14** | **+0.10 ± 0.03** |
+| What the read buys, held | +0.01 ± 0.01 | +0.00 ± 0.03 | −0.03 ± 0.05 | −0.01 ± 0.05 | −0.01 ± 0.11 | +0.18 ± 0.09 |
+| Points lost to the tile: held | 0.20 ± 0.01 | 0.14 ± 0.03 | 0.68 ± 0.15 | 0.54 ± 0.12 | 1.23 ± 0.25 | 0.76 ± 0.12 |
+| held and read | 0.19 ± 0.02 | 0.14 ± 0.04 | 0.71 ± 0.16 | 0.55 ± 0.08 | 1.24 ± 0.19 | 0.58 ± 0.04 |
+
+- **Left alone, a comb that is not level costs more than the tile does.** With
+  lines 20% off the reference networks are right 0.35 ± 0.01, 0.40 ± 0.13 and
+  1.63 ± 0.54 of a point less often than with level lines, and with lines 40%
+  off 2.01 ± 0.07, 2.26 ± 0.45 and 7.79 ± 2.26. Version 2 as budgeted costs
+  them 0.13, 0.50 and 0.48 on these draws: lines 40% off cost more than that
+  on every set, and lines 20% off on two. Twice as far from level costs 5.8,
+  5.7 and 4.8 times as much. One comb at 40% costs one reference network 22.4
+  points on the inverted set. And training for the tile's noise buys little
+  against it: seed by seed, lines 20% off cost a reference network −0.06 ±
+  0.05, −0.22 ± 0.17 and −0.06 ± 0.62 against the old one, none of them clear.
+- **At this plan's 5% it costs nothing that can be told on two sets, and may
+  cost on the third.** 0.00 ± 0.01, −0.04 ± 0.04 and 0.16 ± 0.08 for the
+  reference networks, and none of the six cells is clear. On one draw with the
+  source's noise off this plan had 0.02, 0.02 and 0.12.
+- **Read first, a comb costs nothing that can be seen, however far off it
+  was.** At 5%, 20% and 40% alike the reference networks end within 0.03 of a
+  point of level lines on every set, and the old ones within 0.06. So the read
+  buys what the comb cost: 0.37, 0.39 and 1.64 at 20%, and 2.03, 2.26 and 7.79
+  at 40%.
+- **What the probe leaves is the source's noise over its shots, and not the
+  comb.** Lines 5%, 20% and 40% off are left 0.92%, 0.91% and 0.92% off, and
+  level lines 0.91%. Counted, sixteen shots a row on two buses should leave
+  0.91%: a shot's noise of 5.1% over the root of 32, and the rounding of the
+  step. One shot a row leaves 3.61%, which is inside this plan's 5%, and by
+  the same count 14 leave a line within 1%.
+- **One shot a row already takes back nearly all of it.** With lines 20% off
+  and read with one shot the reference networks end 0.00 ± 0.02, 0.05 ± 0.05
+  and 0.05 ± 0.02 over level lines, and the old ones 0.02 ± 0.01, −0.03 ± 0.04
+  and 0.15 ± 0.11.
+- **Held as the chip is, the read buys nothing on two sets and may buy on the
+  third.** Six minutes of drift and the source's three rows add 0.01 ± 0.02,
+  0.04 ± 0.07 and 0.28 ± 0.07 to what the reference networks lose as budgeted,
+  and 0.01 ± 0.03, 0.05 ± 0.04 and 0.10 ± 0.03 with the lines read first. The
+  read buys 0.18 ± 0.09 on the inverted set, which is 2.0 of its errors and
+  not clear at one in twenty, and nothing on the other two. So read, they
+  lose 0.14, 0.55 and 0.58 of a point to the tile where held they lose 0.14,
+  0.54 and 0.76. It buys the old networks nothing on any set.
+- **A read costs level lines nothing.** With lines that are level already the
+  six cells are all within 0.05 of a point, read or not. One of them is clear
+  by five networks' rule, the reference networks on MNIST at 0.020 ± 0.003 for
+  the read, which is two images in ten thousand and should not be there: what
+  a probe leaves on a comb is centred on nothing, 0.007% in the mean over the
+  fifteen combs. On seven more draws of those two rows, by hand, it is −0.011
+  ± 0.006, the other way, and over all ten −0.002 ± 0.004. Of the 36 read rows
+  set beside level lines 6 are clear by that rule, none by more than 0.03 of
+  a point, and they go both ways. Four of the six are that one cell seen four
+  times: the sixteen-shot rows of a draw take the same probe draws, so what
+  is left on the lines is the same in all four. At that size the rule
+  misfires, as it did in the block before the last.
+- **It takes two microseconds.** Two patterns programmed, 2,048 shots and the
+  bank's weights programmed again are 2,240 beats on one bank, 2.2 µs: 12% of
+  a cell calibration by the twin's formula and 3% of the most counted (B15,
+  at its end). One shot a row is 320 beats.
+
+What it is not. **A correction that is built.** What the probe reads is taken
+off the line's level in the model, exactly, to its step. Where a chip would
+apply it is not modelled, and each place would cost something this does not
+count: on the weights as they are written, range, since a dim line's row
+cannot be written above full scale; on a row's drive, hardware this plan does
+not have; on a row's inputs at the host, their range in the same way. It is
+first order, as the light's own term is, and a line's light does not pass
+the converter in this model. A line 40% rms off is a Gaussian here, which puts one line in 160 at
+less than no light: that row is a stress and not a comb. The levels are fixed
+for a run, and how fast a comb's lines move, which is what would say how
+often to read them, is in no document here. An error that scales a row and
+is not its line's would read the same. And it is three draws of five
+networks, on one tile at version 2. None of this plan's rows is changed by
+it: what it asks of them is under B16.
+
 *The ADC's row, since the survey (2026-10-04).* Relaxing it saves 3 to 106 mW,
 and the low end is the published state of the art: the cheapest converters that
 sample this fast already have the seventh bit. So of the two rows, relaxing the
@@ -2356,7 +2485,11 @@ working tile. On MNIST inverted they add 0.29 to version 1 and 0.37 to version
   weight of zero, which a line's power multiplies
   ([`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) §9). A comb's
   lines are not level as made, so something has to level them to a fifth of a
-  decibel, and nothing here says what.
+  decibel, and nothing here says what. *Something reads them since
+  2026-10-08: a probe in grx930's harness, a row at full scale through a
+  full-scale weight ("A line's level, read", at the end of this section's
+  budget). Sixteen shots a row read a line to 0.9%. That is the measurement
+  and not the levelling: where what it reads is applied is still not said.*
 
 It is one network, a first-order term added after the converter, and noise
 with no memory from shot to shot. No source's noise is held here, a comb's or
@@ -3188,6 +3321,19 @@ kept before this was counted, and this does not change what it was kept on.
 What it changes is the reason not to go shorter, which is no longer the
 interruption.
 
+*Kept again, 2026-10-08.* The count took away the reason first given for
+not going shorter, so the question was put once more with that said. The
+choice was six minutes again. It rests on accuracy alone: six minutes holds a
+tenth on MNIST and Fashion-MNIST and costs 0.12 ± 0.03 on the inverted set,
+and three would buy 0.04 ± 0.04 there.
+
+*And a read of the comb's lines, the same day* (§4.3, at the end of its
+budget). The level probe is 2.2 µs on one bank, beside a cell calibration's
+18 to 68 µs. Taken at every calibration it adds 3% to 12% to an interruption
+that is one part in 5.3 million of the tile's time, so it does not bear on
+this interval. How often a comb's lines need reading is not known: it may be
+far less often than six minutes, or more.
+
 **What it does not settle.** The inverted set, where six minutes adds 0.28 ±
 0.27, and the interval that would hold a tenth there was not run. TFLN, whose
 hour adds 2.4 to 37 points and whose interval is still "within minutes". A
@@ -3243,6 +3389,19 @@ they add 0.25 and 0.17: tightening them was run a row at a time and not
 together, and is not adopted. Nothing on the chiplet measures a line's level
 (the ICD's link 4). And why the shared row is dear on that set is inferred
 from its sums and was not measured shot by shot (§4.3).
+
+*A line's level can be read since 2026-10-08* (§4.3, at the end of its
+budget; [`pta_reference_level.py`](pta_reference_level.py)). The third row
+was a requirement on a comb with nothing to meet it or to check it. grx930's
+harness now has a probe that reads a line: one shot a row leaves a comb's
+lines 3.6% off, rms, which is inside this row's 5%, and sixteen leave 0.9%,
+whatever they were before, up to the 40% that was run. Left alone, lines 20% off cost the
+reference networks 0.35, 0.40 and 1.63 of a point, so the row matters. **The
+row is not changed.** It is still lines level to 5% at the tile. What is
+open is who levels them: the comb as made, an equaliser in front of it, or a
+correction from what the probe reads, and the last is not modelled where a
+chip could apply it. On the inverted set, held, a read buys the reference
+networks 0.18 ± 0.09 of a point at this row's 5%, which is not clear.
 
 **It is a working row and not a source.** Three things would reopen it: a comb
 that cannot be had at −130 dB/Hz; a workload brighter than Fashion-MNIST that
