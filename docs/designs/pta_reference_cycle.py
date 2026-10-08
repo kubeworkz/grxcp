@@ -10,6 +10,17 @@ data sets, and could not say whether that was the calibration or the hour of
 drift before it, or what it does to the end of an interval.  grx930's harness
 has now run the cycle itself.
 
+CORRECTED, 2026-10-08, by pta_reference_calibration.py.  A calibrated row here and
+one that is not do not meet the same draws: a calibration's probes are GEMMs,
+and each takes the run's next seed.  So a calibrated row less the row as
+budgeted is two things, the trims a calibration writes and the draws its run
+meets, and readings 1, 2, 3 and 7 below took the two for the calibration's
+cost.  grx930 has since taken them apart, and it was the draws.  The figures
+here are grx930's and stand.  So does what is read between two calibrated
+rows, which share their draws.  pta_reference_calibration.py has a cycle's
+rows over the tile as budgeted on their own draws, and those replace the
+"over their budget" of readings 2 and 3 and the three draws of reading 5.
+
 MEASURED IN A MODEL, by grx930 (c930/doc/pta_error_model_design_note.md section
 5, "An interval that starts from a calibration", 2026-10-07; `sim/pta_mnist.sh
 DIR WORK refcycle`).  The working tile, 128 x 64 on two buses, at version 2,
@@ -541,6 +552,12 @@ def main():
     for key, name in ROWS:
         print(f"    {name:<32}" + "".join(f"{dpm(ahead(w, key)):>18}{dpm(adds_less(w, key)):>16}" for w in WORKLOADS))
 
+    print()
+    print("CORRECTED by pta_reference_calibration.py, 2026-10-08.  A calibrated row and one that is not do")
+    print("not meet the same draws, so a calibrated row less the row as budgeted is the trims and the")
+    print("draws both.  Readings 1, 2, 3 and 7 below took that for the calibration's cost, and it was")
+    print("the draws.  The figures stand, and so does what is read between two calibrated rows.  A")
+    print("cycle over its budget, in readings 2, 3 and 5, is read there over its own draws.")
     said = io.StringIO()
     with contextlib.redirect_stdout(said):
         findings()

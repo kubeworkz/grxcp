@@ -9,6 +9,12 @@ minutes adds 0.28.  B17's reference networks had been drifted for six minutes
 and no longer.  grx930's harness has now run both kinds from three minutes to
 four hours.
 
+CORRECTED, 2026-10-08, by pta_reference_calibration.py.  Reading 5's tenth of a
+point after a calibration is a calibrated row less the row as budgeted, and
+the two do not meet the same draws: a calibration's probes are GEMMs, and each
+takes the run's next seed.  It was the draws and not the calibration.  Every
+other reading here is between rows that share their draws, and stands.
+
 MEASURED IN A MODEL, by grx930 (c930/doc/pta_error_model_design_note.md section
 5, "How long a calibration holds for a trained network", 2026-10-07;
 `sim/pta_mnist.sh DIR WORK refdrift`).  The working tile, 128 x 64 on two buses,
@@ -426,6 +432,10 @@ def main():
     for h in HELD[1:]:
         print(f"    {'the reference at ' + minutes(h) + ', less':<30}" + "".join(f"{dpm(ahead(w, ('held', h), ('held', B15_H))):>20}" for w in WORKLOADS))
 
+    print()
+    print("CORRECTED by pta_reference_calibration.py, 2026-10-08.  Reading 5's tenth of a point after a")
+    print("calibration is a calibrated row less the row as budgeted, which do not meet the same draws.")
+    print("It was the draws and not the calibration.  The other readings share their draws and stand.")
     said = io.StringIO()
     with contextlib.redirect_stdout(said):
         findings()
