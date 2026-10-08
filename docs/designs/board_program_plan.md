@@ -37,7 +37,8 @@ takes back more than version 2 bought on the two harder data sets. The
 source's rows hold at version 2 on MNIST and Fashion-MNIST, and not on the
 inverted set at either version. B15 and B16 chose from that: version 2 is
 calibrated every six minutes, and its source's shared row is 1%. So held, it
-loses 0.19, 0.60 and 1.09 points on the three sets.
+loses 0.19, 0.60 and 1.09 points on the three sets. That was one draw of the
+tile's noise: over ten it is 0.22, 0.68 and 1.40 (the sixth sweep, below).
 Networks trained for the tile were run that day too (§4.3, at the end of its
 budget). Training them for eight epochs, where a rule had stopped them after
 two to seven, is worth two points on the inverted set, whose accuracies in
@@ -49,7 +50,8 @@ others. B14's first test is met as B14 worded it. B14 was kept that day all
 the same, because version 2 is worth as much to those networks as to the old
 ones, and they were made the reference for every later sweep (B17). Held at
 version 2 they are right 97.64, 87.27 and 94.63% of the time and lose 0.11,
-0.62 and 0.76 points to it.
+0.62 and 0.76 points to it. That was one draw too: over ten they are right
+97.59, 87.30 and 94.65% of the time and lose 0.17, 0.59 and 0.74.
 The first sweep on those networks, on 2026-10-07, ran them at B16's 1% and at
 the 2% it replaced (§4.3, at the end of its budget). Held as the chip is held,
 the 1% buys them nothing on any of the three sets, where it bought the old
@@ -83,6 +85,15 @@ row of this plan moves by 0.02 to 0.07 of a point when nothing changes but
 its draw, and its rows as budgeted are one draw each: over thirteen, the
 reference networks lose 0.14, 0.54 and 0.48 of a point to the tile, which on
 MNIST and Fashion-MNIST is what the networks trained before lose.
+The sixth, the same day, ran the working point on ten draws (§4.3, at the end
+of its budget). On the inverted set, which sizes B15's interval, the
+reference networks' six-minute cycle ends 0.12 ± 0.03 of a point over the tile
+as budgeted on the same draws, and a three-minute one 0.08 ± 0.02. By the rule
+a calibration holds three minutes there and not six, and neither is far from
+the tenth. On MNIST and Fashion-MNIST six minutes holds, at −0.01 and 0.07.
+What training for the tile buys is in what holding the chip adds: six minutes
+of drift and a source's rows cost the reference networks 0.03, 0.06 and 0.25
+of a point, and the networks trained before 0.08, 0.20 and 0.68.
 X2 has made its predictions (§3.3), X1 its budget (§4.3), and P0, X3 and X4
 are drafted as [`board_icd.md`](board_icd.md),
 [`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) and
@@ -2173,6 +2184,100 @@ is C3's calibration as grx930's harness has it, and no other. The held rows
 of this plan, with a source's rows, are one draw each as well, and were not
 run on others. Version 2 and the working tile only.
 
+*The working point over draws, 2026-10-08.*
+([`pta_reference_draws.py`](pta_reference_draws.py); grx930's design note, §5,
+"The working point over draws".) The block above left two things on one draw
+each. The inverted set's six minutes for the reference networks, which sizes
+B15's interval, had been drawn three times, at 0.08, 0.11 and 0.30 of a point
+over, and a tenth was not pinned between them. And the rows this plan quotes
+for the chip as it is held were one draw. Asked which to do, the choice was
+to pin the first before deciding anything, and to fold in the second.
+grx930's harness ran five rows on each of ten draws, with both kinds of
+network, five of each, at version 2: the tile as budgeted; held as B14, B15
+and B16 hold the chip, which is six minutes of drift and a source's three
+rows; a calibration's probes taken and nothing written; and a cycle of three
+minutes and of six. A draw seeds the tile anew, which moves its noise, its
+drift's walk and its source. A cycle is read over the probes-only row of its
+own draw and the held row over the as-budgeted row of its own draw, so that
+each pair meets the same noise.
+
+| | MNIST: trained before | Reference | Fashion-MNIST: trained before | Reference | MNIST inverted: trained before | Reference |
+|---|---|---|---|---|---|---|
+| A three-minute cycle over the tile as budgeted on the same draws: the mean of ten draws | −0.01 ± 0.01 | +0.00 ± 0.01 | +0.02 ± 0.02 | +0.03 ± 0.02 | **+0.30 ± 0.06** | **+0.08 ± 0.02** |
+| the draws' standard deviation | 0.04 | 0.03 | 0.07 | 0.08 | 0.16 | 0.06 |
+| draws of the ten at a tenth or over | 0 | 0 | 1 | 2 | 10 | 4 |
+| **A six-minute cycle, B15's interval: the mean of ten draws** | +0.01 ± 0.02 | −0.01 ± 0.01 | +0.09 ± 0.04 | **+0.07 ± 0.02** | **+0.41 ± 0.08** | **+0.12 ± 0.03** |
+| the draws' standard deviation | 0.03 | 0.02 | 0.12 | 0.08 | 0.21 | 0.06 |
+| draws of the ten at a tenth or over | 0 | 0 | 5 | 5 | 8 | 8 |
+| on the plan's draw alone, as the block above had it | +0.02 ± 0.03 | +0.02 ± 0.04 | +0.19 ± 0.07 | +0.02 ± 0.02 | +0.03 ± 0.21 | +0.11 ± 0.09 |
+| **How long a calibration holds, by the rule** | **6 minutes** | **6 minutes** | **6 minutes** | **6 minutes** | **under 3 minutes** | **3 minutes** |
+
+The rule is the one above, read on the mean over the draws: the longer
+interval whose cycle ends under a tenth of a point, the shorter doing so too.
+The errors are five networks', each averaged over its ten draws. In bold, what
+they put outside chance at one in twenty.
+
+| | MNIST: trained before | Reference | Fashion-MNIST: trained before | Reference | MNIST inverted: trained before | Reference |
+|---|---|---|---|---|---|---|
+| Held as the chip is: right, percent, on the plan's draw | 97.26 | 97.64 | 86.88 | 87.27 | 92.27 | 94.63 |
+| **over ten draws** | 97.23 ± 0.10 | 97.59 ± 0.05 | 86.79 ± 0.14 | 87.30 ± 0.12 | 91.96 ± 0.64 | 94.65 ± 0.36 |
+| Points lost to the tile so held: on the plan's draw | 0.19 ± 0.03 | 0.11 ± 0.05 | 0.60 ± 0.23 | 0.62 ± 0.13 | 1.09 ± 0.36 | 0.76 ± 0.22 |
+| **over ten draws** | 0.22 ± 0.01 | 0.17 ± 0.03 | 0.68 ± 0.11 | 0.59 ± 0.09 | 1.40 ± 0.24 | 0.74 ± 0.08 |
+| The plan's draw, less a network's mean over the other nine | +0.03 ± 0.03 | +0.06 ± 0.04 | +0.10 ± 0.15 | −0.03 ± 0.05 | +0.34 ± 0.20 | −0.02 ± 0.22 |
+| What holding adds over the tile as budgeted on the same draws | **+0.08 ± 0.03** | **+0.03 ± 0.01** | **+0.20 ± 0.04** | +0.06 ± 0.04 | **+0.68 ± 0.14** | **+0.25 ± 0.04** |
+| Points lost as budgeted, over the ten draws | 0.15 ± 0.04 | 0.14 ± 0.03 | 0.48 ± 0.12 | 0.53 ± 0.07 | 0.71 ± 0.10 | 0.49 ± 0.05 |
+
+| | MNIST | Fashion-MNIST | MNIST, inverted |
+|---|---|---|---|
+| The reference networks less the old, seed by seed, over ten draws: right, held | **+0.36 ± 0.09** | **+0.50 ± 0.12** | **+2.68 ± 0.59** |
+| right, as budgeted | **+0.31 ± 0.09** | +0.36 ± 0.17 | **+2.25 ± 0.51** |
+| what holding adds | −0.05 ± 0.02 | **−0.14 ± 0.04** | −0.43 ± 0.17 |
+| what a six-minute cycle adds | −0.02 ± 0.01 | −0.02 ± 0.05 | **−0.29 ± 0.07** |
+| A six-minute cycle over a three-minute one, the reference | +0.00 ± 0.01 | +0.04 ± 0.03 | +0.04 ± 0.04 |
+
+- **On the inverted set a six-minute cycle ends over a tenth of a point in the
+  mean, and a three-minute one under it.** 0.12 ± 0.03 and 0.08 ± 0.02 for the
+  reference networks. The five networks' mean is at a tenth or over on 8 of
+  the ten draws at six minutes and on 4 at three. By the rule a calibration
+  holds three minutes there for them, and not six. Neither is far from the
+  tenth: six minutes is 0.6 of its errors over it and three 1.3 under, ten
+  draws put the six-minute mean between 0.08 and 0.16, and five networks
+  between 0.04 and 0.20. Six minutes costs 0.04 ± 0.04 more than three.
+- **On MNIST and Fashion-MNIST six minutes holds.** −0.01 ± 0.01 and 0.07 ±
+  0.02. On Fashion-MNIST the five networks' mean is at a tenth or over on 5 of
+  the ten draws, and under it in their mean.
+- **One draw did not pin it.** From draw to draw a six-minute cycle's cost has
+  a standard deviation of 0.02, 0.08 and 0.06 of a point, and on the inverted
+  set it runs from 0.01 to 0.19. The plan's draw has 0.11.
+- **For the networks trained before, no interval that was run holds on the
+  inverted set.** A three-minute cycle ends 0.30 ± 0.06 over and a six-minute
+  one 0.41 ± 0.08, and five networks put both over a tenth. That is the set
+  B15 was settled without. A six-minute cycle costs a reference network 0.29
+  ± 0.07 of a point less there than the old one of its seed.
+- **The chip as it is held, over ten draws.** The reference networks are right
+  97.59, 87.30 and 94.65% of the time and lose 0.17, 0.59 and 0.74 of a point
+  to the tile, where the plan's draw has 97.64, 87.27 and 94.63, and 0.11, 0.62
+  and 0.76. The networks trained before are right 97.23, 86.79 and 91.96% of
+  the time and lose 0.22, 0.68 and 1.40, for the draw's 97.26, 86.88 and
+  92.27, and 0.19, 0.60 and 1.09. In none of the six cells is the plan's draw
+  clear of the other nine; the farthest is the old networks' on the inverted
+  set, 0.34 ± 0.20 above them.
+- **What training for the tile buys is in what holding adds.** The block above
+  found that as budgeted a network trained for the tile loses what one that
+  was not does. Six minutes of drift and a source's rows add 0.03, 0.06 and
+  0.25 of a point to what the reference networks lose on the same draws, and
+  0.08, 0.20 and 0.68 to the old ones: seed by seed −0.05 ± 0.02, −0.14 ± 0.04
+  and −0.43 ± 0.17, less on all three sets and clear on Fashion-MNIST. Held,
+  the reference networks are right 0.36 ± 0.09, 0.50 ± 0.12 and 2.68 ± 0.59
+  points more often, clear on all three, where as budgeted they are 0.31,
+  0.36 and 2.25.
+
+The ten draws are of the same five networks, and the intervals are three
+minutes and six and no other. A draw moves the noise, the walk and the source
+together; the pairing takes out the noise and leaves the other two. It is one
+calibration and not a schedule, at version 2 on the working tile. B15 is not
+changed here: what this asks of it is under B15.
+
 *The ADC's row, since the survey (2026-10-04).* Relaxing it saves 3 to 106 mW,
 and the low end is the published state of the art: the cheapest converters that
 sample this fast already have the seventh bit. So of the two rows, relaxing the
@@ -3017,6 +3122,21 @@ sizes the interval again. Its six minutes, drawn three times and each over
 its own draws, is 0.08, 0.11 and 0.30; a three-minute cycle ends 0.04 over.
 Whether six minutes holds a tenth there is not settled.
 
+*Over ten draws, 2026-10-08* (§4.3, at the end of its budget;
+[`pta_reference_draws.py`](pta_reference_draws.py)). Asked whether to keep six
+minutes, move to three or pin it first, the choice was to pin it first. On
+the inverted set the reference networks' six-minute cycle ends 0.12 ± 0.03 of
+a point over the tile as budgeted on the same draws, and a three-minute one
+0.08 ± 0.02. By the rule above the interval that holds a tenth there is three
+minutes, which is 480 calibrations a day, and six minutes costs 0.04 ± 0.04 of
+a point more. Neither is far from the tenth: six is 0.6 of its errors over
+it, three 1.3 under. On the other two sets six minutes holds, at −0.01 and
+0.07. For the networks this decision was settled on, the old ones, a
+six-minute cycle ends 0.41 ± 0.08 over on the inverted set and a three-minute
+one 0.30 ± 0.06, so no interval that was run holds for them there, which this
+decision knew of six minutes when it was taken. Whether the interval moves to
+three minutes is this decision's to take again, and is not taken here.
+
 **What it does not settle.** The inverted set, where six minutes adds 0.28 ±
 0.27, and the interval that would hold a tenth there was not run. TFLN, whose
 hour adds 2.4 to 37 points and whose interval is still "within minutes". A
@@ -3132,10 +3252,15 @@ again.**
 | Those, over the old ones, seed by seed | +0.38 ± 0.11 | +0.39 ± 0.07 | +2.36 ± 0.65 | Derived, [`pta_trained.py`](pta_trained.py) |
 | Points lost, held at version 2: as trained before | 0.19 ± 0.03 | 0.60 ± 0.23 | 1.09 ± 0.36 | grx930's harness |
 | The reference networks | 0.11 ± 0.05 | 0.62 ± 0.13 | 0.76 ± 0.22 | The same |
+| Held at version 2, over ten draws (2026-10-08): right, as trained before | 97.23 | 86.79 | 91.96 | grx930's harness, [`pta_reference_draws.py`](pta_reference_draws.py) |
+| The reference networks | 97.59 | 87.30 | 94.65 | The same |
+| Those, over the old ones, seed by seed | +0.36 ± 0.09 | +0.50 ± 0.12 | +2.68 ± 0.59 | Derived there |
+| Points lost, over ten draws: as trained before | 0.22 ± 0.01 | 0.68 ± 0.11 | 1.40 ± 0.24 | The same |
+| The reference networks | 0.17 ± 0.03 | 0.59 ± 0.09 | 0.74 ± 0.08 | The same |
 
 **What it buys.** Where the chip is held, 0.4 of a point on MNIST and on
 Fashion-MNIST and 2.4 points on the inverted set, each clear of chance with
-five networks. Most of the 2.4 is the epochs and not the noise. And an
+five networks. *Over ten draws, 2026-10-08: 0.36, 0.50 and 2.68, each clear.* Most of the 2.4 is the epochs and not the noise. And an
 inverted set whose accuracies are no longer two points low.
 
 **What it costs.** Nothing on the chip. About twice the training. And
@@ -3164,7 +3289,11 @@ cycle compared and not the calibration. And that over thirteen draws of the
 tile as budgeted the reference networks lose 0.14, 0.54 and 0.48 of a point,
 where one draw had 0.07, 0.47 and 0.52: on MNIST and Fashion-MNIST what the
 networks trained before lose. They are right 0.29, 0.38 and 2.26 points more
-often than those.*
+often than those. A sixth, the same day, ran the chip as it is held on ten
+draws, which are the rows added to the table above. What training for the
+tile buys is in what holding adds: six minutes of drift and a source's rows
+cost the reference networks 0.03, 0.06 and 0.25 of a point, and the old ones
+0.08, 0.20 and 0.68.*
 What was run on them is the working tile at v1 and at version 2, as budgeted
 and as held. Over those four and the three sets, what the tile costs them in
 points lost is smaller than it cost the old ones in 11 cells of 12, and in
