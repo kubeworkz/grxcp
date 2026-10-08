@@ -153,6 +153,20 @@ that is one part in 88 million. It is still not the shots. It is 240
 interruptions a day where an hour was 24, and what one costs is still not
 priced.
 
+*Priced, 2026-10-08* ([`pta_interruption.py`](pta_interruption.py)). Counted,
+and not measured. The twin holds the tile for `passes × repeats × (PTA_TW +
+rows × PTA_TS)` cycles a bank ([`pta_chiplet_regmap.md`](pta_chiplet_regmap.md)
+§5), and on the working tile a shot is a beat and a bank programs in 64,
+the board plan's write path being 128 cells a beat. Both banks at 16 probes
+are 6.1 µs at one pass and 18.4 µs at three: 12,288 shots, and the 96
+zeroings before them, which are half as much again as the shots and which
+the paragraph above did not count. With the estimator's walk, the restore
+and the drain it is 68 µs at the most, one part in 5.3 million of six
+minutes, and 16 ms a day. For 240 a day to take a thousandth of the tile's
+time an interruption would have to last 0.36 s. **So on this chiplet the
+interruption is not the cost either.** Nothing that can be counted is, at six
+minutes or at three, and what sets the interval is what drift costs.
+
 **Column affine, by two references.** A zero-input shot gives the column's
 offset; a known full-scale pattern gives its gain. A handful of shots, taken
 far more often than the cell loop.
@@ -459,7 +473,15 @@ this is the C reference; the RTL, the FSM and the schedulers are C3(b).
 
    *Since the board plan's B16 (2026-10-06) the shot-to-shot row is 1% for
    version 2, and no loop reaches it still.*
-6. **What an interruption costs** (2026-10-06). B15 takes 240 calibrations a
+6. ~~**What an interruption costs**~~ (2026-10-06). B15 takes 240 calibrations a
    day. §3 says the cost of one is draining the tile, rewriting the weights
    and restarting, and no model prices that. Until one does, six minutes is a
    figure for accuracy with no figure for throughput beside it.
+   **18 to 68 µs, counted** (2026-10-08;
+   [`pta_interruption.py`](pta_interruption.py), §3). The figure for throughput
+   is one part in 5.3 million at the most. What it leaves open is three
+   things: the estimator's width, which is most of the 68 µs and is
+   specified nowhere; what the light does to a ring written to zero and back,
+   which no model here has; and the schedulers of §5, whose reason on the c930
+   was a calibration's cycles and which have at most half a large layer's
+   time to hide on this tile.

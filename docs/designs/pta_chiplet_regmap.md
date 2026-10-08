@@ -397,7 +397,12 @@ other two where there were 44 and 48 on the one.
    reads 1,000 on such a chiplet. It still reads zero on an emulated tile (§2),
    and the twin still has no rate of its own.
 2. **Whether `PTA_TW` and `PTA_TS` mean anything on silicon**, or stay the
-   twin's.
+   twin's. *They have values at the chiplet's scale since 2026-10-08*
+   ([`pta_interruption.py`](pta_interruption.py)): a shot is one beat of the
+   shot clock, and a bank programs in 64 on the board plan's write path, 128
+   cells a beat. Those are what the twin's two formulas take to give a
+   calibration's time on the working tile. Whether a register reports them is
+   still open.
 3. **The chiplet's command queue depth**, which the GPU's dispatcher has to
    know. The twin takes it as a build parameter and reports it nowhere; the c930
    has a `QUEUE_MAX` register for the same number. *The host-path proposal would

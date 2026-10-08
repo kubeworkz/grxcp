@@ -94,6 +94,11 @@ the tenth. On MNIST and Fashion-MNIST six minutes holds, at −0.01 and 0.07.
 What training for the tile buys is in what holding the chip adds: six minutes
 of drift and a source's rows cost the reference networks 0.03, 0.06 and 0.25
 of a point, and the networks trained before 0.08, 0.20 and 0.68.
+B15 was kept at six minutes on that (2026-10-08). And what one of its 240
+interruptions a day costs, which nothing had priced, is counted (B15, at its
+end): 18 µs by the twin's formula and 68 µs with everything the formula leaves
+out, one part in 5.3 million of the tile's time. For it to matter an
+interruption would have to last a third of a second.
 X2 has made its predictions (§3.3), X1 its budget (§4.3), and P0, X3 and X4
 are drafted as [`board_icd.md`](board_icd.md),
 [`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) and
@@ -3055,6 +3060,8 @@ the floor under the two schedulers that predict
 | Calibrations a day | 24 | 240 | Counted |
 | A calibration's probes | 4,096 shots, 4 µs | The same | The calibration note's §3: both banks, a row a shot, 16 probes a cell |
 | Their share of the tile's shots | One in 880 million | One in 88 million | Derived |
+| A whole calibration, counted (2026-10-08): the probes, the 96 zeroings before them over three passes, the estimator, the restore and the drain | 18 to 68 µs | The same | [`pta_interruption.py`](pta_interruption.py). **Counted, not measured** |
+| Its share of the tile's time, at the most | One in 53 million | One in 5.3 million | Derived there |
 | The period, as a count of shot-clock cycles | 42 bits | 39 bits | Derived. `PTA_CAL_PER` has 32 |
 | The period, in `PTA_CAL_PER`'s units of 2¹⁶ cycles, since that day | 54,931,641 | 5,493,164 | The register map's §4. The word reaches 78 hours |
 
@@ -3065,7 +3072,8 @@ at B16's rows as well, it loses 0.19 and 0.60 at the end of an interval.
 **What it costs.** Ten times the calibrations. Their probes are nothing: a
 part in 88 million of the tile's shots. The cost is the one the calibration
 note names, the interruption: draining the tile, rewriting its weights and
-restarting, 240 times a day. No model in this plan prices that.
+restarting, 240 times a day. ~~No model in this plan prices that.~~ *One does
+since 2026-10-08: at this decision's end.*
 
 **What it shows up.** The period does not fit its register. `PTA_CAL_PER` is
 32 bits of cycles, which at a shot a nanosecond is 4.3 seconds. Six minutes is
@@ -3137,6 +3145,49 @@ one 0.30 ± 0.06, so no interval that was run holds for them there, which this
 decision knew of six minutes when it was taken. Whether the interval moves to
 three minutes is this decision's to take again, and is not taken here.
 
+*Kept, 2026-10-08.* Asked whether to keep six minutes or move to three, the
+choice was to keep six minutes. It holds a tenth on MNIST and Fashion-MNIST,
+it costs 0.12 ± 0.03 on the inverted set, which is not shown to be over a
+tenth, and three minutes would buy 0.04 ± 0.04 of a point there. What twice
+the interruptions would cost was not priced when this was kept.
+
+*The interruption, priced the same day*
+([`pta_interruption.py`](pta_interruption.py); the calibration note's §3 and
+its open question 6). Counted from what the program already holds, and not
+measured. The twin's own timing has a calibration hold the tile for `passes ×
+repeats × (PTA_TW + rows × PTA_TS)` cycles a bank: each repeat writes the bank
+to zero and shoots every row once. On the working tile a shot is a beat and a
+bank programs in 64, since §4.3's write path is 128 cells a beat. So both
+banks at 16 probes are 6.1 µs at one pass and 18.4 µs at the three passes
+grx930's engine was measured at: 12,288 shots and 96 zeroings. What the
+formula leaves out is the estimator's walk, the restore and the drain, and
+with those it is 68 µs at the most, the estimator a cell a beat, or 19 µs
+with it as wide as the write path.
+
+- **240 a day is 16 milliseconds a day**, one part in 5.3 million of the
+  tile's time at the most. This decision's table had the probes' shots alone.
+- **For it to matter an interruption would have to last a third of a
+  second.** 0.36 s takes a thousandth of the tile's time at 240 a day and 3.6 s
+  a hundredth, which is 5,312 times the most counted. Nothing in these
+  documents is that slow: a weight on TFLT settles in 25 ps, and the write
+  path was sized to program a bank inside one batch.
+- **So the count does not set the interval.** At three minutes the most
+  counted is one part in 2.7 million and 33 ms a day, and every ten seconds
+  one part in 147,545. It reaches a thousandth of the tile's time at an
+  interval of 68 ms. What sets the interval is accuracy, which is measured at
+  three minutes and at six and at no shorter interval.
+- **A command that meets a calibration waits 68 µs at the most**, half of the
+  131 µs the 4096-square layer takes on this tile, and one command in 5.3
+  million meets one.
+
+It prices time and nothing else. What the light does to a ring that was
+written to zero and back is in no model here, the estimator's width is
+specified nowhere, and the twin builds no scheduler, so on it a calibration
+still starts when it is asked for. The interval stays six minutes: that was
+kept before this was counted, and this does not change what it was kept on.
+What it changes is the reason not to go shorter, which is no longer the
+interruption.
+
 **What it does not settle.** The inverted set, where six minutes adds 0.28 ±
 0.27, and the interval that would hold a tenth there was not run. TFLN, whose
 hour adds 2.4 to 37 points and whose interval is still "within minutes". A
@@ -3148,8 +3199,9 @@ period allows and were not rerun at version 2.
 **It is a working interval and not a schedule.** Three things would reopen it:
 a measured drift, of a ring, that is not TFLT's fit; an interruption that
 costs enough for 240 a day to matter; or a workload brighter than
-Fashion-MNIST that the board has to serve. *Needed by:* X3, X4's
-`PTA_CAL_PER`, S3.
+Fashion-MNIST that the board has to serve. *The second is counted since
+2026-10-08 and is not met: an interruption is 18 to 68 µs, and it would have
+to be a third of a second.* *Needed by:* X3, X4's `PTA_CAL_PER`, S3.
 
 **B16 — The source's shared row: 1%.** *Settled 2026-10-06.*
 
