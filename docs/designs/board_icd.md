@@ -179,6 +179,17 @@ things, of which this document held one:
   in sixteen shots a row, through a full-scale weight. It is in a model and
   in no chip, and what levels the lines from that reading is not said. The
   5% stands.*
+  *It was moved on 2026-10-09: the board plan's B16 now holds the lines level
+  to **20%**, 0.8 dB, as they reach the tile, read with that probe at each
+  calibration and corrected on the weights a row at a time, which are written
+  at the weight DAC's 8 bits. So this link's comb may be four times less
+  level as made, and what the chiplet owes for it is a read, 2.2 µs on one
+  bank, and 8 bits a weight. Held so, the reference networks lose 0.09 ± 0.03
+  of a point more on MNIST than with a comb 5% off, and nothing that can be
+  told on the other two sets (the board plan's §4.3, at the end of its
+  budget). It is in a model: no engine takes the read and no register reports
+  it. How fast a comb's lines move is not known, and it is what says how
+  often they have to be read.*
 - **Wavelength.** B5's arithmetic is at 1550 nm; the same detector at 1310 nm
   needs 18% more light. The all-optical branch would pin it to 1550 nm within
   2.4 nm, and ring weights would pin it by a figure nobody has.

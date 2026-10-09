@@ -450,6 +450,28 @@ other two where there were 44 and 48 on the one.
     its unit becomes a power of two of cycles: a unit of 2¹⁶ cycles, 66 µs at
     1 GHz, holds 78 hours in 32 bits. Nothing here chooses. The twin stores
     the period and no scheduler in it reads it, so it does not show this.
+12. **A line's level: where it is read, and where a row's scale is written**
+    (2026-10-09). Since that day the board plan's B16 has a comb's lines read
+    at each calibration, and every row's weights scaled by what its line read
+    and written at the weight DAC's 8 bits. This map has nothing for any of
+    it. Nothing in `PTA_CTRL` or in §4's three words asks an engine for the
+    read, and grx930's engine has no such mode. No register reports a line's
+    reading, of which the working tile has 64, a line lighting a row on each
+    of its two buses. And nothing says who multiplies: the host, which then
+    has to be given those 64 readings and scale every weight it sends, or the
+    interface chip's write path, which then needs somewhere to hold a row's
+    scale. `PTA_CAPS1[23:20]` reports the widest weight setting the hardware
+    accepts, and on an emulated tile that is the widest that quantises,
+    `DIN_W - 1` (§2): what a chiplet whose DAC takes a weight at 8 bits reads
+    there is not said. Nothing here chooses, and the twin models none of it.
+13. **`PTA_TRIM`'s unit** (2026-10-09). Its step is `1 <<` its low field in
+    Q.8 of a weight LSB. In grx930's model that LSB is the operand's, an
+    8-bit weight's, whatever `PTA_BITS` sets the weight code to. So the 8-bit
+    DAC behind a 6-bit code that the calibration note's §4 asks for is a
+    field of 8, a quarter of a code, and the 6 that grx930's harness and
+    every cycle of the board plan's ran at is a sixteenth of a code, a DAC of
+    10 bits. §4's table does not say which LSB it means. Which DAC the
+    chiplet is held to is the board plan's B16's to take.
 
 ---
 
