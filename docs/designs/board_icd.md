@@ -174,6 +174,11 @@ things, of which this document held one:
   *It was, the same day: the board plan's B16 holds the lines together to
   **1% rms a shot, about −130 dB/Hz**, which is 14 dB easier than the first
   figure above. A line on its own and the lines' level stay at 5%.*
+  *A line's level can be read since 2026-10-08 (the board plan's §4.3, at the
+  end of its budget): grx930's harness has a probe that reads a line to 0.9%
+  in sixteen shots a row, through a full-scale weight. It is in a model and
+  in no chip, and what levels the lines from that reading is not said. The
+  5% stands.*
 - **Wavelength.** B5's arithmetic is at 1550 nm; the same detector at 1310 nm
   needs 18% more light. The all-optical branch would pin it to 1550 nm within
   2.4 nm, and ring weights would pin it by a figure nobody has.
