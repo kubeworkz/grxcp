@@ -189,6 +189,19 @@ code is a fine enough step to chase it. §8 has the figures: a quarter of a code
 costs nothing measurable, half a code 0.04 points, a whole code 0.16, and two
 codes 1.05. Sub-code resolution is worth buying; it is not a precondition.
 
+*A second use for the bits below the code, 2026-10-08*
+([`pta_reference_fix.py`](pta_reference_fix.py); §9, item 5). A comb's lines
+that are not level can be corrected on the weights, a row at a time, from
+what a probe reads. Written at the DAC's 8 bits that correction ends within
+0.11 of a point of level lines with lines 20% off. Left on the bare 6-bit
+code it ends 0.07, 0.13 and 0.21 over on the three sets, and the two more
+bits buy 0.02, 0.11 and 0.10, none of them clear. So the same sentence holds
+of it: worth buying, and not a precondition. A weight has to be moved half a
+code before the 6-bit grid takes off more than it leaves, which is why a
+correction of lines only 5% off buys nothing there. The trim and this
+correction would share those two bits, and what they do to each other is not
+modelled.
+
 The column affine is applied digitally, after the ADC, as the CPU document
 intends. Both corrections saturate rather than wrap, and a cell whose trim
 cannot reach its measured error raises `PTA_STATUS.DRIFT_ALARM` — the tile is
@@ -499,17 +512,50 @@ this is the C reference; the RTL, the FSM and the schedulers are C3(b).
      a time would take both off together, and one a line at a time would
      not. The model has no such error, so this is not measured.
 
-   What is still open. **Where what it reads is applied.** The model takes it
-   off the line's level exactly, which no chip does. Each place a chip could
-   apply it would cost something that is not counted: on the weights as
+   What is still open. ~~**Where what it reads is applied.**~~ The model takes
+   it off the line's level exactly, which no chip does. Each place a chip
+   could apply it would cost something that is not counted: on the weights as
    written, range, since a dim line's row cannot be written above full scale;
    on a row's drive, hardware nothing here has; on a row's inputs at the
-   host, their range in the same way. **How often.** A comb's lines are held still for a run here,
-   and how fast they move is in no document. **The engine.** grx930's RTL
-   engine has no such mode, and the register map has no register for it.
-   **The converter's range.** The probe reads at a range that spans a line at
-   twice its level, and in the model a line's light does not pass the
-   converter at all.
+   host, their range in the same way. **How often.** A comb's lines are held
+   still for a run here, and how fast they move is in no document. **The
+   engine.** grx930's RTL engine has no such mode, and the register map has no
+   register for it. **The converter's range.** The probe reads at a range that
+   spans a line at twice its level, and in the model a line's light does not
+   pass the converter at all.
+
+   **Applied where a chip could, in a model** (2026-10-08;
+   [`pta_reference_fix.py`](pta_reference_fix.py), the board plan's §4.3 at
+   the end of its budget). Five ways, with lines 5% and 20% off; points lost
+   to level lines by B17's reference networks, with lines 20% off:
+
+   | Where the reading goes | MNIST | Fashion-MNIST | MNIST, inverted |
+   |---|---|---|---|
+   | Nowhere: the comb left alone | 0.35 ± 0.01 | 0.40 ± 0.13 | 1.63 ± 0.54 |
+   | **The weights, written at the DAC's 8 bits (§4)** | +0.05 ± 0.02 | +0.02 ± 0.03 | +0.10 ± 0.04 |
+   | The weights, at the tile's 6 bits | +0.07 ± 0.02 | +0.13 ± 0.06 | +0.21 ± 0.14 |
+   | The inputs, held at full scale | +0.03 ± 0.02 | +0.09 ± 0.04 | +0.44 ± 0.14 |
+   | The 8-bit weights, every row scaled to the dimmest line | +0.13 ± 0.04 | +0.65 ± 0.08 | +0.75 ± 0.09 |
+   | The inputs, scaled to the dimmest line | +0.24 ± 0.02 | +0.80 ± 0.13 | +0.69 ± 0.10 |
+
+   - *The range is not what it costs.* Held at the rail, the 8-bit weights
+     have 0.14%, 0.25% and 0.05% of themselves held back, and end within 0.11
+     of a point of level lines. What was reasoned above was right about the
+     inputs on a set whose pixels are at full scale, 43% of them held and 0.44
+     of a point left, and wrong about the weights.
+   - *Avoiding the rail costs more than meeting it.* Scaled to the dimmest
+     line nothing is raised, and every sum is left 0.52 of itself, 2.8 dB of
+     light with the converter's range where it was. That is worse than held
+     at the rail on every set, in either place.
+   - *At 5% there is nothing to correct.* What is clear there is mostly cost.
+
+   So of the four things open, the first has an answer in a model: on the
+   weights, at the DAC's 8 bits, a row at a time, with the host doing the
+   scaling when it writes them. Three things it adds to what is open. **The
+   trim's bits.** §4 gives the two bits below the code to the cell trim, and
+   this takes them too. **The write path.** It would carry 8 bits a cell
+   where it carried 6. **A comb past 20%.** No place a chip could apply a
+   reading was run there.
 
    *Since the board plan's B16 (2026-10-06) the shot-to-shot row is 1% for
    version 2, and no loop reaches it still.*

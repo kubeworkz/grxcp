@@ -108,6 +108,16 @@ the three sets and lines 40% off 2.01, 2.26 and 7.79, where the tile itself
 costs them 0.13, 0.50 and 0.48. Read first with sixteen shots a row they cost
 nothing that can be seen, and a read takes 2.2 µs. It is a reading and not
 yet a correction: where a chip would apply it is not modelled.
+*It was, the same day* (§4.3, at the end of its budget): asked what to do
+next, the choice was to model the correction where a chip can apply it.
+**Applied on the weights and written at the 8 bits the weight DAC has, the
+reading takes lines 20% off to within 0.11 of a point of level lines**, on
+all three sets. At the tile's 6 bits it leaves 0.07, 0.13 and 0.21, and at
+this plan's 5% it buys nothing. Scaled to the dimmest line so that nothing is
+raised, a correction costs 2.8 dB of light and on Fashion-MNIST more than the
+comb did. So a comb 20% off, read and corrected, costs the reference networks
+0.05, 0.06 and −0.05 of a point more than this plan's comb left alone. Whether
+the plan's row moves on that is B16's to take, and is not taken.
 X2 has made its predictions (§3.3), X1 its budget (§4.3), and P0, X3 and X4
 are drafted as [`board_icd.md`](board_icd.md),
 [`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) and
@@ -2404,13 +2414,143 @@ count: on the weights as they are written, range, since a dim line's row
 cannot be written above full scale; on a row's drive, hardware this plan does
 not have; on a row's inputs at the host, their range in the same way. It is
 first order, as the light's own term is, and a line's light does not pass
-the converter in this model. A line 40% rms off is a Gaussian here, which puts one line in 160 at
-less than no light: that row is a stress and not a comb. The levels are fixed
-for a run, and how fast a comb's lines move, which is what would say how
-often to read them, is in no document here. An error that scales a row and
-is not its line's would read the same. And it is three draws of five
-networks, on one tile at version 2. None of this plan's rows is changed by
-it: what it asks of them is under B16.
+the converter in this model. A line 40% rms off is a Gaussian here, which
+puts one line in 160 at less than no light: that row is a stress and not a
+comb. The levels are fixed for a run, and how fast a comb's lines move, which
+is what would say how often to read them, is in no document here. An error
+that scales a row and is not its line's would read the same. And it is three
+draws of five networks, on one tile at version 2. None of this plan's rows is
+changed by it: what it asks of them is under B16.
+
+*A line's level, corrected where a chip could, 2026-10-08.*
+([`pta_reference_fix.py`](pta_reference_fix.py); grx930's design note, §5, "A
+line's level, corrected where a chip could".) The block above read a comb's
+lines and took the reading off the model's own record of each line, which no
+chip can do, and named three places a chip could apply it with a cost that
+was reasoned and not counted. Asked what to do next, the choice was to model
+the correction where a chip can apply it, the weights as written first.
+grx930's harness now applies the reading a row at a time, in five ways:
+
+- **On the weights, at the tile's 6 bits.** Every weight of the row is
+  written as w / (1 + r), and the tile quantises it as it does any weight.
+- **On the weights, at the DAC's 8 bits.** The 6-bit weights the network was
+  trained for are scaled and written at 8 bits, which is the DAC the
+  calibration note's §4 puts behind a 6-bit weight code.
+- **On the inputs.** Every input of the row is sent as a / (1 + r).
+- **And two that raise nothing.** A dim line's row has to be raised, and a
+  weight or an input at the rail cannot be. In the three above it is held
+  there. Or every row is scaled down to the dimmest line's, on the 8-bit
+  weights or on the inputs, and the sums are divided back by what that took
+  off. That costs light, and the converter's range is left where it was.
+
+Version 2 on the working tile, the three draws of the block above and its
+rows again where the two share them, the source's noise at B16's two rows,
+both kinds of network. Lines 5% and 20% off: lines 40% off were not run,
+since a Gaussian comb that uneven has lines at no light, which nothing scales
+back. What a row costs is read over the level row of its own draw; no
+correction takes a seed of the run's.
+
+| | MNIST: trained before | Reference | Fashion-MNIST: trained before | Reference | MNIST inverted: trained before | Reference |
+|---|---|---|---|---|---|---|
+| Lines 5% off, 0.2 dB, this plan's row: left alone | −0.01 ± 0.03 | +0.00 ± 0.01 | −0.04 ± 0.05 | −0.04 ± 0.04 | +0.10 ± 0.11 | +0.16 ± 0.08 |
+| taken off the model's own line, as the block above did | +0.01 ± 0.01 | **−0.02 ± 0.00** | −0.02 ± 0.02 | +0.00 ± 0.01 | +0.04 ± 0.03 | +0.01 ± 0.01 |
+| on the weights, at the tile's 6 bits | +0.00 ± 0.02 | +0.00 ± 0.01 | −0.06 ± 0.07 | +0.06 ± 0.03 | +0.16 ± 0.13 | +0.07 ± 0.06 |
+| **on the weights, at the DAC's 8 bits** | −0.01 ± 0.01 | **−0.02 ± 0.01** | −0.03 ± 0.04 | +0.05 ± 0.03 | +0.01 ± 0.06 | +0.04 ± 0.03 |
+| at 8 bits, scaled to the dimmest line | +0.02 ± 0.02 | +0.00 ± 0.02 | +0.07 ± 0.06 | **+0.10 ± 0.04** | **+0.16 ± 0.04** | **+0.15 ± 0.02** |
+| on the inputs, held at full scale | +0.00 ± 0.01 | −0.02 ± 0.01 | −0.07 ± 0.05 | +0.06 ± 0.04 | −0.03 ± 0.03 | +0.08 ± 0.03 |
+| on the inputs, scaled to the dimmest line | +0.01 ± 0.02 | **+0.08 ± 0.01** | +0.02 ± 0.04 | +0.06 ± 0.06 | −0.03 ± 0.04 | +0.01 ± 0.02 |
+| Lines 20% off, 0.8 dB: left alone | **+0.41 ± 0.05** | **+0.35 ± 0.01** | **+0.62 ± 0.16** | **+0.40 ± 0.13** | **+1.69 ± 0.38** | **+1.63 ± 0.54** |
+| taken off the model's own line, as the block above did | +0.00 ± 0.00 | **−0.02 ± 0.00** | −0.01 ± 0.02 | +0.01 ± 0.02 | +0.05 ± 0.03 | −0.01 ± 0.01 |
+| on the weights, at the tile's 6 bits | +0.04 ± 0.04 | **+0.07 ± 0.02** | −0.13 ± 0.08 | +0.13 ± 0.06 | +0.03 ± 0.20 | +0.21 ± 0.14 |
+| **on the weights, at the DAC's 8 bits** | +0.03 ± 0.03 | **+0.05 ± 0.02** | −0.03 ± 0.02 | +0.02 ± 0.03 | **+0.09 ± 0.03** | +0.10 ± 0.04 |
+| at 8 bits, scaled to the dimmest line | **+0.27 ± 0.04** | **+0.13 ± 0.04** | **+0.72 ± 0.10** | **+0.65 ± 0.08** | **+0.89 ± 0.17** | **+0.75 ± 0.09** |
+| on the inputs, held at full scale | +0.08 ± 0.03 | +0.03 ± 0.02 | +0.06 ± 0.07 | +0.09 ± 0.04 | +0.27 ± 0.13 | **+0.44 ± 0.14** |
+| on the inputs, scaled to the dimmest line | **+0.33 ± 0.07** | **+0.24 ± 0.02** | **+0.87 ± 0.11** | **+0.80 ± 0.13** | **+0.84 ± 0.18** | **+0.69 ± 0.10** |
+
+The errors are five networks', each averaged over its three draws. In bold in
+the cells, what they put outside chance at one in twenty.
+
+| With lines 20% off, a correction… | Leaves of every sum | Costs in light | Holds at a rail: MNIST | Fashion-MNIST | MNIST, inverted |
+|---|---|---|---|---|---|
+| on the weights, at the tile's 6 bits | 1.00 | none | 0.12% | 0.22% | 0.04% |
+| on the weights, at the DAC's 8 bits | 1.00 | none | 0.14% | 0.25% | 0.05% |
+| at 8 bits, scaled to the dimmest line | 0.52 | 2.8 dB | 0.00% | 0.00% | 0.00% |
+| on the inputs, held at full scale | 1.00 | none | 20.52% | 11.57% | 42.84% |
+| on the inputs, scaled to the dimmest line | 0.52 | 2.8 dB | 0.00% | 0.00% | 0.00% |
+
+| | MNIST: trained before | Reference | Fashion-MNIST: trained before | Reference | MNIST inverted: trained before | Reference |
+|---|---|---|---|---|---|---|
+| Held as the chip is, lines 5% off: over the tile as budgeted on the same draws | +0.07 ± 0.03 | +0.01 ± 0.02 | +0.18 ± 0.11 | +0.04 ± 0.07 | **+0.53 ± 0.17** | **+0.28 ± 0.07** |
+| corrected in the model | +0.06 ± 0.03 | +0.01 ± 0.03 | **+0.21 ± 0.07** | +0.05 ± 0.04 | **+0.54 ± 0.14** | **+0.10 ± 0.03** |
+| **corrected on the weights, at 8 bits** | +0.06 ± 0.03 | **+0.03 ± 0.01** | +0.15 ± 0.09 | +0.07 ± 0.05 | **+0.56 ± 0.18** | **+0.12 ± 0.02** |
+| corrected on the inputs, scaled to the dimmest line | +0.09 ± 0.03 | **+0.07 ± 0.01** | **+0.25 ± 0.08** | +0.07 ± 0.08 | **+0.54 ± 0.18** | **+0.15 ± 0.01** |
+| What the weights at 8 bits buy, held | +0.00 ± 0.01 | −0.02 ± 0.01 | +0.03 ± 0.03 | −0.02 ± 0.04 | −0.03 ± 0.15 | +0.16 ± 0.08 |
+
+- **Written at the DAC's 8 bits, the weights take back nearly all a comb
+  cost.** With lines 20% off they end 0.05 ± 0.02, 0.02 ± 0.03 and 0.10 ± 0.04
+  over level lines for the reference networks: within 0.11 of a point on
+  every set, at 20% and at 5% alike, and 86%, 94% and 94% of what the comb
+  cost. Against the model's own correction it leaves 0.07 ± 0.02, 0.02 ± 0.03
+  and 0.11 ± 0.04. Of the five it is the only one that ends at a tenth or
+  under on all three sets at 20%: the 6-bit weights do on one, the inputs held
+  at full scale on two, and the two scaled to the dimmest line on none.
+- **At the tile's 6 bits the grid does not eat the gain at 20%, and at 5%
+  there is none to eat.** Left to the tile's quantiser the scaled weights end
+  0.07 ± 0.02, 0.13 ± 0.06 and 0.21 ± 0.14 over level lines at 20%: 81%, 66%
+  and 87% taken back. The DAC's two more bits buy 0.02, 0.11 and 0.10 on top,
+  none of them clear. At 5% the 6-bit correction buys nothing, and on
+  Fashion-MNIST it costs a tenth, which is clear. Counted, a weight has to be
+  moved half a code before the grid takes off more than it leaves, and a line
+  5% off moves 10%, 9% and 3% of the first layer's weights that far. Past a
+  code the grid leaves 1.63 LSB of an 8-bit weight, which is what lines 7%, 7%
+  and 11% off would do; the DAC's 8 bits leave 0.29.
+- **Scaled to the dimmest line a correction pays in light, and on one set
+  more than it buys.** With lines 20% off the dimmest line leaves 0.52 of
+  every sum, 2.8 dB. So scaled, the 8-bit weights end 0.13, 0.65 and 0.75
+  over level lines and the inputs 0.24, 0.80 and 0.69. On Fashion-MNIST both
+  are worse than leaving the comb alone, by 0.25 ± 0.14 and 0.41 ± 0.16. Held
+  at the rail does better than scaled to the dimmest on every set, in either
+  place. At 5% the dimmest line leaves 0.88 of a sum, 0.6 dB.
+- **On the inputs, held at full scale, it works where few inputs are at full
+  scale.** At 20% it ends 0.03 ± 0.02, 0.09 ± 0.04 and 0.44 ± 0.14, with 21%,
+  12% and 43% of the inputs that are not zero held at the rail. On the
+  inverted set, where 81% of pixels are at full scale, it still takes back
+  73% of what the comb cost.
+- **At this plan's 5% there is little to buy, and what is clear is mostly
+  cost.** Of the fifteen figures for what a place buys the reference networks
+  there, four are clear and three of those are costs: the 6-bit weights and
+  the 8-bit ones to the dimmest line on Fashion-MNIST, and the inputs to the
+  dimmest on MNIST. The one that buys is the two images in ten thousand on
+  MNIST that the block above found a read to buy, and then did not.
+- **Held as the chip is, the weights at 8 bits buy what the model's own
+  correction bought.** 0.16 ± 0.08 on the inverted set, for the model's 0.18
+  ± 0.09; neither is clear. So corrected, the held chip ends 0.03, 0.07 and
+  0.12 over the tile as budgeted, where left alone it ends 0.01, 0.04 and
+  0.28, and the reference networks lose 0.16, 0.57 and 0.60 of a point to it.
+- **For the networks trained before, the 6 bits do as well as the 8.** At 20%
+  their weights at the tile's bits end 0.04 ± 0.04, −0.13 ± 0.08 and 0.03 ±
+  0.20 over level lines.
+- **A comb 20% off, read and corrected on 8-bit weights, costs half a tenth
+  more than this plan's comb left alone on two sets, and no more on the
+  third.** Lines 5% off and left alone cost the reference networks 0.00,
+  −0.04 and 0.16. Lines four times as far off, corrected, cost them 0.05,
+  0.02 and 0.10: seed by seed 0.05 ± 0.01, 0.06 ± 0.01 and −0.05 ± 0.06 more,
+  clear on MNIST and Fashion-MNIST and not on the inverted set. At the tile's
+  6 bits it is 0.06, 0.17 and 0.05 more.
+
+What it is not. **A chip.** The weights and the inputs are scaled at the host
+in the harness, with the tile's own quantisers after them. Written at 8 bits
+the weights take the two bits below the code that the calibration note gives
+the cell trim, and what the two do to each other there is not modelled; nor
+is a write path that carries 8 bits a cell where it carried 6, a third more.
+The correction is to the line's reading alone, and its own error over what it
+scaled by is left. The source's noise is a share of a line's nominal light in
+this model, so a dim line's row that is raised has its noise raised with it,
+which a noise that went with the line's own power would not do. Scaled to
+the dimmest line the lost light is lost: a laser turned up to give it back is
+not modelled. The levels are fixed for a run. And it is three draws of five
+networks on one tile at version 2. No row of this plan is changed by it: what
+it asks of them is under B16.
 
 *The ADC's row, since the survey (2026-10-04).* Relaxing it saves 3 to 106 mW,
 and the low end is the published state of the art: the cheapest converters that
@@ -3395,13 +3535,52 @@ budget; [`pta_reference_level.py`](pta_reference_level.py)). The third row
 was a requirement on a comb with nothing to meet it or to check it. grx930's
 harness now has a probe that reads a line: one shot a row leaves a comb's
 lines 3.6% off, rms, which is inside this row's 5%, and sixteen leave 0.9%,
-whatever they were before, up to the 40% that was run. Left alone, lines 20% off cost the
-reference networks 0.35, 0.40 and 1.63 of a point, so the row matters. **The
-row is not changed.** It is still lines level to 5% at the tile. What is
-open is who levels them: the comb as made, an equaliser in front of it, or a
-correction from what the probe reads, and the last is not modelled where a
-chip could apply it. On the inverted set, held, a read buys the reference
-networks 0.18 ± 0.09 of a point at this row's 5%, which is not clear.
+whatever they were before, up to the 40% that was run. Left alone, lines 20%
+off cost the reference networks 0.35, 0.40 and 1.63 of a point, so the row
+matters. **The row is not changed.** It is still lines level to 5% at the
+tile. What is open is who levels them: the comb as made, an equaliser in
+front of it, or a correction from what the probe reads, and the last is not
+modelled where a chip could apply it. On the inverted set, held, a read buys
+the reference networks 0.18 ± 0.09 of a point at this row's 5%, which is not
+clear.
+
+*The correction, where a chip could apply it, the same day* (§4.3, at the end
+of its budget; [`pta_reference_fix.py`](pta_reference_fix.py)). It was
+modelled five ways. One of them holds on every set: the reading applied on
+the weights a row at a time, and the weights written at the 8 bits the
+calibration note puts behind a 6-bit weight code. With lines 20% off that
+ends within 0.11 of a point of level lines. So there is now something that
+could level a comb, and a figure for what it leaves:
+
+| The third row | MNIST | Fashion-MNIST | MNIST, inverted | From |
+|---|---|---|---|---|
+| As it stands: lines level to 5% as they reach the tile, and left alone | +0.00 ± 0.01 | −0.04 ± 0.04 | +0.16 ± 0.08 | [`pta_reference_fix.py`](pta_reference_fix.py). **Measured in a model** |
+| Lines level to 20%, read at a calibration and corrected on 8-bit weights | +0.05 ± 0.02 | +0.02 ± 0.03 | +0.10 ± 0.04 | The same |
+| The second less the first, seed by seed | **+0.05 ± 0.01** | **+0.06 ± 0.01** | −0.05 ± 0.06 | Derived there |
+| The same at the tile's 6 bits | **+0.06 ± 0.02** | **+0.17 ± 0.05** | +0.05 ± 0.17 | Derived there |
+
+Points lost to level lines on the same draws, the reference networks.
+
+**What moving the row would buy.** A comb four times less level as made: 0.8
+dB where the row asks 0.2 dB, for half a tenth of a point on MNIST and
+Fashion-MNIST and nothing that can be told on the inverted set. Nothing in
+these documents says a comb can be had at 0.2 dB, or levelled to it.
+
+**What it would cost.** A read of the lines at each calibration, 2.2 µs. The
+weights rescaled at the host a row at a time when they are written. A weight
+written at 8 bits where its code is 6: the DAC has them, the calibration
+note gives them to the cell trim, and the write path would carry a third
+more a cell. And the half a tenth.
+
+**What is not known.** How a trim and a level correction share the DAC's two
+bits below the code. How fast a comb's lines move. Whether a comb as made is
+inside 20%: at 40% the model's own correction still held, and no place a chip
+could apply one was run there. And it is a model, three draws of five
+networks.
+
+**The row is not changed here.** Whether it stays at 5% as the lines reach the
+tile, or becomes 20% with the read and the correction beside it, is this
+decision's to take again, and is not taken.
 
 **It is a working row and not a source.** Three things would reopen it: a comb
 that cannot be had at −130 dB/Hz; a workload brighter than Fashion-MNIST that
