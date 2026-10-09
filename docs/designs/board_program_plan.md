@@ -118,6 +118,22 @@ raised, a correction costs 2.8 dB of light and on Fashion-MNIST more than the
 comb did. So a comb 20% off, read and corrected, costs the reference networks
 0.05, 0.06 and −0.05 of a point more than this plan's comb left alone. Whether
 the plan's row moves on that is B16's to take, and is not taken.
+*It was taken on 2026-10-09:* **B16's third row is now lines level to 20% as
+they reach the tile, read at each calibration and corrected on the weights,
+which are written at the weight DAC's 8 bits.** grx930's harness then ran the
+chip as that holds it (§4.3, at the end of its budget). Held, the reference
+networks lose 0.23, 0.59 and 0.74 of a point to the tile where with the row
+as it was they lost 0.14, 0.58 and 0.78: 0.09 ± 0.03 more on MNIST, which is
+clear, and nothing that can be told on the other two. Left alone, the comb
+the row now allows would cost them 0.40, 0.41 and 1.47 more, so the read and
+the correction are part of the row. A cycle with a source lit had been run
+on one draw and not read over its own draws. Over five, as it is now run, a
+six-minute cycle ends 0.07, 0.04 and 0.30 over the tile as budgeted, and it
+is the source's rows and not the move that put the inverted set there.
+**And the trim of every cycle in this plan was held
+two bits finer than the 8-bit DAC the calibration note asks for.** On that
+DAC a cycle as it is now run ends 0.05, 0.09 and 0.33 over. Which DAC the
+chiplet is held to is B16's to take, and is not taken.
 X2 has made its predictions (§3.3), X1 its budget (§4.3), and P0, X3 and X4
 are drafted as [`board_icd.md`](board_icd.md),
 [`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) and
@@ -1118,7 +1134,10 @@ version 1's. Why those three is at the end of this section's budget. *And two
 rows more, the same day:* it is recalibrated **every six minutes** at TFLT's
 fit (B15), and its source's noise is within **1% rms a shot for the lines
 together** (B16), with 5% for a line on its own and the lines level to 5% as
-before.
+before. *The last of those was moved on 2026-10-09 (B16):* the lines are
+level to **20%** as they reach the tile, read at each calibration and
+corrected on the weights a row at a time, which are written at the weight
+DAC's 8 bits.
 
 v1 costs 0.81 points on the D3 network at hourly calibration, and 0.37 if the
 schedulers can recalibrate every six minutes — which is what C3 had to price.
@@ -2552,6 +2571,117 @@ not modelled. The levels are fixed for a run. And it is three draws of five
 networks on one tile at version 2. No row of this plan is changed by it: what
 it asks of them is under B16.
 
+*The working point, with the source's third row moved, 2026-10-09.*
+([`pta_reference_point.py`](pta_reference_point.py); grx930's design note, §5,
+"The working point, with the source's third row moved".) B16's third row
+became lines level to 20%, read at each calibration and corrected on the
+weights (§7). Two things in this plan then wanted running. Every figure for
+the chip as it is held had its lines 5% off and left alone. And a cycle of
+B15's had been run with a source lit once, on this plan's one draw ("The
+operating cycle", above), and read as what the tile costs and not over its
+own draws: the ten draws the six minutes were kept on have no source, and
+the source's rows were sized on a tile that was not calibrated. grx930's
+harness ran both, on the working tile at version 2, for both kinds of
+network, on the first five of `pta_reference_draws.py`'s ten draws: ten rows
+a draw, 500 runs a data set, of which 200 are byte for byte what that sweep
+wrote.
+
+Held: six minutes of TFLT's drift from weights as written, and a source at
+1% for its lines together and 5% for a line. What a row adds over the tile as
+budgeted on the same draws: the mean of five draws, with its error from the
+five networks. In bold, what they put outside chance at one in twenty.
+
+| | MNIST: trained before | Reference | Fashion-MNIST: trained before | Reference | MNIST inverted: trained before | Reference |
+|---|---|---|---|---|---|---|
+| Held as it was: lines 5% off, and left alone | +0.06 ± 0.03 | +0.00 ± 0.01 | **+0.23 ± 0.07** | +0.06 ± 0.06 | **+0.59 ± 0.21** | **+0.30 ± 0.06** |
+| Held with lines 20% off, and left alone | **+0.49 ± 0.05** | **+0.40 ± 0.03** | **+0.99 ± 0.15** | **+0.46 ± 0.16** | **+2.20 ± 0.33** | **+1.77 ± 0.44** |
+| **Held as it now is: lines 20% off, read, and corrected on the weights at 8 bits** | **+0.10 ± 0.02** | **+0.09 ± 0.02** | **+0.22 ± 0.05** | +0.06 ± 0.05 | **+0.63 ± 0.19** | **+0.27 ± 0.02** |
+| The third less the first, seed by seed: what the move costs | +0.04 ± 0.03 | **+0.09 ± 0.03** | −0.01 ± 0.03 | +0.01 ± 0.03 | +0.04 ± 0.09 | −0.04 ± 0.07 |
+
+A six-minute cycle: aged, calibrated, and aged again. What it ends over the
+probes-only row of its draw.
+
+| | MNIST: trained before | Reference | Fashion-MNIST: trained before | Reference | MNIST inverted: trained before | Reference |
+|---|---|---|---|---|---|---|
+| With no source, as B15 was sized | +0.03 ± 0.03 | −0.01 ± 0.02 | +0.10 ± 0.05 | +0.05 ± 0.04 | +0.29 ± 0.14 | **+0.14 ± 0.04** |
+| With the source as it was | **+0.08 ± 0.03** | +0.03 ± 0.03 | **+0.22 ± 0.04** | +0.05 ± 0.02 | **+0.62 ± 0.14** | **+0.32 ± 0.07** |
+| **As it is now run** | **+0.13 ± 0.01** | +0.07 ± 0.03 | **+0.19 ± 0.05** | +0.04 ± 0.03 | **+0.57 ± 0.18** | **+0.30 ± 0.05** |
+| What the source's rows add at its end, as they now are | **+0.10 ± 0.03** | **+0.08 ± 0.02** | **+0.09 ± 0.03** | +0.00 ± 0.06 | **+0.29 ± 0.06** | **+0.16 ± 0.04** |
+| What the move adds at its end | +0.04 ± 0.02 | +0.04 ± 0.02 | −0.04 ± 0.04 | −0.01 ± 0.04 | −0.04 ± 0.06 | −0.02 ± 0.07 |
+| With no source, its trim at 8 bits | +0.04 ± 0.03 | +0.01 ± 0.02 | +0.07 ± 0.05 | +0.03 ± 0.04 | +0.30 ± 0.13 | **+0.18 ± 0.04** |
+| **As it is now run, its trim at 8 bits** | **+0.11 ± 0.02** | +0.05 ± 0.02 | **+0.23 ± 0.06** | +0.09 ± 0.04 | **+0.63 ± 0.18** | **+0.33 ± 0.06** |
+| What the trim at 8 bits adds: with no source | +0.01 ± 0.01 | **+0.02 ± 0.01** | −0.02 ± 0.01 | −0.01 ± 0.02 | +0.01 ± 0.03 | +0.04 ± 0.02 |
+| as it is now run | −0.02 ± 0.01 | −0.02 ± 0.01 | **+0.04 ± 0.01** | +0.04 ± 0.04 | +0.06 ± 0.03 | +0.03 ± 0.03 |
+
+- **Held, the move costs the reference networks 0.09 ± 0.03 of a point on
+  MNIST, and nothing that can be told on the other two**, where it is 0.01 ±
+  0.03 and −0.04 ± 0.07. On MNIST it is under a tenth, and five networks put
+  it between 0.01 and 0.16. They are right 97.52, 87.30 and 94.64% of the
+  time and lose 0.23, 0.59 and 0.74 of a point to the tile, where held as it
+  was they lost 0.14, 0.58 and 0.78. `pta_reference_fix.py` had the move at
+  0.05, 0.06 and −0.05, with no drift and on three draws. For the networks
+  trained before it is 0.04, −0.01 and 0.04, none of them clear.
+- **The read and the correction are part of the row.** Left alone, the comb
+  the row now allows costs the reference networks 0.40 ± 0.04, 0.41 ± 0.10
+  and 1.47 ± 0.39 more than held as it was, and the correction takes 0.32,
+  0.40 and 1.50 of that back.
+- **A cycle with a source lit ends 0.30 of a point over on the inverted set,
+  and under a tenth on the other two.** As it is now run it ends 0.07 ± 0.03,
+  0.04 ± 0.03 and 0.30 ± 0.05 over, and with the source as it was 0.03, 0.05
+  and 0.32. On this plan's draw that last cycle is the one "The operating
+  cycle" ran, which cost the reference networks 0.18, 0.59 and 0.80 of a
+  point; over the five draws it costs them 0.18, 0.59 and 0.81, and as it is
+  now run 0.21, 0.58 and 0.79. The move is 0.04 ± 0.02, −0.01 ± 0.04 and
+  −0.02 ± 0.07 at the end of a cycle, clear on no set. On the inverted set
+  drift has 0.14 of the 0.30 and the source's rows 0.16, on every one of the
+  five draws a tenth or more together. B15 took a tenth for the first and
+  B16's rows were sized at a tenth for the second. Each was known of its own
+  row, and they had not been added on runs that share their draws. The
+  networks trained before end 0.13, 0.19 and 0.57 over, a tenth or more on
+  every set.
+- **The trim of every cycle in this plan was held two bits finer than the DAC
+  the calibration note asks for.** grx930's harness holds a trim in steps of
+  a quarter of the operand's LSB, and the operand is an 8-bit weight: a
+  sixteenth of a 6-bit code, which is a DAC of 10 bits. The calibration
+  note's §4 asks for 8 bits behind a 6-bit code, a step of a quarter of a
+  code, and its §8 measured that step at version 1 alone. Where this section
+  says "a trim step of a quarter of a weight's LSB", the weight is the
+  harness's 8-bit operand and not the code. With the trim at 8 bits a cycle
+  with no source costs the reference networks 0.02 ± 0.01, −0.01 ± 0.02 and
+  0.04 ± 0.02 more, and the cycle as it is now run −0.02 ± 0.01, 0.04 ± 0.04
+  and 0.03 ± 0.03. Over both kinds of network all twelve such figures are
+  within 0.06 of a point, and two are clear. On that DAC the cycle as it is
+  now run ends 0.05, 0.09 and 0.33 over and the cycle B15 was sized on 0.01,
+  0.03 and 0.18. So what this plan quotes for a cycle stands to a few
+  hundredths of a point, and for the reference networks no set changes sides
+  of a tenth.
+- **A trim and a correction share the DAC's 8 bits and do little to each
+  other.** B16 had that as not known. What the coarser trim costs the
+  corrected cycle, less what it costs the cycle with no source, is −0.04 ±
+  0.01, 0.06 ± 0.05 and −0.01 ± 0.02 for the reference networks and −0.03,
+  0.07 and 0.05 for the old ones: within 0.07 of a point, of both signs,
+  and clear on MNIST for the first and on Fashion-MNIST for the second.
+- **Six minutes of drift do nothing to the read.** The harness reads the
+  lines when an evaluation starts, which in a cycle is six minutes after the
+  calibration. Its reading leaves the lines 0.99% off there, 1.00% where the
+  tile was held from weights as written, and 0.98% on a tile that had not
+  drifted. The rail holds 0.14%, 0.25% and 0.05% of the reference networks'
+  weights back.
+- **With the read, a calibration is 70.0 µs at the most**: 2.2 µs more, and
+  one part in 5.1 million of six minutes where it was one in 5.3 million.
+
+What it is not. **A chip.** The weights are scaled at the host in a model,
+and the model's DAC has no rail for a code and its trim together. **A comb
+whose lines move.** They are fixed for a run, so a read taken at the
+calibration and one taken six minutes later differ only in the tile they are
+read through. How often the lines have to be read is not measured, and no
+document says how fast they move. **A schedule**: it is one calibration.
+Lines further off than 20% were not run. And it is five draws of the same
+five networks: over the ten, holding as it was adds 0.03, 0.06 and 0.25 and
+a cycle with no source ends −0.01, 0.07 and 0.12 over, where these five have
+0.00, 0.06 and 0.30, and −0.01, 0.05 and 0.14. B15 is not changed here: what
+this asks of it is under B15.
+
 *The ADC's row, since the survey (2026-10-04).* Relaxing it saves 3 to 106 mW,
 and the low end is the published state of the art: the cheapest converters that
 sample this fast already have the seventh bit. So of the two rows, relaxing the
@@ -3151,7 +3281,7 @@ What it fixes, each from a model and none from a device:
 |---|---|---|
 | Photodiodes | 512: two a bus a column, at four buses. Still 64 receivers and 64 converters. *256 at the two buses of 128 inputs, since B10's revision* | Counted |
 | A bank's waveguides | Two out of every bank: the one its rings drop to and the one they pass | The topology |
-| The source's rows of the budget | Version 1's, without the "if": 2% rms a shot for the lines together, 5% for a line on its own, lines level to 5%. A tenth of a point between them. *At version 2 (B14) they add 0.06 and 0.09 on MNIST and Fashion-MNIST and 0.37 on MNIST inverted, where the shared row wants 1%: §4.3, at the end of its budget. B16 made it 1% for version 2* | grx930's harness, §4.3 |
+| The source's rows of the budget | Version 1's, without the "if": 2% rms a shot for the lines together, 5% for a line on its own, lines level to 5%. A tenth of a point between them. *At version 2 (B14) they add 0.06 and 0.09 on MNIST and Fashion-MNIST and 0.37 on MNIST inverted, where the shared row wants 1%: §4.3, at the end of its budget. B16 made it 1% for version 2, and on 2026-10-09 made the third 20%, read and corrected on the weights* | grx930's harness, §4.3 |
 | The source's noise, as a density | About −124 dB/Hz over the shot rate, 20 dB easier than was assumed. *−130 since B16, 14 dB easier* | [`pta_source_noise.py`](pta_source_noise.py) |
 | A pair's match | Its two halves alike to about 10%. A mismatch is an offset of half its size, and at 10% the offset passes as much of the source's noise as the pair does | Derived from the two measured readings, and not run |
 | The converter's span | The difference alone. Behind an offset it would have had to span the offset too | The topology |
@@ -3474,6 +3604,25 @@ that is one part in 5.3 million of the tile's time, so it does not bear on
 this interval. How often a comb's lines need reading is not known: it may be
 far less often than six minutes, or more.
 
+*With a source lit, and on the DAC as it is specified, 2026-10-09* (§4.3, at
+the end of its budget; [`pta_reference_point.py`](pta_reference_point.py)).
+Two things about the cycle this interval was kept on, found when B16's third
+row moved. It had no source: the one cycle run with a source lit was on one
+draw, and was not read over its own draws. With B16's rows lit, as the chip
+is now run, the reference networks' six-minute cycle ends 0.07 ± 0.03, 0.04 ±
+0.03 and 0.30 ± 0.05 over the tile as budgeted on the same draws: on the
+inverted set drift has 0.14 of that on these five draws and the source 0.16.
+And its trim was held in steps a quarter of what an 8-bit DAC holds. On the
+DAC the calibration note asks for, the cycle with no source ends 0.01 ± 0.02,
+0.03 ± 0.04 and 0.18 ± 0.04 over on these five draws, where at the finer
+step they have −0.01, 0.05 and 0.14 and the ten draws this was kept on have
+−0.01, 0.07 and 0.12. Five networks put the inverted set's 0.18 between 0.06
+and 0.29, so it is still not shown to be over a tenth. The read of the lines
+is now taken at every calibration, and with it an interruption is 70.0 µs at
+the most. This interval is not changed here. What it was kept on, 0.12 ±
+0.03 on the inverted set, is a figure of the finer trim, and which DAC it is
+to be read on is B16's question.
+
 **What it does not settle.** The inverted set, where six minutes adds 0.28 ±
 0.27, and the interval that would hold a tenth there was not run. TFLN, whose
 hour adds 2.4 to 37 points and whose interval is still "within minutes". A
@@ -3489,7 +3638,8 @@ Fashion-MNIST that the board has to serve. *The second is counted since
 2026-10-08 and is not met: an interruption is 18 to 68 µs, and it would have
 to be a third of a second.* *Needed by:* X3, X4's `PTA_CAL_PER`, S3.
 
-**B16 — The source's shared row: 1%.** *Settled 2026-10-06.*
+**B16 — The source's shared row: 1%.** *Settled 2026-10-06. Its third row
+was moved on 2026-10-09: below.*
 
 B12 and B13 gave the source three rows: its noise within 2% rms a shot for the
 lines together, within 5% for a line on its own, and the lines level to 5%.
@@ -3501,7 +3651,8 @@ the row the lines share: 2% adds 0.24 there, and 1% adds 0.13.
 
 *Recommended, and settled as recommended:* **for version 2 the source's noise
 is within 1% rms a shot for the lines together.** The other two rows stay: 5%
-for a line on its own, and the lines level to 5%.
+for a line on its own, and the lines level to 5%. *The last is 20%, read and
+corrected, since 2026-10-09: below.*
 
 | | At 2% | **At 1%** | From |
 |---|---|---|---|
@@ -3578,9 +3729,74 @@ inside 20%: at 40% the model's own correction still held, and no place a chip
 could apply one was run there. And it is a model, three draws of five
 networks.
 
-**The row is not changed here.** Whether it stays at 5% as the lines reach the
-tile, or becomes 20% with the read and the correction beside it, is this
-decision's to take again, and is not taken.
+~~**The row is not changed here.** Whether it stays at 5% as the lines reach
+the tile, or becomes 20% with the read and the correction beside it, is this
+decision's to take again, and is not taken.~~
+
+*Taken 2026-10-09.* Asked whether the row stays at 5% or moves, the choice
+was to move it. **The source's third row is lines level to 20% as they reach
+the tile, read at each calibration and corrected on the weights.** That is
+0.8 dB where it was 0.2. Three things are part of the row and not beside it:
+the lines are read with the level probe at every calibration, sixteen shots
+a row; every row's weights are scaled by what its line read; and they are
+written at the 8 bits of the weight DAC, behind the 6-bit code a network is
+trained for. The other two rows stay: 1% rms a shot for the lines together,
+and 5% for a line on its own.
+
+grx930's harness then ran the chip as that holds it (§4.3, at the end of its
+budget; [`pta_reference_point.py`](pta_reference_point.py)):
+
+| The reference networks, five draws | MNIST | Fashion-MNIST | MNIST, inverted | From |
+|---|---|---|---|---|
+| Held as it was, lines 5% off and left alone: over the tile as budgeted | +0.00 ± 0.01 | +0.06 ± 0.06 | **+0.30 ± 0.06** | [`pta_reference_point.py`](pta_reference_point.py). **Measured in a model** |
+| Held as it now is: lines 20% off, read, corrected on the weights at 8 bits | **+0.09 ± 0.02** | +0.06 ± 0.05 | **+0.27 ± 0.02** | The same |
+| The second less the first, seed by seed | **+0.09 ± 0.03** | +0.01 ± 0.03 | −0.04 ± 0.07 | Derived there |
+| Held with lines 20% off and left alone, less the first | **+0.40 ± 0.04** | **+0.41 ± 0.10** | **+1.47 ± 0.39** | The same |
+| A six-minute cycle as it is now run: over the tile as budgeted on its draws | +0.07 ± 0.03 | +0.04 ± 0.03 | **+0.30 ± 0.05** | Measured |
+| The same with the source as it was | +0.03 ± 0.03 | +0.05 ± 0.02 | **+0.32 ± 0.07** | The same |
+| The first of those two less the second | +0.04 ± 0.02 | −0.01 ± 0.04 | −0.02 ± 0.07 | Derived there |
+
+**What it cost, measured.** Held, 0.09 ± 0.03 of a point on MNIST, which is
+clear and under a tenth, and nothing that can be told on the other two sets
+or, at the end of a six-minute cycle, on any. What moving it was expected to
+cost was half a tenth on MNIST and Fashion-MNIST.
+
+**What it rests on.** The read and the correction: left alone, a comb 20% off
+costs the reference networks 0.40, 0.41 and 1.47 of a point more than the
+row as it was. And a read that six minutes of drift do nothing to: it leaves
+the lines 1.0% off through a drifted tile as through a fresh one.
+
+**What it puts on the chiplet.** A read of the lines at each calibration,
+2.2 µs on one bank, which makes an interruption 70.0 µs at the most. Banks
+that hold 8 bits a weight where they held 6, and a write path that carries
+them; the link already carried a weight as a byte (§3.3). And a multiply a
+weight, by its row's scale, which the model does at the host: whether the
+host or the interface chip's write path does it is not chosen, and the
+register map has no register to read a line's level from or to write a row's
+scale to ([`pta_chiplet_regmap.md`](pta_chiplet_regmap.md) §7, item 12).
+grx930's engine has no mode that takes the read.
+
+**The DAC's bits, which the run turned up and this does not settle.** The
+row writes a weight at the DAC's 8 bits, and the calibration note holds a
+cell's trim on those same 8. Every cycle in this plan was run with a trim
+two bits finer than that, because grx930's harness counts a trim's step in
+LSB of an 8-bit weight and the note counts it in 6-bit codes. Of what was
+not known above, the first now has an answer in a model: on the same 8 bits
+a trim and a correction do nothing to each other that passes 0.07 of a
+point. And on 8 bits a cycle as it is now run ends 0.05 ± 0.02, 0.09 ± 0.04
+and 0.33 ± 0.06 over for the reference networks, where two bits finer it
+ends 0.07, 0.04 and 0.30. **Whether the weight DAC stays at the calibration
+note's 8 bits, or is asked for the 10 this plan's cycles were run on, is not
+taken here.**
+
+**What is still not known.** How fast a comb's lines move, which is what says
+how often they have to be read: at each calibration is where the read was
+put, and nothing was measured for it. Whether a comb as made is inside 20%.
+And it is a model, five draws of five networks.
+
+**Three things would reopen the third row:** a comb whose lines move by more
+than the 1% a read leaves, inside the interval they are read at; a comb that
+is further off than 20% as made; or a weight DAC that cannot hold 8 bits.
 
 **It is a working row and not a source.** Three things would reopen it: a comb
 that cannot be had at −130 dB/Hz; a workload brighter than Fashion-MNIST that

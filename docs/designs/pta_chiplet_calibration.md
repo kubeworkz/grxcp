@@ -171,6 +171,21 @@ minutes or at three, and what sets the interval is what drift costs.
 offset; a known full-scale pattern gives its gain. A handful of shots, taken
 far more often than the cell loop.
 
+**A line's level, by a row through a full-scale weight** (*since the board
+plan's B16 moved its third row, 2026-10-09*). Neither loop above sees a comb
+line that is not level (§9, item 5), and the plan now allows lines 20% off,
+read at each calibration. The read is §9's level probe: the rows of one
+parity at a full-scale weight and then the other, and under each one row a
+shot at full scale, sixteen shots a row. It is 2,240 beats on one bank, 2.2
+µs, and one bank is enough. With it an interruption is 70.0 µs at the most,
+one part in 5.1 million of six minutes, where the count above had 68 µs and
+one in 5.3 million ([`pta_reference_point.py`](pta_reference_point.py)).
+Where in a calibration it is taken is not specified. grx930's harness takes
+it when an evaluation starts, which is six minutes after the cell loop wrote
+its trims, and what its reading leaves on the lines is the same 1.0% there
+as through a tile that has not drifted. Measured in a model, and in no
+engine.
+
 ## 4. Correcting, and what the DAC needs
 
 The cell trim has to be applied where the weight is held, which is the weight
@@ -201,6 +216,36 @@ code before the 6-bit grid takes off more than it leaves, which is why a
 correction of lines only 5% off buys nothing there. The trim and this
 correction would share those two bits, and what they do to each other is not
 modelled.
+
+*The second use is the plan's since 2026-10-09, and the step this section
+asks for was not the step the plan's cycles were run at*
+([`pta_reference_point.py`](pta_reference_point.py); the board plan's B16).
+B16's third row now has every weight written at the DAC's 8 bits, scaled by
+what its line read. That put the trim and the correction on one DAC, and
+reading grx930's harness for how they meet there turned up a difference of
+units. The harness holds a trim in steps of a quarter of the operand's LSB.
+The operand is an 8-bit weight, so that is a sixteenth of a 6-bit code: a DAC
+of 10 bits. The box above asks for a quarter of a code, which is one 8-bit
+LSB, and §8's table is in those. Every cycle the board plan quotes was run at
+the finer step. Run at this section's, on five draws:
+
+| A six-minute cycle, the reference networks | MNIST | Fashion-MNIST | MNIST, inverted |
+|---|---|---|---|
+| With no source, a trim of a sixteenth of a code: as every cycle was run | −0.01 ± 0.02 | +0.05 ± 0.04 | +0.14 ± 0.04 |
+| With no source, a trim of a quarter of a code: as this section asks | +0.01 ± 0.02 | +0.03 ± 0.04 | +0.18 ± 0.04 |
+| As the plan now runs it, a sixteenth | +0.07 ± 0.03 | +0.04 ± 0.03 | +0.30 ± 0.05 |
+| As the plan now runs it, a quarter: the weights and the trim on the same 8 bits | +0.05 ± 0.02 | +0.09 ± 0.04 | +0.33 ± 0.06 |
+
+Points over the probes-only row of its draw. Over both kinds of network and
+both cycles the coarser trim costs within 0.06 of a point either way, clear
+in two of twelve places. What the trim and the correction do to each other
+on the same 8 bits is within 0.07 of a point, of both signs. A trim rounded
+to a quarter of a code is left 0.29 of an 8-bit LSB rms and one rounded to a
+sixteenth 0.07, beside a programming error of one. So the sentence above
+holds of the two bits further down as it did of the first two: worth
+something that is hard to see, and not a precondition. **Which the chiplet
+is held to, 8 bits or 10, is the board plan's B16's to take, and is not
+taken.**
 
 The column affine is applied digitally, after the ADC, as the CPU document
 intends. Both corrections saturate rather than wrap, and a cell whose trim
@@ -325,6 +370,15 @@ was used; and the residual and the error found in their two registers, equal to
 what grx930's `pta_cal_bank()` returns. The twin's engine is that function. What
 the twin adds is where BUSY stands while work waits behind a calibration
 ([`pta_chiplet_regmap.md`](pta_chiplet_regmap.md) §5).
+
+*Since the board plan's B16 moved its third row, 2026-10-09.* A calibration
+now includes a read of the comb's lines (§3), and no engine has a mode for
+it: grx930's probes each cell through a weight of zero, which a line's power
+multiplies, and the twin's engine is that function. What the read adds to
+the list above is not written here, because three things it depends on are
+open: whether the engine or the host takes it, where a line's reading or a
+row's scale is held ([`pta_chiplet_regmap.md`](pta_chiplet_regmap.md) §7,
+item 12), and how often.
 
 ## 7. The gate, for the chiplet
 
@@ -556,6 +610,20 @@ this is the C reference; the RTL, the FSM and the schedulers are C3(b).
    this takes them too. **The write path.** It would carry 8 bits a cell
    where it carried 6. **A comb past 20%.** No place a chip could apply a
    reading was run there.
+
+   **Taken into the plan, 2026-10-09** (the board plan's B16;
+   [`pta_reference_point.py`](pta_reference_point.py)). The plan's third
+   source row is now lines level to 20%, read at each calibration and
+   corrected on the weights at the DAC's 8 bits. Held so for six minutes, the
+   reference networks lose 0.09 ± 0.03 of a point more on MNIST than with
+   lines 5% off and left alone, and nothing that can be told on the other
+   two sets. Of what was open above: ~~**the trim's bits**~~, since on the
+   same 8 bits a trim and the correction do nothing to each other that
+   passes 0.07 of a point (§4); **the write path** carries 8 bits a cell
+   from here, and the link already carried a weight as a byte; **how
+   often** has an answer by default, at each calibration, and nothing
+   behind it, because the lines do not move in the model; and **the
+   engine** and **a comb past 20%** are as they were.
 
    *Since the board plan's B16 (2026-10-06) the shot-to-shot row is 1% for
    version 2, and no loop reaches it still.*
