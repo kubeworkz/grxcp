@@ -186,6 +186,15 @@ its trims, and what its reading leaves on the lines is the same 1.0% there
 as through a tile that has not drifted. Measured in a model, and in no
 engine.
 
+*What a read leaves follows the source's noise, 2026-10-10*
+([`pta_reference_rows.py`](pta_reference_rows.py)). The 1.0% is of a source
+whose lines carry 5% of noise each. With a line at 2% a reading leaves 0.47%,
+at 1% 0.31%, with the shared row's 1% alone 0.25%, and with no noise 0.15%.
+The count, the source's noise on a shot over the root of the 32 shots a line
+gets and the rounding of the step, has 0.91%, 0.41%, 0.27%, 0.21% and 0.11%:
+a tenth under what is read, and a third under with no noise, where what is
+left is the tile's own.
+
 ## 4. Correcting, and what the DAC needs
 
 The cell trim has to be applied where the weight is held, which is the weight
