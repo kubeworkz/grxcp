@@ -471,7 +471,8 @@ other two where there were 44 and 48 on the one.
     field of 8, a quarter of a code, and the 6 that grx930's harness and
     every cycle of the board plan's ran at is a sixteenth of a code, a DAC of
     10 bits. §4's table does not say which LSB it means. Which DAC the
-    chiplet is held to is the board plan's B16's to take.
+    chiplet is held to is the board plan's B16's to take. *It took 8 bits
+    the same day: a field of 8.*
 
 ---
 

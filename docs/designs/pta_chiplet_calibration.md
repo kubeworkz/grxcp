@@ -247,6 +247,18 @@ something that is hard to see, and not a precondition. **Which the chiplet
 is held to, 8 bits or 10, is the board plan's B16's to take, and is not
 taken.**
 
+*Taken 2026-10-09: 8 bits* (the board plan's B16). The box above stands as
+it was written: an 8-bit DAC behind a 6-bit weight code, a trim in steps of a
+quarter of a code, and the level correction on the same two bits. Over ten
+draws ([`pta_reference_hold.py`](pta_reference_hold.py), 2026-10-10) the two
+bits further down cost the reference networks' cycle with no source 0.01,
+−0.03 and 0.03 of a point at six minutes and 0.00, 0.00 and 0.04 at three.
+One of the six is clear, a hundredth on MNIST. On a workload that lights
+most of its rows it is enough to matter to the interval: a three-minute
+cycle ends 0.11 ± 0.03 over the tile as budgeted on this DAC where it ended
+0.08 ± 0.02 on the finer one, and a six-minute one 0.15 ± 0.02 for 0.12 ±
+0.03. Neither interval holds a tenth there on 8 bits.
+
 The column affine is applied digitally, after the ADC, as the CPU document
 intends. Both corrections saturate rather than wrap, and a cell whose trim
 cannot reach its measured error raises `PTA_STATUS.DRIFT_ALARM` — the tile is
