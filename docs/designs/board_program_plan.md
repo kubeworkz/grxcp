@@ -134,6 +134,19 @@ is the source's rows and not the move that put the inverted set there.
 two bits finer than the 8-bit DAC the calibration note asks for.** On that
 DAC a cycle as it is now run ends 0.05, 0.09 and 0.33 over. Which DAC the
 chiplet is held to is B16's to take, and is not taken.
+*It was taken the same day: 8 bits.* B15's cycle was then run on that DAC
+with the source lit, at three minutes and at six, over the ten draws its
+interval was kept on (§4.3, at the end of its budget; 2026-10-10). **On the
+DAC the chiplet is held to, no interval that was run holds a tenth of a point
+on the inverted set, with a source or without.** With no source, which is
+drift alone, the reference networks' six-minute cycle ends 0.00, 0.04 and
+0.15 over the tile as budgeted and a three-minute one 0.00, 0.03 and 0.11.
+The DAC's two bits cost three and four hundredths there, and that is what
+takes three minutes from under a tenth to over it. With the source lit, which
+is the chip, six minutes ends 0.05, 0.12 and 0.32 over and three 0.06, 0.07
+and 0.27. Halving the interval buys the reference networks nothing that can
+be seen, on any set. Whether B15 stays at six minutes is B15's to take
+again, and is not taken.
 X2 has made its predictions (§3.3), X1 its budget (§4.3), and P0, X3 and X4
 are drafted as [`board_icd.md`](board_icd.md),
 [`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) and
@@ -2682,6 +2695,87 @@ a cycle with no source ends −0.01, 0.07 and 0.12 over, where these five have
 0.00, 0.06 and 0.30, and −0.01, 0.05 and 0.14. B15 is not changed here: what
 this asks of it is under B15.
 
+*How long a calibration holds, on the DAC the chiplet is held to, 2026-10-10.*
+([`pta_reference_hold.py`](pta_reference_hold.py); grx930's design note, §5,
+"How long a calibration holds, on the DAC as it is specified".) B15's six
+minutes were kept on ten draws of a cycle that has no source and whose trim
+is two bits finer than the weight DAC. B16 kept that DAC at 8 bits on
+2026-10-09 (§7), and asked for B15's cycle to be run on it with the source
+lit, over the same ten draws. grx930's harness ran it at three minutes and
+at six, with no source and with the source lit as B16 has it: 1% for the
+lines together, 5% for a line, the lines 20% off, read and corrected on the
+weights at 8 bits. Six rows a draw for both kinds of network, 600 runs a
+data set, of which 300 are byte for byte what the two sweeps before wrote.
+
+What a cycle ends over the probes-only row of its draw: the mean of ten
+draws, with its error from the five networks. In bold, what they put outside
+chance at one in twenty. The rule is B15's: the longest interval whose cycle
+ends under a tenth of a point, the shorter one doing so too.
+
+| | MNIST: trained before | Reference | Fashion-MNIST: trained before | Reference | MNIST inverted: trained before | Reference |
+|---|---|---|---|---|---|---|
+| With no source: a three-minute cycle | +0.00 ± 0.01 | +0.00 ± 0.01 | +0.01 ± 0.03 | +0.03 ± 0.02 | **+0.41 ± 0.11** | **+0.11 ± 0.03** |
+| a six-minute cycle | +0.01 ± 0.02 | +0.00 ± 0.01 | +0.08 ± 0.04 | +0.04 ± 0.02 | **+0.44 ± 0.06** | **+0.15 ± 0.02** |
+| by the rule, a calibration holds | 6 minutes | 6 minutes | 6 minutes | 6 minutes | neither | neither |
+| **With the source lit: a three-minute cycle** | **+0.11 ± 0.02** | +0.06 ± 0.03 | **+0.17 ± 0.02** | +0.07 ± 0.04 | **+0.70 ± 0.17** | **+0.27 ± 0.04** |
+| **a six-minute cycle** | **+0.11 ± 0.00** | +0.05 ± 0.02 | **+0.23 ± 0.06** | **+0.12 ± 0.01** | **+0.73 ± 0.08** | **+0.32 ± 0.04** |
+| by the rule, a calibration holds | neither | 6 minutes | neither | 3 minutes | neither | neither |
+| What the DAC costs the cycle with no source: three minutes | +0.01 ± 0.01 | +0.00 ± 0.01 | +0.00 ± 0.02 | +0.00 ± 0.01 | +0.11 ± 0.06 | +0.04 ± 0.02 |
+| six minutes | +0.00 ± 0.01 | **+0.01 ± 0.00** | +0.00 ± 0.01 | −0.03 ± 0.01 | +0.02 ± 0.04 | +0.03 ± 0.03 |
+| What the source's rows add: at the end of three minutes | **+0.11 ± 0.03** | +0.06 ± 0.03 | **+0.16 ± 0.05** | +0.04 ± 0.05 | **+0.29 ± 0.07** | **+0.15 ± 0.04** |
+| at the end of six | **+0.09 ± 0.02** | **+0.04 ± 0.02** | **+0.14 ± 0.05** | **+0.08 ± 0.02** | **+0.30 ± 0.04** | **+0.17 ± 0.03** |
+| Six minutes over three: with no source | +0.01 ± 0.02 | +0.00 ± 0.01 | **+0.07 ± 0.02** | +0.00 ± 0.03 | +0.03 ± 0.09 | +0.03 ± 0.03 |
+| with the source lit | +0.00 ± 0.02 | −0.01 ± 0.01 | +0.05 ± 0.06 | +0.04 ± 0.04 | +0.03 ± 0.12 | +0.05 ± 0.04 |
+
+- **On the inverted set no interval that was run holds a tenth on this DAC,
+  with a source or without.** With no source, which is drift alone and what
+  B15's tenth was taken for, the reference networks' six-minute cycle ends
+  0.15 ± 0.02 over: 2.9 of its errors over a tenth, which five networks put
+  outside chance. A three-minute one ends 0.11 ± 0.03, which they do not. On
+  MNIST and Fashion-MNIST six minutes holds, at 0.00 and 0.04.
+- **The DAC's two bits are what moved three minutes.** With the trim two bits
+  finer the same ten draws had 0.12 ± 0.03 at six minutes and 0.08 ± 0.02 at
+  three, and three minutes held. Seed for seed the DAC costs the reference
+  networks 0.01, −0.03 and 0.03 at six minutes and 0.00, 0.00 and 0.04 at
+  three. Over both kinds all twelve such figures are within 0.12 of a point,
+  and one is clear, a hundredth on MNIST. The inverted set's three hundredths
+  and four are not clear, and they are enough.
+- **With the source lit, which is the chip, six minutes holds on MNIST
+  alone.** It ends 0.05 ± 0.02, 0.12 ± 0.01 and 0.32 ± 0.04 over, and three
+  minutes 0.06 ± 0.03, 0.07 ± 0.04 and 0.27 ± 0.04. On Fashion-MNIST six
+  minutes is 1.4 of its errors over a tenth and three 0.6 under, neither of
+  them clear. On the inverted set both are clear of it, and the five
+  networks' mean is at a tenth or over on every one of the ten draws at
+  either interval.
+- **Halving the interval buys the reference networks nothing that can be
+  seen.** Six minutes over three is 0.00 ± 0.01, 0.00 ± 0.03 and 0.03 ± 0.03
+  with no source and −0.01 ± 0.01, 0.04 ± 0.04 and 0.05 ± 0.04 with the
+  source lit, none of the six clear. On the inverted set, with no source, the
+  last three of six minutes are 0.03 of the 0.15 a cycle ends over. For the
+  networks trained before one of the six is clear, 0.07 ± 0.02 on
+  Fashion-MNIST with no source.
+- **What the source adds does not depend on the interval.** 0.04 ± 0.02, 0.08
+  ± 0.02 and 0.17 ± 0.03 at the end of six minutes, clear on all three sets,
+  and 0.06, 0.04 and 0.15 at the end of three.
+- **So held, the reference networks lose 0.19, 0.68 and 0.79 of a point to
+  the tile at the end of six minutes**, and 0.20, 0.63 and 0.74 at the end of
+  three, where as budgeted they lose 0.14, 0.53 and 0.49. They are right
+  97.56, 87.21 and 94.59% of the time at the end of six.
+- **The draws.** From draw to draw the six-minute cycle with the source lit
+  has a standard deviation of 0.04, 0.09 and 0.10, and on the inverted set
+  it runs from 0.14 to 0.45. The five draws the block before this ran have
+  0.05, 0.09 and 0.33, and the other five 0.05, 0.15 and 0.30.
+- **For the networks trained before, no interval holds with the source lit,
+  on any set.** Their six minutes end 0.11, 0.23 and 0.73 over.
+
+What it is not. A schedule: it is one calibration, where a tile in use has
+had hundreds. Other intervals than three minutes and six: nothing here says
+what one minute would do, and what a cycle ends over on the inverted set is
+mostly there at three. A comb whose lines move. A chip: the weights are
+scaled at the host, and the model's DAC has no rail for a code and its trim
+together. And the ten draws are of the same five networks. B15 is not
+changed here: what this asks of it is under B15.
+
 *The ADC's row, since the survey (2026-10-04).* Relaxing it saves 3 to 106 mW,
 and the low end is the published state of the art: the cheapest converters that
 sample this fast already have the seventh bit. So of the two rows, relaxing the
@@ -3623,6 +3717,41 @@ the most. This interval is not changed here. What it was kept on, 0.12 ±
 0.03 on the inverted set, is a figure of the finer trim, and which DAC it is
 to be read on is B16's question.
 
+*On the DAC the chiplet is held to, with the source lit, over ten draws,
+2026-10-10* (§4.3, at the end of its budget;
+[`pta_reference_hold.py`](pta_reference_hold.py)). B16 kept the weight DAC at
+8 bits, and asked for this decision's cycle to be run on it. What a cycle
+ends over the tile as budgeted on the same draws:
+
+| The reference networks, ten draws | MNIST | Fashion-MNIST | MNIST, inverted | From |
+|---|---|---|---|---|
+| What this was kept on: six minutes, no source, a trim two bits finer than the DAC | −0.01 ± 0.01 | +0.07 ± 0.02 | +0.12 ± 0.03 | [`pta_reference_draws.py`](pta_reference_draws.py). **Measured in a model** |
+| and three minutes | +0.00 ± 0.01 | +0.03 ± 0.02 | +0.08 ± 0.02 | The same |
+| On the DAC, no source: six minutes | +0.00 ± 0.01 | +0.04 ± 0.02 | +0.15 ± 0.02 | [`pta_reference_hold.py`](pta_reference_hold.py). **Measured in a model** |
+| three minutes | +0.00 ± 0.01 | +0.03 ± 0.02 | +0.11 ± 0.03 | The same |
+| **On the DAC, with the source lit: six minutes** | +0.05 ± 0.02 | +0.12 ± 0.01 | +0.32 ± 0.04 | The same |
+| **three minutes** | +0.06 ± 0.03 | +0.07 ± 0.04 | +0.27 ± 0.04 | The same |
+| Six minutes over three, with the source lit | −0.01 ± 0.01 | +0.04 ± 0.04 | +0.05 ± 0.04 | Derived there |
+| By the rule, with no source, a calibration holds | 6 minutes | 6 minutes | neither | The same |
+| and with the source lit | 6 minutes | 3 minutes | neither | The same |
+
+Three things it says of this interval. **What it was kept on does not hold
+on the DAC.** Six minutes "costs 0.12 ± 0.03 on the inverted set, which is
+not shown to be over a tenth": on 8 bits it is 0.15 ± 0.02, and it is shown.
+**Three minutes does not hold there either**, at 0.11 ± 0.03, where with the
+finer trim it did at 0.08; and going from six minutes to three buys 0.03 ±
+0.03 with no source and 0.05 ± 0.04 with the source lit, neither of them
+clear. **And with the source lit Fashion-MNIST is at the tenth**: 0.12 ± 0.01
+at six minutes and 0.07 ± 0.04 at three, neither of them clear of it. What
+twice the calibrations would cost is counted: with the read, one part in 2.6
+million of the tile's time at three minutes and 34 ms a day, for one in 5.1
+million at six.
+
+**Whether the interval stays at six minutes is this decision's to take
+again, and is not taken here.** Nothing that was run holds a tenth on a
+workload that lights most of its rows, so the choice is not between an
+interval that holds and one that does not.
+
 **What it does not settle.** The inverted set, where six minutes adds 0.28 ±
 0.27, and the interval that would hold a tenth there was not run. TFLN, whose
 hour adds 2.4 to 37 points and whose interval is still "within minutes". A
@@ -3785,9 +3914,22 @@ not known above, the first now has an answer in a model: on the same 8 bits
 a trim and a correction do nothing to each other that passes 0.07 of a
 point. And on 8 bits a cycle as it is now run ends 0.05 ± 0.02, 0.09 ± 0.04
 and 0.33 ± 0.06 over for the reference networks, where two bits finer it
-ends 0.07, 0.04 and 0.30. **Whether the weight DAC stays at the calibration
+ends 0.07, 0.04 and 0.30. ~~**Whether the weight DAC stays at the calibration
 note's 8 bits, or is asked for the 10 this plan's cycles were run on, is not
-taken here.**
+taken here.**~~
+
+*Taken the same day.* Asked whether the weight DAC stays at 8 bits or is
+asked for 10, with B15's cycle to be run again on it if it stays, the answer
+was to run the cycle on it. **The weight DAC is 8 bits**: a 6-bit code, and
+two bits below it that the cell trim and the level correction share. A
+trim's step is a quarter of a code. Run over ten draws
+([`pta_reference_hold.py`](pta_reference_hold.py); §4.3, at the end of its
+budget), those two bits cost the reference networks' cycle with no source
+0.01, −0.03 and 0.03 of a point at six minutes and 0.00, 0.00 and 0.04 at
+three, against a trim two bits finer. One of the six is clear, a hundredth
+on MNIST. On the inverted set it is enough to take a three-minute cycle from
+0.08 over the tile as budgeted to 0.11, and what that asks of B15 is under
+B15. A DAC of 10 bits would reopen this, and nothing here sizes one.
 
 **What is still not known.** How fast a comb's lines move, which is what says
 how often they have to be read: at each calibration is where the read was
