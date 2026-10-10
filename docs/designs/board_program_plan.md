@@ -147,6 +147,17 @@ is the chip, six minutes ends 0.05, 0.12 and 0.32 over and three 0.06, 0.07
 and 0.27. Halving the interval buys the reference networks nothing that can
 be seen, on any set. Whether B15 stays at six minutes is B15's to take
 again, and is not taken.
+*It was kept at six minutes the same day.* The source's rows were then run
+apart on the chip as it is held (§4.3, at the end of its budget), since on a
+workload that lights most of its rows they are the larger part of what a
+cycle ends over. **About half of what the source adds there is not noise.** A
+comb 20% off with no noise at all, read and corrected, adds 0.01, 0.00 and
+0.08 of a point for the reference networks, where the chip's source adds
+0.04, 0.05 and 0.15. Of the noise, a line's own is the part that shows. Held
+to 2% where B16 has 5%, it would buy 0.02, 0.06 and 0.06, which five networks
+do not quite see; held to 1%, 0.04, 0.08 and 0.05, which they do. The shared
+row at 2% costs them nothing that can be seen. No row is changed by it:
+whether B16's second row moves is B16's to take, and is not taken.
 X2 has made its predictions (§3.3), X1 its budget (§4.3), and P0, X3 and X4
 are drafted as [`board_icd.md`](board_icd.md),
 [`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) and
@@ -2776,6 +2787,100 @@ scaled at the host, and the model's DAC has no rail for a code and its trim
 together. And the ten draws are of the same five networks. B15 is not
 changed here: what this asks of it is under B15.
 
+*The source's rows apart, on the chip as it is held, 2026-10-10.*
+([`pta_reference_rows.py`](pta_reference_rows.py); grx930's design note, §5,
+"The source's rows, on the chip as it is held".) The block before this found
+that at the end of a six-minute cycle the source's rows add 0.04, 0.08 and
+0.17 of a point for the reference networks, and on the inverted set more
+than drift does. Which row it is had only been run a row at a time, at
+version 2 on a tile that was not calibrated, with the lines 5% off and left
+alone (§7, B16). With B15 kept at six minutes, grx930's harness ran the rows
+apart on the chip as it is held: a six-minute cycle with its trim at 8 bits,
+the lines 20% off, read and corrected on the weights at 8 bits, and seven
+pairs of noise for the lines together and for a line on its own. Five draws,
+both kinds of network, 500 runs a data set, of which 200 are byte for byte
+what the sweep before wrote.
+
+What a source adds at the end of a cycle: a lit cycle less the cycle with no
+source on the same draws, with its error from the five networks. In bold,
+what they put outside chance at one in twenty.
+
+| | MNIST: trained before | Reference | Fashion-MNIST: trained before | Reference | MNIST inverted: trained before | Reference |
+|---|---|---|---|---|---|---|
+| **1% for the lines together, 5% for a line: the chip as it is held** | **+0.07 ± 0.02** | **+0.04 ± 0.01** | **+0.16 ± 0.04** | +0.05 ± 0.04 | **+0.33 ± 0.07** | **+0.15 ± 0.05** |
+| 1%, and a line at 2% | +0.03 ± 0.02 | +0.02 ± 0.02 | **+0.13 ± 0.04** | −0.01 ± 0.04 | **+0.22 ± 0.05** | +0.10 ± 0.04 |
+| 1%, and a line at 1% | +0.04 ± 0.02 | +0.00 ± 0.01 | +0.12 ± 0.04 | −0.03 ± 0.04 | **+0.19 ± 0.05** | +0.10 ± 0.04 |
+| 1%, and no noise on a line: the shared row alone | +0.04 ± 0.02 | +0.03 ± 0.01 | **+0.12 ± 0.04** | +0.01 ± 0.05 | **+0.16 ± 0.05** | +0.07 ± 0.04 |
+| No shared noise, and a line at 5%: a line's noise alone | **+0.08 ± 0.02** | +0.06 ± 0.02 | **+0.16 ± 0.04** | +0.00 ± 0.04 | **+0.28 ± 0.07** | **+0.12 ± 0.03** |
+| No noise: a comb 20% off, read and corrected | +0.04 ± 0.02 | +0.01 ± 0.02 | **+0.09 ± 0.03** | +0.00 ± 0.04 | +0.12 ± 0.05 | +0.08 ± 0.04 |
+| 2%, and a line at 5%: the shared row as it was before B16 | **+0.09 ± 0.03** | +0.05 ± 0.02 | **+0.17 ± 0.05** | +0.03 ± 0.04 | **+0.43 ± 0.08** | **+0.21 ± 0.06** |
+
+What a row buys over the chip as it is held: how often right in it, less on
+the chip.
+
+| | MNIST: trained before | Reference | Fashion-MNIST: trained before | Reference | MNIST inverted: trained before | Reference |
+|---|---|---|---|---|---|---|
+| 1%, and a line at 2% | **+0.04 ± 0.01** | +0.02 ± 0.01 | +0.03 ± 0.02 | +0.06 ± 0.03 | +0.11 ± 0.05 | +0.06 ± 0.02 |
+| 1%, and a line at 1% | +0.03 ± 0.02 | **+0.04 ± 0.01** | +0.04 ± 0.02 | **+0.08 ± 0.02** | **+0.14 ± 0.05** | **+0.05 ± 0.01** |
+| 1%, and no noise on a line: the shared row alone | +0.03 ± 0.02 | +0.01 ± 0.01 | +0.03 ± 0.02 | +0.04 ± 0.03 | **+0.17 ± 0.04** | **+0.08 ± 0.02** |
+| No shared noise, and a line at 5%: a line's noise alone | −0.01 ± 0.02 | −0.02 ± 0.02 | −0.01 ± 0.01 | +0.05 ± 0.03 | **+0.05 ± 0.02** | +0.03 ± 0.02 |
+| No noise: a comb 20% off, read and corrected | +0.03 ± 0.01 | **+0.03 ± 0.01** | **+0.06 ± 0.02** | +0.05 ± 0.03 | **+0.21 ± 0.05** | **+0.07 ± 0.02** |
+| 2%, and a line at 5%: the shared row as it was before B16 | −0.02 ± 0.01 | −0.01 ± 0.01 | −0.01 ± 0.01 | +0.02 ± 0.02 | **−0.09 ± 0.02** | −0.05 ± 0.02 |
+
+- **On a workload that lights most of its rows, about half of what the
+  source adds is not noise.** The chip's source adds the reference networks
+  0.04 ± 0.01, 0.05 ± 0.04 and 0.15 ± 0.05. The same comb with no noise at
+  all, read and corrected on the weights at 8 bits, adds 0.01, 0.00 and 0.08
+  ± 0.04, none of them clear. The noise is the rest: 0.03 ± 0.01, 0.05 ± 0.03
+  and 0.07 ± 0.02, clear on MNIST and on the inverted set, where it is under
+  half of the whole.
+- **Of the noise, a line's own is the part that shows.** With no noise on a
+  line the reference networks gain 0.01, 0.04 and 0.08 ± 0.02, clear on the
+  inverted set. With no shared noise they gain −0.02, 0.05 and 0.03, clear on
+  none.
+- **A line at 2% buys half a tenth that five networks do not quite see, and
+  at 1% they see it.** 2% buys 0.02 ± 0.01, 0.06 ± 0.03 and 0.06 ± 0.02, at
+  2.3, 2.4 and 2.5 of its errors. 1% buys 0.04 ± 0.01, 0.08 ± 0.02 and 0.05 ±
+  0.01, clear on all three. Neither is a tenth on any set.
+- **With a line at 2% a cycle ends 0.03, 0.02 and 0.27 over** the tile as
+  budgeted, where as the chip is held these five draws have 0.05, 0.09 and
+  0.33. On the inverted set a cycle ends over a tenth with every row that was
+  run, the comb with no noise among them at 0.26 ± 0.07, and with no source
+  at all at 0.18. The reference networks would lose 0.17, 0.56 and 0.76 of a
+  point to the tile, for 0.20, 0.63 and 0.82 as it is held.
+- **The shared row at 2% costs the reference networks nothing that can be
+  seen**: 0.01, −0.02 and 0.05 ± 0.02 more than at 1%. So B16's way back to
+  −124 dB/Hz stands for them at the end of a cycle, as it did held. For the
+  networks trained before it costs 0.09 ± 0.02 on the inverted set, which is
+  clear.
+- **The read follows the count, a tenth over it.** A reading leaves the lines
+  1.00% off with a line at 5%, 0.47% at 2% and 0.31% at 1%, where the count
+  has 0.91%, 0.41% and 0.27%:
+
+| The source's noise | A reading leaves the lines, rms | Counted |
+|---|---|---|
+| 1% for the lines together, 5% for a line | 1.00% | 0.91% |
+| 1%, and a line at 2% | 0.47% | 0.41% |
+| 1%, and a line at 1% | 0.31% | 0.27% |
+| 1%, and no noise on a line | 0.25% | 0.21% |
+| No shared noise, and a line at 5% | 0.96% | 0.89% |
+| No noise | 0.15% | 0.11% |
+| 2%, and a line at 5% | 1.06% | 0.96% |
+
+- **For the networks trained before, the comb with no noise is more than a
+  third of it on every set.** The chip's source adds them 0.07, 0.16 and
+  0.33, and the comb with no noise 0.04, 0.09 and 0.12. A line at 2% buys
+  them 0.04 ± 0.01, 0.03 and 0.11 ± 0.05, clear on MNIST.
+
+What it is not. **A comb.** No row here is a source that exists, and what
+any of them costs to meet is not said. **Why the corrected comb costs what it
+does** on the inverted set: the rail, the rounding to 8 bits and the read are
+not told apart here, and 0.08 ± 0.04 is not itself clear. **Noise that goes
+with a line's power**: here it is a share of a line's nominal light. A level
+other than 20%, an interval other than six minutes, and a calibration that
+sees the source. And it is five draws of five networks. No row of this plan
+is changed by it: what it asks of them is under B16.
+
 *The ADC's row, since the survey (2026-10-04).* Relaxing it saves 3 to 106 mW,
 and the low end is the published state of the art: the cheapest converters that
 sample this fast already have the seventh bit. So of the two rows, relaxing the
@@ -3747,10 +3852,21 @@ twice the calibrations would cost is counted: with the read, one part in 2.6
 million of the tile's time at three minutes and 34 ms a day, for one in 5.1
 million at six.
 
-**Whether the interval stays at six minutes is this decision's to take
-again, and is not taken here.** Nothing that was run holds a tenth on a
+~~**Whether the interval stays at six minutes is this decision's to take
+again, and is not taken here.**~~ Nothing that was run holds a tenth on a
 workload that lights most of its rows, so the choice is not between an
 interval that holds and one that does not.
+
+*Kept, 2026-10-10.* Asked whether the interval stays at six minutes or moves
+to three, the choice was six minutes. **Version 2 is calibrated every six
+minutes**, on the 8-bit DAC, with the read of the lines at each calibration.
+It is kept knowing what it does not do. On a workload that lights most of
+its rows a six-minute cycle ends 0.15 ± 0.02 of a point over the tile as
+budgeted with no source and 0.32 ± 0.04 with the source lit, over a tenth
+both ways, and a three-minute one would end 0.11 and 0.27. Three minutes
+would buy 0.03 to 0.05 there that five networks cannot see, and what is left
+is not the interval's. With the source lit it is the source's rows first,
+and they are B16's.
 
 **What it does not settle.** The inverted set, where six minutes adds 0.28 ±
 0.27, and the interval that would hold a tenth there was not run. TFLN, whose
@@ -3930,6 +4046,42 @@ three, against a trim two bits finer. One of the six is clear, a hundredth
 on MNIST. On the inverted set it is enough to take a three-minute cycle from
 0.08 over the tile as budgeted to 0.11, and what that asks of B15 is under
 B15. A DAC of 10 bits would reopen this, and nothing here sizes one.
+
+*The rows apart, on the chip as it is held, 2026-10-10* (§4.3, at the end of
+its budget; [`pta_reference_rows.py`](pta_reference_rows.py)). Every figure
+this decision had for one row alone was of a tile that was not calibrated,
+with the lines 5% off and left alone. At the end of a six-minute cycle, on
+the chip as it is now held:
+
+| The reference networks, five draws | MNIST | Fashion-MNIST | MNIST, inverted | From |
+|---|---|---|---|---|
+| What the source adds at the end of a six-minute cycle, as the chip is held | **+0.04 ± 0.01** | +0.05 ± 0.04 | **+0.15 ± 0.05** | [`pta_reference_rows.py`](pta_reference_rows.py). **Measured in a model** |
+| The same comb with no noise, read and corrected | +0.01 ± 0.02 | +0.00 ± 0.04 | +0.08 ± 0.04 | The same |
+| The first row at 2% where it is 1%: costs | +0.01 ± 0.01 | −0.02 ± 0.02 | +0.05 ± 0.02 | Derived there |
+| The second row at 2% where it is 5%: buys | +0.02 ± 0.01 | +0.06 ± 0.03 | +0.06 ± 0.02 | The same |
+| The second row at 1%: buys | **+0.04 ± 0.01** | **+0.08 ± 0.02** | **+0.05 ± 0.01** | The same |
+| No noise on a line at all: buys | +0.01 ± 0.01 | +0.04 ± 0.03 | **+0.08 ± 0.02** | The same |
+
+**The first row.** At 2% it costs the reference networks nothing that can be
+seen at the end of a cycle, as it cost them nothing held: the way back to
+−124 dB/Hz stands. For the networks trained before it costs 0.09 ± 0.02 on
+the inverted set, which is what the 1% was taken for.
+
+**The second row.** A line's own noise is the part of the source's noise
+that shows. At 2% it would buy 0.02, 0.06 and 0.06 of a point, none of them
+clear; at 1%, 0.04, 0.08 and 0.05, all of them clear and none a tenth. On
+the inverted set a cycle would still end 0.27 over the tile as budgeted,
+where it ends 0.33.
+
+**The third row.** About half of what the source adds on the inverted set is
+there with no noise at all: a comb 20% off, read and corrected, adds 0.08 ±
+0.04. That is not clear, and it is not told apart here into the rail, the
+rounding to 8 bits and the read. `pta_reference_fix.py` had the same
+correction 0.11 ± 0.04 from the model's own on that set, with no drift.
+
+**No row is changed here.** Whether the second row moves from 5%, to 2% or
+to 1%, is this decision's to take, and is not taken. Nothing in these
+documents says what a comb's lines do on their own, at any of the three.
 
 **What is still not known.** How fast a comb's lines move, which is what says
 how often they have to be read: at each calibration is where the read was

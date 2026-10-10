@@ -190,6 +190,15 @@ things, of which this document held one:
   budget). It is in a model: no engine takes the read and no register reports
   it. How fast a comb's lines move is not known, and it is what says how
   often they have to be read.*
+  *The three rows apart, on the chip as it is held, 2026-10-10 (the board
+  plan's §4.3, at the end of its budget).* At the end of a six-minute cycle
+  the noise within 2% rms a shot for the lines together, about −124 dB/Hz,
+  costs the reference networks nothing that can be seen against the 1% this
+  link is held to. A line on its own at 2% where it is held to 5% would buy
+  them 0.02, 0.06 and 0.06 of a point on the three sets, and at 1% 0.04,
+  0.08 and 0.05. And on a workload that lights most of its rows about half
+  of what this link costs is there with no noise at all: a comb 20% off,
+  read and corrected, adds 0.08 ± 0.04. No row is changed by it.
 - **Wavelength.** B5's arithmetic is at 1550 nm; the same detector at 1310 nm
   needs 18% more light. The all-optical branch would pin it to 1550 nm within
   2.4 nm, and ring weights would pin it by a figure nobody has.
