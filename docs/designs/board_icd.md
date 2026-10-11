@@ -199,6 +199,14 @@ things, of which this document held one:
   0.08 and 0.05. And on a workload that lights most of its rows about half
   of what this link costs is there with no noise at all: a comb 20% off,
   read and corrected, adds 0.08 ± 0.04. No row is changed by it.
+  *What the corrected comb leaves, told apart, 2026-10-10 (the board plan's
+  §4.3, at the end of its budget).* Of that 0.08, what can be seen is the
+  rail: a row on a dim line has its weights raised, and a weight near full
+  scale cannot be. On a workload that lights most of its rows it costs the
+  reference networks 0.07 ± 0.02 of a point, from 31 of the first layer's
+  65,000 weights. The read and the rounding to the DAC's 8 bits leave
+  nothing there. So of the 20% this link's lines may be off by, the dim side
+  is the one that costs. No row is changed by it.
 - **Wavelength.** B5's arithmetic is at 1550 nm; the same detector at 1310 nm
   needs 18% more light. The all-optical branch would pin it to 1550 nm within
   2.4 nm, and ring weights would pin it by a figure nobody has.
