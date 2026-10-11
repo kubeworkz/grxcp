@@ -158,6 +158,18 @@ to 2% where B16 has 5%, it would buy 0.02, 0.06 and 0.06, which five networks
 do not quite see; held to 1%, 0.04, 0.08 and 0.05, which they do. The shared
 row at 2% costs them nothing that can be seen. No row is changed by it:
 whether B16's second row moves is B16's to take, and is not taken.
+*What the corrected comb leaves was then told apart* (§4.3, at the end of
+its budget). grx930's harness can now leave the tile the network as it was
+and add to its sums, after the converter, the parts of what the rewritten
+weights would be off by: what the reading missed, what writing a weight at 8
+bits dropped, and what a weight at the rail could not be raised by. **On the
+inverted set it is the rail, in the first layer**: 0.07 ± 0.02 of a point
+for the reference networks, on every network and on every draw, from 31 of
+that layer's 65,000 weights. The read and the rounding to 8 bits leave
+nothing there. All three at once leave 0.04 ± 0.03, half of the 0.08 ± 0.04
+the comb has when it is corrected on the tile, and neither of those is
+clear. No row is changed by it, and nothing here keeps a weight clear of its
+rail.
 X2 has made its predictions (§3.3), X1 its budget (§4.3), and P0, X3 and X4
 are drafted as [`board_icd.md`](board_icd.md),
 [`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) and
@@ -2874,12 +2886,112 @@ the chip.
 
 What it is not. **A comb.** No row here is a source that exists, and what
 any of them costs to meet is not said. **Why the corrected comb costs what it
-does** on the inverted set: the rail, the rounding to 8 bits and the read are
-not told apart here, and 0.08 ± 0.04 is not itself clear. **Noise that goes
-with a line's power**: here it is a share of a line's nominal light. A level
-other than 20%, an interval other than six minutes, and a calibration that
-sees the source. And it is five draws of five networks. No row of this plan
-is changed by it: what it asks of them is under B16.
+does** on the inverted set: ~~the rail, the rounding to 8 bits and the read
+are not told apart here,~~ *told apart the same day, in the block after this
+one: of the three it is the rail;* and 0.08 ± 0.04 is not itself clear.
+**Noise that goes with a line's power**: here it is a share of a line's
+nominal light. A level other than 20%, an interval other than six minutes,
+and a calibration that sees the source. And it is five draws of five
+networks. No row of this plan is changed by it: what it asks of them is
+under B16.
+
+*What a corrected comb leaves, told apart, 2026-10-10.*
+([`pta_reference_comb.py`](pta_reference_comb.py); grx930's design note, §5,
+"What a corrected comb leaves, told apart".) The block before this found a
+comb 20% off with no noise, read and corrected on the weights at 8 bits,
+adding 0.08 ± 0.04 of a point on the inverted set, about half of what the
+chip's source adds there, and could not say what in the correction leaves
+it. Three things could. A weight the network was trained for is scaled for
+its line as the line was read, rounded to the DAC's 8 bits and held at the
+DAC's rail, and each of the three leaves it off:
+
+- **the read**, by what the reading missed;
+- **the round**, by what writing it at 8 bits dropped;
+- **the rail**, by what a weight at full scale could not be raised by.
+
+grx930's harness took an option for it. The tile keeps the network as it
+was, and the parts asked for of what the rewritten weights would be off by
+are added to its sums after the converter, in every layer or in one. So a
+run with a part is the cycle with no source of its draw, shot for shot, but
+for that part: told apart with no part, every one of the 150 runs gets
+right what that cycle does. Ten rows on each of the block before's five
+draws, both kinds of network, 500 runs a data set: the cycle with no source;
+the comb corrected on the tile, which is the block before's row; the reading
+taken off the model's own line; and seven rows told apart. Of the lines,
+100 a data set are byte for byte what the sweep before wrote.
+
+What a row leaves: how often right in the cycle with no source of its draw,
+less in the row, with its error from the five networks. In bold, what they
+put outside chance at one in twenty.
+
+| | MNIST: trained before | Reference | Fashion-MNIST: trained before | Reference | MNIST inverted: trained before | Reference |
+|---|---|---|---|---|---|---|
+| The comb corrected on the tile: the block before's row | +0.044 ± 0.022 | +0.008 ± 0.017 | **+0.092 ± 0.032** | +0.001 ± 0.043 | +0.124 ± 0.049 | +0.081 ± 0.044 |
+| The reading taken off the model's own line | +0.005 ± 0.005 | +0.004 ± 0.003 | +0.014 ± 0.008 | +0.003 ± 0.003 | +0.005 ± 0.006 | −0.004 ± 0.004 |
+| Told apart: all three parts, after the converter | +0.030 ± 0.011 | +0.015 ± 0.014 | +0.029 ± 0.023 | +0.013 ± 0.018 | +0.072 ± 0.053 | +0.043 ± 0.028 |
+| The read | +0.004 ± 0.004 | +0.000 ± 0.003 | +0.016 ± 0.006 | +0.002 ± 0.004 | +0.004 ± 0.006 | −0.003 ± 0.004 |
+| The round to 8 bits, in the first layer | +0.008 ± 0.009 | **−0.019 ± 0.005** | +0.016 ± 0.012 | **+0.031 ± 0.010** | +0.024 ± 0.032 | −0.003 ± 0.009 |
+| The round to 8 bits, in the last layer | +0.010 ± 0.005 | −0.003 ± 0.002 | +0.012 ± 0.019 | −0.028 ± 0.013 | +0.004 ± 0.018 | −0.002 ± 0.021 |
+| The rail, in the first layer | +0.006 ± 0.004 | +0.010 ± 0.005 | −0.002 ± 0.003 | +0.012 ± 0.026 | +0.020 ± 0.027 | **+0.069 ± 0.018** |
+| The rail, in the last layer | +0.014 ± 0.010 | +0.014 ± 0.009 | +0.000 ± 0.004 | +0.012 ± 0.007 | +0.027 ± 0.021 | −0.005 ± 0.004 |
+| Those five, added | +0.042 ± 0.018 | +0.003 ± 0.011 | +0.042 ± 0.021 | +0.030 ± 0.019 | +0.080 ± 0.055 | +0.056 ± 0.022 |
+| All three at once, less the five added | −0.013 ± 0.010 | +0.012 ± 0.007 | **−0.013 ± 0.004** | −0.016 ± 0.008 | −0.007 ± 0.008 | −0.013 ± 0.009 |
+| On the tile, less all three after the converter | +0.014 ± 0.015 | −0.007 ± 0.010 | +0.062 ± 0.041 | −0.012 ± 0.041 | +0.052 ± 0.025 | +0.038 ± 0.022 |
+
+What the rail holds back, a mean over the runs:
+
+| | First layer: weights not zero | Held at the rail | Share | Last layer: weights not zero | Held at the rail | Share |
+|---|---|---|---|---|---|---|
+| MNIST, the reference networks | 71,754 | 76.5 | 0.107% | 972 | 26.7 | 2.75% |
+| MNIST, trained before | 70,261 | 16.7 | 0.024% | 966 | 12.9 | 1.34% |
+| Fashion-MNIST, the reference networks | 71,849 | 164.6 | 0.229% | 957 | 21.1 | 2.21% |
+| Fashion-MNIST, trained before | 69,940 | 33.3 | 0.048% | 958 | 17.0 | 1.77% |
+| MNIST, inverted, the reference networks | 65,469 | 30.7 | 0.047% | 940 | 1.7 | 0.18% |
+| MNIST, inverted, trained before | 65,088 | 4.4 | 0.007% | 942 | 1.5 | 0.16% |
+
+- **On the inverted set it is the rail in the first layer.** It leaves the
+  reference networks 0.07 ± 0.02 of a point there, at 3.8 of its errors, on
+  every one of the five networks and on every one of the five draws. The
+  read, the round in either layer and the rail in the last layer each leave
+  under a hundredth there, and none of them is clear.
+- **It is 31 weights of 65,000.** On the inverted set the rail holds back
+  0.05% of the first layer's weights that are not zero, and 1.7 of the last
+  layer's 940. MNIST has 76 and 27 held and Fashion-MNIST 165 and 21, and
+  they lose 0.02 ± 0.01 and 0.02 ± 0.03 to the rail in both layers. A
+  weight held at the rail is short by a fixed amount, and on the inverted
+  set its pixel is lit on almost every image. That is reasoned, and was not
+  run.
+- **The read leaves nothing**: 0.000 ± 0.003, 0.002 ± 0.004 and −0.003 ±
+  0.004, with the lines read to 0.15%. The reading taken off the model's own
+  line, which no chip can do, is within 0.004 of it on every set.
+- **The round to 8 bits is two or three images either way, and nothing on
+  the inverted set.** In the first layer it leaves −0.019 ± 0.005 on MNIST
+  and 0.031 ± 0.010 on Fashion-MNIST, both clear and of opposite signs. In
+  both layers together it is −0.02, 0.00 and 0.00. Of the fifteen figures
+  for a part in a layer on a set, those two and the first layer's rail on
+  the inverted set are the clear ones, where one in twenty would be by
+  chance.
+- **All three at once leave half of what the comb has on the tile, and
+  neither is clear.** After the converter they leave 0.02 ± 0.01, 0.01 ± 0.02
+  and 0.04 ± 0.03. Corrected on the tile the comb has 0.01, 0.00 and 0.08 ±
+  0.04, and less all three −0.01, −0.01 and 0.04 ± 0.02, clear on none. What
+  the tile's own way of converting the rewritten weights adds is not told
+  from nothing here.
+- **The five add up**, to within 0.02 of all three at once on every set.
+- **For the networks trained before no part is clear.** All three leave them
+  0.03 ± 0.01, 0.03 ± 0.02 and 0.07 ± 0.05: the rail 0.02, 0.00 and 0.05, and
+  the round 0.02, 0.03 and 0.03.
+
+What it is not. **A remedy.** Nothing here raises a weight past its rail,
+and no network here was trained to keep clear of it. **A chip**: the parts
+are added at the host, after the converter. **A comb with noise**: the
+parts are told apart for a still source only. **What the tile adds to the
+first layer's own error** when the weights are rewritten on it, which is
+4.3%, 0.4% and 3.3% larger there where the three parts make it 1.3%, −2.1%
+and 1.2%: it is not one of the three, it is not told apart, and in images
+it is not clear. A level other than 20%. And it is five draws of five
+networks. No row of this plan is changed by it: what it asks of them is
+under B16.
 
 *The ADC's row, since the survey (2026-10-04).* Relaxing it saves 3 to 106 mW,
 and the low end is the published state of the art: the cheapest converters that
@@ -4075,13 +4187,48 @@ where it ends 0.33.
 
 **The third row.** About half of what the source adds on the inverted set is
 there with no noise at all: a comb 20% off, read and corrected, adds 0.08 ±
-0.04. That is not clear, and it is not told apart here into the rail, the
-rounding to 8 bits and the read. `pta_reference_fix.py` had the same
-correction 0.11 ± 0.04 from the model's own on that set, with no drift.
+0.04. That is not clear, ~~and it is not told apart here into the rail, the
+rounding to 8 bits and the read~~ *and it is told apart below, the same
+day*. `pta_reference_fix.py` had the same correction 0.11 ± 0.04 from the
+model's own on that set, with no drift.
 
 **No row is changed here.** Whether the second row moves from 5%, to 2% or
 to 1%, is this decision's to take, and is not taken. Nothing in these
 documents says what a comb's lines do on their own, at any of the three.
+
+*What the corrected comb leaves, told apart, 2026-10-10* (§4.3, at the end
+of its budget; [`pta_reference_comb.py`](pta_reference_comb.py)). The third
+row has a comb's lines read at each calibration and corrected on the weights,
+written at the DAC's 8 bits. What that leaves at the end of a six-minute
+cycle, over the cycle with no source:
+
+| The reference networks, five draws, no noise on the source | MNIST | Fashion-MNIST | MNIST, inverted | From |
+|---|---|---|---|---|
+| A comb 20% off, read and corrected on the tile: adds | +0.008 ± 0.017 | +0.001 ± 0.043 | +0.081 ± 0.044 | [`pta_reference_rows.py`](pta_reference_rows.py)'s row. **Measured in a model** |
+| What the correction leaves, all three parts, after the converter | +0.015 ± 0.014 | +0.013 ± 0.018 | +0.043 ± 0.028 | [`pta_reference_comb.py`](pta_reference_comb.py). **Measured in a model** |
+| The read | +0.000 ± 0.003 | +0.002 ± 0.004 | −0.003 ± 0.004 | The same |
+| The round to 8 bits, in both layers | **−0.022 ± 0.006** | +0.004 ± 0.014 | −0.004 ± 0.023 | Derived there |
+| The rail, in the first layer | +0.010 ± 0.005 | +0.012 ± 0.026 | **+0.069 ± 0.018** | Measured there |
+| The rail, in the last layer | +0.014 ± 0.009 | +0.012 ± 0.007 | −0.005 ± 0.004 | The same |
+
+**The read stands.** Sixteen shots a row leave the lines 0.15% off, and what
+that leaves the networks cannot be seen on any set.
+
+**The 8 bits stand.** Writing the corrected weights at 8 bits leaves nothing
+on the inverted set, and two or three images either way on the other two.
+
+**The rail is what it costs.** A row on a dim line has its weights raised,
+and a weight near full scale cannot be. On the inverted set that is 31 of
+the first layer's 65,000 weights, and 0.07 ± 0.02 of a point on every
+network and every draw. The row asks for lines level to 20% either way, and
+it is the dim side that costs: a bright line's rows are lowered, and nothing
+holds them.
+
+**No row is changed here, and nothing here keeps a weight clear of its
+rail.** Three ways are in reach, and none of them was run: weights trained
+to stop short of full scale; a comb held closer on its dim side than on its
+bright; and a dim line's rows corrected on their inputs, where those are not
+at full scale themselves.
 
 **What is still not known.** How fast a comb's lines move, which is what says
 how often they have to be read: at each calibration is where the read was

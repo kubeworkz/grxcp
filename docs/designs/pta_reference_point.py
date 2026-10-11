@@ -463,8 +463,8 @@ RUN = {
     },
 }
 # The rows that are read: (data set) -> kind -> (row, draw) -> for each of the five networks, what the
-# probe found on the lines, rms; what its reading would leave, rms; and the share of the first layer's
-# weights the correction left at the rail.  Fractions, as the harness printed them.
+# probe found on the lines, rms; what its reading would leave, rms; and the share of its weights that
+# are not zero, in both layers, the correction left at the rail.  Fractions, as the harness printed them.
 LINES = {
     MNIST: {
         BEFORE: {
