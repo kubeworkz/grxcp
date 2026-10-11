@@ -618,6 +618,13 @@ this is the C reference; the RTL, the FSM and the schedulers are C3(b).
      of a point of level lines. What was reasoned above was right about the
      inputs on a set whose pixels are at full scale, 43% of them held and 0.44
      of a point left, and wrong about the weights.
+     *Told apart, 2026-10-10
+     ([`pta_reference_comb.py`](pta_reference_comb.py)): of the little that
+     is left, the range is the part that can be seen.* At the end of a
+     six-minute cycle the rail in the first layer leaves 0.07 ± 0.02 of a
+     point on the inverted set, from 31 of that layer's 65,000 weights, and
+     the read and the rounding to 8 bits leave nothing there. So the heading
+     above holds of how much is left, and not of what leaves it.
    - *Avoiding the rail costs more than meeting it.* Scaled to the dimmest
      line nothing is raised, and every sum is left 0.52 of itself, 2.8 dB of
      light with the converter's range where it was. That is worse than held
