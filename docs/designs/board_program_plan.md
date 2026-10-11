@@ -10,7 +10,8 @@
 
 **Status: PLAN, drafted 2026-09-21. All seven decisions of §2 are settled, each
 as recommended: B1 and B3 that day, and B2, B4, B5, B6 and B7 on 2026-09-22.
-Ten more were raised and settled later and are in §7: B8, B9, and on
+Eleven more were raised and settled later and are in §7, the last of them
+B18 on 2026-10-11, at the end of this status: B8, B9, and on
 2026-10-05 B10, the chiplet's working geometry, B11, its working shot rate,
 1 GS/s, B12, its topology, a ring bank lit by a comb, and B13, how it signs a
 weight, a balanced pair of photodiodes; and on 2026-10-06 B14, the interface
@@ -170,6 +171,15 @@ nothing there. All three at once leave 0.04 ± 0.03, half of the 0.08 ± 0.04
 the comb has when it is corrected on the tile, and neither of those is
 clear. No row is changed by it, and nothing here keeps a weight clear of its
 rail.
+**On 2026-10-11 the first board became the GRXGPU charter's** (§7, B18). The
+grxgpu team's product family charter draws a modular carrier: the GRX930 SoC
+as host, with the G100 and the PTA as separately attachable modules, and a
+first demo that runs one classifier's three layers on the NPU, the G100 and
+the PTA in turn. That layout was chosen for the first board. What this plan
+settled as B1, B3, B4, B6, B7 and B9 is now the board after it, rev A. B10 to
+B17, which are the PTA's own, stand for both. What the two sets of documents
+have to reconcile was put to the grxgpu team as a proposal the same day
+(§4.2).
 X2 has made its predictions (§3.3), X1 its budget (§4.3), and P0, X3 and X4
 are drafted as [`board_icd.md`](board_icd.md),
 [`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) and
@@ -577,6 +587,13 @@ UCIe sideband carries the link's own management. *Needed by:* X4. *Settled on
 | P1 | Package study of the GPU package with the PTA chiplet: floorplan, UCIe-S on the organic substrate B2 chose, fiber attach, and a thermal co-simulation with TFLT's drift in place of heater terms. §8, question 1 holds one published package of the kind, for scale, and [`pta_floorplan.py`](pta_floorplan.py) bounds what has to go in it | The model predicts the PIC's temperature range under the GPU's power map, and C1's drift fits say what that costs in calibration | B1, B2, B5 |
 | P2 | Board rev 0, on B6's FPGA platform: the GPU partition as a CXL Type-2 device, and the PTA as the error-model tile | Linux on a CXL host enumerates the device, and the D3 network runs through the emulated PTA bit-identical to `pta_mnist`'s C reference | B6, L2, X4, X5 |
 | P3 | Board rev A, on silicon | Scoped after P1 and the silicon plans; no gate yet | P1, L1–L4 |
+
+*P2 since B18, 2026-10-11.* Rev 0 as this row has it is no longer the first
+board. The first board is the GRXGPU charter's modular carrier (§7, B18), and
+its definition is the charter's and not this plan's. The second half of P2's
+gate carries over to it as it stands: a network through the emulated PTA,
+bit for bit what the C reference gives. The first half, a CXL host that
+enumerates the device, is rev A's.
 
 Rev A as B1 recommends it, which is where P0 starts:
 
@@ -1077,6 +1094,20 @@ layer mis-sized, and the NPU's read-ahead dropped.
     D3's two GEMMs costs eight times what the chiplet spends on both, which is a
     reason the activation stage is on the chiplet and not a reason to ask grxgpu
     for a second queue.
+
+- *Made, 2026-10-11:* the reconciliation of the first board,
+  `grxgpu/docs/proposals/first_board_reconciliation.md`
+  ([kubeworkz/grxgpu#6](https://github.com/kubeworkz/grxgpu/pull/6)),
+  open until grxgpu answers. It follows B18 (§7). It sets this plan beside
+  the charter and its first-board demo, says what each difference becomes,
+  and gives the charter the PTA decisions it lists as open. It asks for five
+  rulings: whether an emulated tile on its own FPGA module, reporting that
+  it is a model, may stand in for the PTA in the first board's integration
+  runs; whether X4's register map is the PTA's discovery contract there;
+  what the demo's raw error is normalised by; who trains the demo's last
+  layer; and which bus reaches the PTA module from the GRX930. It says of
+  the two proposals above that they describe rev A, that nothing in them is
+  needed for the first board, and that nothing in them is withdrawn.
 
 ### 4.3 To the PTA chiplet: EIC requirements
 
@@ -4356,6 +4387,60 @@ things would reopen it: a trainer with the tile's own model in its forward
 pass, where this one has Gaussian noise; a search over the epochs and the
 noise, which were each chosen once; or a kind of network other than one
 hidden layer on 28 × 28 images. *Needed by:* X1's sweeps from here on.
+
+**B18 — The first board: the GRXGPU charter's modular carrier.** *Settled
+2026-10-11.*
+
+Two sets of documents describe the board, and they describe different
+boards. This plan and [`board_icd.md`](board_icd.md) have two packages, the
+GRX930 and a GPU package that holds the G100 die and the PTA chiplet (B1).
+CXL 2.0 joins them (B3), the PTA is reached through the GPU (B4, B7, B9), and
+before silicon the board is an FPGA platform with CXL hard IP (B6). The
+grxgpu team's product family charter and its first-board demo, drafts of
+2026-10-10, have a carrier with the GRX930 SoC as host and the G100 and the
+PTA as separately attachable modules. The CPU hands each engine its layer of
+one classifier, and the links are chosen after their traffic is measured.
+Neither set was written with the other in view.
+
+*Recommended, and settled as recommended:* **the first development board is
+the charter's.** It is the easier board to bring up and to measure. Each
+engine can be attached, tested and replaced by itself, and nothing on it
+waits for a CXL host, a UCIe port or a package. What this plan drew is the
+board after it.
+
+| Decision | On the first board | On rev A |
+|---|---|---|
+| B1, where the packages end | Does not apply: three modules on a carrier | Stands |
+| B2, GDDR6 and DDR5 | Not assumed: the charter attaches what its SoC or FPGA supports | Stands |
+| B3, CXL 2.0 between the CPU and the GPU | Not assumed: the charter chooses its links by measurement | Stands |
+| B4, the PTA joined to the G100 die by UCIe | The PTA is its own module. What its interface chip holds stands | Stands |
+| B6, rev 0 on an FPGA with CXL hard IP | Replaced by the charter's carrier | Its silicon nodes stand |
+| B7, the PTA's registers behind the GPU's CXL.io | The same registers, reached from the host | Stands |
+| B8, the die-to-die link's signalling | Does not apply | Stands |
+| B9, the PTA a device whose parent is its GPU | Its operands are the host's, and its parent is not a GPU | Stands |
+| B5 and B10 to B17, the PTA's own | Stand | Stand |
+
+**What it costs here.** Five things, none of them done yet.
+
+- **P2** is no longer the first board (§3.1). Half of its gate carries over.
+- **S1 and S2**, enumeration over CXL and the coherent pool, are rev A's. The
+  first board enumerates the PTA some other way, which is not chosen.
+- **S4's driver** ends in three hooks, and on the first board a transport
+  from the GRX930 host fills them where the GPU's driver was to. The PTA's
+  parent device is B9's exception, and it is written for a GPU.
+- **The ICD** describes rev A and has no first board in it.
+- **The two proposals made to grxgpu**, the host path and the weight-set
+  policies, describe rev A's path to the PTA. They stand, and the first board
+  does not use them.
+
+**What it does not settle.** Three things the two sets differ on are not
+layout, and are put to grxgpu in the proposal of §4.2 and not decided here.
+The charter wants a physical PTA module and says host emulation does not
+count, and there is no photonic module: what stands in for one, and what a
+stand-in may claim. The demo holds the PTA to a raw output error and a class
+agreement, where this plan budgets it in points of accuracy lost. And the
+demo counts calibration in a cold start, where B15 has it every six minutes.
+*Needed by:* P2, S1, S4 and the ICD.
 
 ---
 

@@ -11,6 +11,13 @@ what carries it, who owns each end, and where its numbers come from. It fixes
 nothing the plan has not already decided, and where a number is not yet
 sourced it says so rather than inventing one — §7 collects those.
 
+*Since 2026-10-11 this is not the first board* (the board plan's B18). The
+first development board is the GRXGPU charter's modular carrier, with the
+G100 and the PTA as modules on a GRX930 host, and this document describes the
+board after it. No link below is the first board's. A section for the first
+board is owed here, and waits on which bus reaches the PTA module from the
+host, which has been asked of the grxgpu team.
+
 **How to read the source column.** `B1`–`B7` are the board plan's decisions,
 `X1` and `X2` its chiplet work, `C1` grx930's error-model gate. A standard
 named without a clause number means the number is the standard's to give and
