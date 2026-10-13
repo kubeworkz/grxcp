@@ -220,8 +220,9 @@ and leaves the fit's cost where it was. What buys the range is a receiver that
 stays linear to twice the photocurrent, with a bit to keep the LSB over it.
 This plan's converter of nine effective bits is 4.2 to 10.8 mW where eight is
 4.2 to 5.3, and the interface chip 0.64 to 4.53 W where B14 has 0.64 to 4.18;
-the receiver is not priced. No decision is changed by it, and whether to ask
-the interface chip for the bit is an open question (§8).
+the receiver is not priced. No decision is changed by it, ~~and whether to ask
+the interface chip for the bit is an open question (§8)~~ *and the question it
+opened was settled the same day: B14 stays at 8 bits (§7).*
 X2 has made its predictions (§3.3), X1 its budget (§4.3), and P0, X3 and X4
 are drafted as [`board_icd.md`](board_icd.md),
 [`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) and
@@ -1172,6 +1173,11 @@ layer mis-sized, and the NPU's read-ahead dropped.
   not, and a manifest cannot tell the two apart. What it leaves is that the
   range holds the reference, and that the bound is stated against the
   reference.
+- *And its third item settled, the same day*
+  ([kubeworkz/grxgpu#12](https://github.com/kubeworkz/grxgpu/pull/12)): §10.6
+  had told the demonstration not to assume the ninth bit while it was undecided
+  here. It is decided (B14, §7), and the proposal now says so: the figures to
+  set Gate F against are the 8-bit ones with a fitted range.
 
 **The demonstration's last layer, on a stand-in (2026-10-13).**
 [`pta_board_chain.py`](pta_board_chain.py) holds what grx930's harness ran (its
@@ -4120,6 +4126,20 @@ did. ~~Whether that reopens B14 is not decided here.~~ *Decided the same
 day: it does not.* **B14 stands**, for the reason in the paragraph above, and
 the networks that met its test became the reference (B17).
 
+*And at 8 bits, settled 2026-10-13.* The first board's last layer was run in a
+model with a ninth bit on its output converter (§4.2, "with a converter of one
+more bit"; §8, question 9). At the 8-bit converter's LSB the ninth bit clips
+nothing and costs no error, where an 8-bit range fitted to the golden manifest
+costs a fifth more rms error in the networks whose reference reaches past the
+range training's rule gives, five of thirty. It is worth that only behind a
+receiver that is linear to twice the photocurrent, which this plan has not
+priced, and it does nothing for the largest error, which is the noise's. **The
+ninth bit is not asked of the interface chip: B14's ADC stays at 8 bits**, and
+its 0.64 to 4.18 W stands. What follows on the first board: a range that clips
+nothing is the fitted one, at the cost §4.2 has. Whether the first board's
+range is fitted is not settled by this, and is the demonstration's to say
+(B18).
+
 **B15 — How often version 2 is calibrated: every six minutes.** *Settled
 2026-10-06.*
 
@@ -4800,8 +4820,9 @@ last layer: a 9-bit converter at the 8-bit one's LSB clips nothing and costs no
 error, where fitting an 8-bit range costs a fifth more in the networks that
 need it. It is 0.64 to 4.53 W of interface chip where B14 has 0.64 to 4.18,
 behind a receiver that is linear to twice the photocurrent, which is not
-priced. **B14 stands at 8 bits.** Whether to ask the interface chip for the
-ninth is open (§8, question 9).
+priced. **B14 stands at 8 bits.** ~~Whether to ask the interface chip for the
+ninth is open (§8, question 9).~~ *Settled the same day: it is not asked for
+(B14).*
 
 ---
 
@@ -5641,12 +5662,15 @@ ninth is open (§8, question 9).
    balanced pair, and no noisier than assumed if it reads them through an
    offset. Its lines have to be level to within a few percent either way.
 
-9. **Does the interface chip's output converter get a ninth bit?** *Opened
-   2026-10-13* (§4.2, [`pta_board_bits.py`](pta_board_bits.py)). On the first
-   board's last layer, in a model, two things clip nothing. An 8-bit range
-   fitted to the golden manifest costs a fifth more rms error in the networks
-   whose reference reaches past the range training's rule gives, five of
-   thirty. A 9-bit converter at the 8-bit one's LSB costs none, and needs no
+9. **Does the interface chip's output converter get a ninth bit?** *Settled on
+   2026-10-13, the day it was opened: no. B14 stays at 8 bits (§7). What
+   follows is how the question was put, and reads as it was written.*
+
+   *Opened 2026-10-13* (§4.2, [`pta_board_bits.py`](pta_board_bits.py)). On the
+   first board's last layer, in a model, two things clip nothing. An 8-bit
+   range fitted to the golden manifest costs a fifth more rms error in the
+   networks whose reference reaches past the range training's rule gives, five
+   of thirty. A 9-bit converter at the 8-bit one's LSB costs none, and needs no
    manifest. The bit is 0.64 to 4.53 W of interface chip where B14 has 0.64 to
    4.18, and is worth its range only behind a receiver that is linear to twice
    the photocurrent at the noise it had, which this plan does not price.
