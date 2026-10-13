@@ -223,6 +223,20 @@ This plan's converter of nine effective bits is 4.2 to 10.8 mW where eight is
 the receiver is not priced. No decision is changed by it, ~~and whether to ask
 the interface chip for the bit is an open question (§8)~~ *and the question it
 opened was settled the same day: B14 stays at 8 bits (§7).*
+*And with the source lit, the same day* (§4.2). Every run of that layer had
+been of a tile with no source: grx930's harness would not light a tile that had
+only some of a network's layers, and now does. With B16's source over B14's
+8-bit converter the reference networks' last layer is 5.18, 5.34 and 5.27% of
+the reference's rms off its declared format, where with no source it was 4.46,
+4.67 and 4.18%: **a seventh more error, in the mean of thirty networks**. The
+largest error grows by more, and the class is the declared reference's on
+99.44, 96.45 and 98.89% where it was on 99.59, 96.78 and 99.23%. **The dear row
+is the third, and what it costs is the rail**: the lines are read well, and 1
+to 11% of the last layer's weights are at full scale where a dim line needs
+them raised. What that leaves is the same in every shot, and the source by
+itself is further off than what it adds to the tile. No decision is changed by
+it. B16's rows stand, and what keeps a weight clear of its rail is still not
+chosen (§7, B16).
 X2 has made its predictions (§3.3), X1 its budget (§4.3), and P0, X3 and X4
 are drafted as [`board_icd.md`](board_icd.md),
 [`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) and
@@ -1178,6 +1192,12 @@ layer mis-sized, and the NPU's read-ahead dropped.
   had told the demonstration not to assume the ninth bit while it was undecided
   here. It is decided (B14, §7), and the proposal now says so: the figures to
   set Gate F against are the 8-bit ones with a fitted range.
+- *And §10.7 of it, the same day*
+  ([kubeworkz/grxgpu#13](https://github.com/kubeworkz/grxgpu/pull/13)): the
+  same layer with the source lit. It replaces the figures §10.5 and §10.6 gave
+  the demonstration to set Gate F against, which were a tile's with no source,
+  and tells it that part of the PTA's error is fixed between calibrations and
+  will not average away.
 
 **The demonstration's last layer, on a stand-in (2026-10-13).**
 [`pta_board_chain.py`](pta_board_chain.py) holds what grx930's harness ran (its
@@ -1453,6 +1473,89 @@ that were wrong said the rms would never be over what it was, where MNIST's is
 by a thousandth, put one set's largest error a hundredth too high, and put what
 finer steps do for Fashion-MNIST's class at a quarter of what it is. No
 decision of this plan is changed by it.
+
+**The same layer, with a light source switched on (2026-10-13).**
+[`pta_board_lit.py`](pta_board_lit.py) holds what grx930's harness ran (its
+design note §5, "The first board's last layer, with a light source switched
+on"). The three blocks before this one are of a tile with its own noise and no
+source, and say so. Here the source is lit over the last layer as B16 holds it:
+1% rms a shot for the lines together, 5% for a line on its own, and lines level
+to 20%, read with the level probe at sixteen shots a row and corrected on the
+weights at 8 bits. On B14's 8-bit converter, with the range training's rule
+gives and with the range fitted. Each of the source's rows was also run alone.
+The same networks, tile and draws, **measured in a model**.
+
+**How the light is modelled**, which is the harness's way and is first order. A
+source's share of a sum is added after the converter, and a correction on the
+weights rewrites them before it. So the model's converter sees the sums of the
+rewritten weights, and the light then brings them back, where a chip's
+converter sees the two together. Where a row's weights were raised for a dim
+line the model can hold a sum at the range that a chip would not. The sums past
+the range in a row whose lines are read are that order as much as a source's.
+
+| As budgeted, 10,000 images, the reference networks | MNIST | Fashion-MNIST | MNIST, inverted |
+|---|---|---|---|
+| rms error, % of the reference's rms: no source | 4.46 | 4.67 | 4.18 |
+| the source | 5.18 | 5.34 | 5.27 |
+| the source, range fitted | 5.33 | 5.66 | 5.27 |
+| What the source adds, squares for squares | 2.65 | 2.73 | 3.29 |
+| of it the shared row, 1% | 1.00 | 1.00 | 1.00 |
+| a line's own noise, 5% | 1.74 | 1.60 | 1.98 |
+| lines 20% off, read and corrected | 1.60 | 1.93 | 2.40 |
+| and the same lines left alone | 6.51 | 6.84 | 7.73 |
+| The format alone with the source, rms | 4.12 | 4.96 | 5.27 |
+| Largest error, a mean over the runs, % of the largest the reference is: no source | 8.02 | 11.53 | 7.44 |
+| the source | 11.91 | 14.91 | 12.76 |
+| The declared reference's class, %: no source | 99.59 | 96.78 | 99.23 |
+| the source | 99.44 | 96.45 | 98.89 |
+| Weights the rail held back, % of those the reading scaled | 4.5 | 6.8 | 5.3 |
+
+**The source costs the last layer a seventh more error.** A network has 0.98 to
+1.40 times the rms error it had, 1.14 in the mean of the thirty. No run is
+within the demonstration's 1.0%, as none was. The class falls 0.15, 0.33 and
+0.34 of a point, and on the first thousand images 8, 0 and 0 runs of 25 are at
+99.5% where 13, 0 and 1 were. In this plan's own unit the source costs the
+reference networks 0.03 ± 0.01, 0.13 ± 0.04 and 0.11 ± 0.01 of a point, clear
+on all three.
+
+**The first two rows are what they say.** The shared 1% adds 1.00 to 1.01% of
+the reference's rms in squares on every set and kind: it is 1% of every sum of
+a shot. A line's own 5% adds 1.48 to 1.98, a third of itself, since a sum's
+rows do not all err one way.
+
+**The third row is the dear one, and what it costs is the rail.** Lines 20% off
+and left alone add 5.75 to 7.73, and take the class to 98.91, 95.36 and 97.99%:
+the reading B16 made part of the row is not a refinement here. The reading
+itself is good. It finds the lines 0.16 to 0.23 off and leaves 0.008 to 0.011.
+But a dim line's row has to be raised, and 1.3 to 11.3% of the weights it
+scales are held at full scale, 5.2% in the mean. Read and corrected, the lines
+still add 1.60, 1.93 and 2.40 for the reference networks: as much as a line's
+own noise. §4.3 found the rail in the working tile's first layer at 31 weights
+of 65,000, on the inverted set. In this network's last layer, 64 inputs wide,
+it is one weight in twenty.
+
+**And it does not add in squares.** The format alone with the source is 4.12,
+4.96 and 5.27% of the reference's rms off. That is the source by itself, and it
+is more than the 2.65, 2.73 and 3.29 the same source adds to the tile as
+budgeted. For MNIST's networks trained before, the tile with its lines read is
+nearer its reference than the tile with no source: 4.70% against 4.81%. What
+the rail leaves comes out the same way in every shot, and it meets something in
+the tile that comes out the other way. grx930's note has a look at one network
+that points at the crosstalk; it is one network, and is not in this model.
+
+**The largest error grows more than the rms does**: 9.4 to 14.9% of the largest
+the reference is in a set's mean, where it was 7.2 to 11.5%, and 19.5% at the
+most in a run with no sum past the converter's range, where it was 9.7%. A
+weight held at the rail is off by as much in every shot.
+
+What it is not. Everything the three blocks before say of themselves. **A
+converter that sees the light.** **A source through an offset, a cycle of
+calibrations or a drifted tile**: this is the source over the tile as budgeted.
+**An account of what in the tile the rail's share cancels against.** **A
+remedy.** And two of the eleven predictions written before it were right as
+written. Most of the rest put the source's cost too high, the rail's share of
+the weights was put under 1% and is 5%, and the source's share was expected to
+add in squares. No decision of this plan is changed by it.
 
 ### 4.3 To the PTA chiplet: EIC requirements
 
@@ -4620,6 +4723,15 @@ to stop short of full scale; a comb held closer on its dim side than on its
 bright; and a dim line's rows corrected on their inputs, where those are not
 at full scale themselves.
 
+*At the first board's gate, 2026-10-13* (§4.2, "with a light source switched
+on"). Held to a raw output and not to a class, the last layer of the stand-in
+pays for the rail in every network: the reading leaves the lines 0.008 to 0.011
+off, and 1.3 to 11.3% of the weights it scales are held at full scale. Read and
+corrected, the third row adds 1.60, 1.93 and 2.40% of the reference's rms in
+squares, where the second adds 1.74, 1.60 and 1.98 and the first 1.00, 1.00 and
+1.00. **No row is changed by it.** The three ways above are still the ways in
+reach, and still not run.
+
 **What is still not known.** How fast a comb's lines move, which is what says
 how often they have to be read: at each calibration is where the read was
 put, and nothing was measured for it. Whether a comb as made is inside 20%.
@@ -4823,6 +4935,12 @@ behind a receiver that is linear to twice the photocurrent, which is not
 priced. **B14 stands at 8 bits.** ~~Whether to ask the interface chip for the
 ninth is open (§8, question 9).~~ *Settled the same day: it is not asked for
 (B14).*
+
+*And lit, the same day* (§4.2). With B16's source over it the last layer is
+5.18, 5.34 and 5.27% of the reference's rms off, where it was 4.46, 4.67 and
+4.18%, and gives its declared reference's class on 99.33, 96.41 and 98.66% of a
+thousand images. Those are the figures the demonstration's thresholds are now
+put against. It settles none of the three things above.
 
 ---
 
