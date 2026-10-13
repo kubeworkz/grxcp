@@ -208,6 +208,20 @@ needed, in five networks of thirty, and a bit of range to spare costs every
 network a quarter more again**, and the reference networks 0.10, 0.94 and 0.17
 of a point. A wider range also reads better as a share of its own full scale,
 which is what a bound must not reward. No decision is changed by it.
+*And with a converter of one more bit, the same day* (§4.2): the other way to
+buy that range. With nine bits at the step training's rule gives, which is
+twice the range at the same LSB, no sum is past the range in any of 600 runs,
+and nothing is fitted. **The error is the one it had**: the five networks whose
+range clipped have 0.995 to 1.000 times the rms error they had, where fitted
+with eight bits they have 1.20 to 1.24 times, and the class is what it was. The
+largest error is still the noise's, 9.7% at the most and within 2.0% in no run.
+Spent on finer steps over the fitted range instead, the bit halves the rounding
+and leaves the fit's cost where it was. What buys the range is a receiver that
+stays linear to twice the photocurrent, with a bit to keep the LSB over it.
+This plan's converter of nine effective bits is 4.2 to 10.8 mW where eight is
+4.2 to 5.3, and the interface chip 0.64 to 4.53 W where B14 has 0.64 to 4.18;
+the receiver is not priced. No decision is changed by it, and whether to ask
+the interface chip for the bit is an open question (§8).
 X2 has made its predictions (§3.3), X1 its budget (§4.3), and P0, X3 and X4
 are drafted as [`board_icd.md`](board_icd.md),
 [`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) and
@@ -1151,6 +1165,13 @@ layer mis-sized, and the NPU's read-ahead dropped.
   instead that the manifest fix the range by rule, as the smallest step that
   holds the reference and no wider, and that the bound then be stated against
   the reference.
+- *And §10.6 of it, the same day*
+  ([kubeworkz/grxgpu#11](https://github.com/kubeworkz/grxgpu/pull/11)): the
+  converter with one more bit, run. It takes back two words of §10.5, "no
+  wider": a larger step costs error and a wider range at the same step does
+  not, and a manifest cannot tell the two apart. What it leaves is that the
+  range holds the reference, and that the bound is stated against the
+  reference.
 
 **The demonstration's last layer, on a stand-in (2026-10-13).**
 [`pta_board_chain.py`](pta_board_chain.py) holds what grx930's harness ran (its
@@ -1250,7 +1271,8 @@ LSB. With a step twice as large the rounding and the receiver's noise are twice
 as large in a sum's own units and the shot noise root two times; the
 programming error and the crosstalk are what they were. A converter with a bit
 more at the step it had is the other way to buy range. That is the interface
-chip's to price, and is not modelled here.
+chip's to price, and ~~is not modelled here~~ *was run and priced the same
+day: the block after this one.*
 
 | As budgeted, 10,000 images, the reference networks | MNIST | Fashion-MNIST | MNIST, inverted |
 |---|---|---|---|
@@ -1317,6 +1339,114 @@ error**, which is the noise's and is where it was. And four of the nine
 predictions written before it were right as written: the cost of a bit was put
 at 1.3 to 1.5 times and is 1.2, and what a bit spare does to the class and to
 the accuracy was put too low. No decision of this plan is changed by it.
+
+**The same layer, with a converter of one more bit (2026-10-13).**
+[`pta_board_bits.py`](pta_board_bits.py) holds what grx930's harness ran (its
+design note §5, "The first board's last layer, with a converter of one more
+bit"). The block before this one bought a range that clips nothing by fitting
+the last converter to its reference, at a fifth more rms error for the five
+networks of thirty it widens, and left the other way to the interface chip: a
+converter with a bit more at the step it had. Here it is run, two ways. With
+nine bits at the step training's rule gives: 255 codes where there were 127,
+and nothing fitted. And with nine bits over the fitted range: the 8-bit fitted
+range in steps half the size. The same networks, tile and draws, **measured in
+a model**.
+
+**What each is, in light.** B14's noise is in LSB of an 8-bit converter: 0.25
+of one at the receiver, 30 photons to one. With nine bits at the same LSB a sum
+has the light it had and the noise it had, and the receiver has to stay linear
+to twice the photocurrent. Fitted with nine bits the top of the range has the
+light it had with eight, so a network whose fitted range is twice training's
+has half the light to a sum, as it has fitted with eight, and only the rounding
+is finer. The first asks a receiver for range and a converter for a bit to
+resolve it. The second asks a converter for a bit and the receiver for nothing.
+
+| As budgeted, 10,000 images, the reference networks | MNIST | Fashion-MNIST | MNIST, inverted |
+|---|---|---|---|
+| The most sums past the range in a run, of 160,000: eight bits, training's range | 27 | 161 | 0 |
+| eight bits, fitted | 0 | 0 | 0 |
+| nine bits, training's step | 0 | 0 | 0 |
+| nine bits, fitted | 0 | 0 | 0 |
+| Largest error, the most in any run, % of the largest the reference is: eight bits, training's range | 8.97 | 24.05 | 8.59 |
+| eight bits, fitted | 8.97 | 8.95 | 8.59 |
+| nine bits, training's step | 8.97 | 8.65 | 8.59 |
+| nine bits, fitted | 8.61 | 8.95 | 8.87 |
+| rms error, % of the reference's rms: eight bits, training's range | 4.46 | 4.67 | 4.18 |
+| eight bits, fitted | 4.64 | 5.05 | 4.18 |
+| nine bits, training's step | 4.46 | 4.67 | 4.18 |
+| nine bits, fitted | 4.57 | 4.91 | 4.12 |
+| The declared reference's class, %: eight bits, training's range | 99.59 | 96.78 | 99.23 |
+| eight bits, fitted | 99.55 | 96.20 | 99.23 |
+| nine bits, training's step | 99.59 | 96.78 | 99.23 |
+| nine bits, fitted | 99.57 | 96.63 | 99.26 |
+
+**With nine bits at the same step nothing is clipped, and nothing is fitted.**
+No sum is past the range in any of its 600 runs, with the noise or without it,
+where 70 of the same 600 had one. The step is the one training's rule gave on
+training's images; no golden manifest is read. The largest any of the thirty
+networks' references is, is 0.66 of the converter's full scale, where it was
+1.33 of the 8-bit one's. That is room and not a rule.
+
+**And the fifth more error is not paid.** 530 of the 600 runs are their run
+with eight bits, figure for figure: every one whose run with eight had no sum
+past its range. The five networks that had some have 0.995 to 1.000 times the
+rms error they had, in the sum's own units, where fitted with eight bits they
+have 1.20 to 1.24 times the error they have with nine. The reference networks
+give their declared reference's class on 99.59, 96.78 and 99.23% of 10,000
+images, as they did with eight bits and training's range, where fitted they
+gave it on 99.55, 96.20 and 99.23%.
+
+**It does not bring the tile as budgeted within 2.0% either.** The largest
+error is the noise's: 7.2 to 8.4% of the largest the reference is in a set's
+mean, 9.7% at the most and 6.0% at the least. A bit does nothing for the noise,
+and the tail argument of the two blocks before stands by itself. The format
+alone is within 2.0% in all 300 of its runs.
+
+**Spent on finer steps, the bit halves the rounding and leaves the fit's
+cost.** Fitted with nine bits the format alone has 0.38 to 0.64% of the
+reference's rms where it had 0.76 to 1.27, and as budgeted every network has
+0.97 to 0.99 times its rms error fitted with eight. The five networks whose
+fitted range is twice training's still have 1.17 to 1.20 times the error they
+have with nine bits at training's step. For those five the two are one
+converter, the same step and the same range, and differ only in the light. The
+class gains 0.02 ± 0.01, 0.43 ± 0.10 and 0.03 ± 0.02 of a point over fitted
+with eight, clear on Fashion-MNIST: rounding moves that set's class more than
+its share of the rms says.
+
+**As a share of full scale it passes, and is no better.** With nine bits at
+training's step the error is 1.43 to 1.83 steps rms, as it was, which is 0.56
+to 0.72% of a full scale twice as large. All 150 runs as budgeted are within
+1.0% of the converter's full scale, where 20 were, and none within 1.0% of the
+reference's rms, as none was. That is the block before's finding from the other
+side, and the proposal to grxgpu is amended for it.
+
+**What the bit costs**, from this plan's own models:
+[`pta_power.py`](pta_power.py)'s converter, the best and the fifth-best
+published part of at least that many effective bits at 1 GS/s, and
+[`pta_tighten.py`](pta_tighten.py)'s interface chip around it, with nothing
+else changed.
+
+| | Eight effective bits | Nine |
+|---|---|---|
+| One converter at 1 GS/s, mW | 4.19 to 5.35 | 4.19 to 10.81 |
+| The tile's 64, W | 0.27 to 0.34 | 0.27 to 0.69 |
+| The interface chip, W | 0.64 to 4.18 | 0.64 to 4.53 |
+
+The best published part is the same part, so the low end does not move; the
+fifth-best takes twice the energy, and the chip's high end rises by 0.35 W.
+**Not priced: the receiver.** The plan has one figure for a receiver whatever
+its range (§4.3), and the bit is worth its range only behind a receiver that is
+linear to twice the photocurrent at the noise it had. That is a figure the
+interface chip has to give before the bit can be asked for.
+
+What it is not. Everything the two blocks before say of themselves. **A range
+that holds by rule**: nothing was clipped in these thirty networks, and nothing
+says none ever is. **A receiver.** **A remedy for the largest error.** And
+seven of the ten predictions written before it were right as written: the ones
+that were wrong said the rms would never be over what it was, where MNIST's is
+by a thousandth, put one set's largest error a hundredth too high, and put what
+finer steps do for Fashion-MNIST's class at a quarter of what it is. No
+decision of this plan is changed by it.
 
 ### 4.3 To the PTA chiplet: EIC requirements
 
@@ -4665,6 +4795,14 @@ for the networks it moves; a bit of range to spare costs every network a
 quarter more again. B14's converter stands at 8 bits, and what its range is set
 from on the first board is the demonstration's to say.
 
+*And a ninth bit, the same day* (§4.2). Run in a model for the first board's
+last layer: a 9-bit converter at the 8-bit one's LSB clips nothing and costs no
+error, where fitting an 8-bit range costs a fifth more in the networks that
+need it. It is 0.64 to 4.53 W of interface chip where B14 has 0.64 to 4.18,
+behind a receiver that is linear to twice the photocurrent, which is not
+priced. **B14 stands at 8 bits.** Whether to ask the interface chip for the
+ninth is open (§8, question 9).
+
 ---
 
 ## 8. Open questions
@@ -5502,6 +5640,19 @@ from on the first board is the demonstration's to say.
    noisier than that, −124 dB/Hz, if a column reads its weights through a
    balanced pair, and no noisier than assumed if it reads them through an
    offset. Its lines have to be level to within a few percent either way.
+
+9. **Does the interface chip's output converter get a ninth bit?** *Opened
+   2026-10-13* (§4.2, [`pta_board_bits.py`](pta_board_bits.py)). On the first
+   board's last layer, in a model, two things clip nothing. An 8-bit range
+   fitted to the golden manifest costs a fifth more rms error in the networks
+   whose reference reaches past the range training's rule gives, five of
+   thirty. A 9-bit converter at the 8-bit one's LSB costs none, and needs no
+   manifest. The bit is 0.64 to 4.53 W of interface chip where B14 has 0.64 to
+   4.18, and is worth its range only behind a receiver that is linear to twice
+   the photocurrent at the noise it had, which this plan does not price.
+   Neither brings the largest error within the demonstration's 2.0%. *Needs:*
+   the receiver's linear range, from the interface chip. Until it is answered
+   B14 stands at 8 bits.
 
 ---
 
