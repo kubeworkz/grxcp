@@ -196,6 +196,18 @@ and a half rms out. It gives its declared reference's class on 99.49, 96.85 and
 MNIST, where 13 runs of 25 pass, and under it on the other two. No decision is
 changed by it. What it asks of the demonstration's thresholds is put to grxgpu
 (§4.2).
+*And with a range that clips nothing, the same day* (§4.2). grx930's harness
+sets a converter's range on training images, by a rule written for the class.
+Fitted to the layer's declared reference instead, which is the demonstration's
+"full scale from the frozen golden manifest", no sum is past the range in any
+run, and the format alone is within the demonstration's 2.0% in every run. The
+tile as budgeted is still within it in none: its largest error is then the
+noise's alone, 7.2 to 8.4% of the largest the reference is and 9.7% at the
+most, where it was 24.1%. **The fit costs a fifth more rms error where it is
+needed, in five networks of thirty, and a bit of range to spare costs every
+network a quarter more again**, and the reference networks 0.10, 0.94 and 0.17
+of a point. A wider range also reads better as a share of its own full scale,
+which is what a bound must not reward. No decision is changed by it.
 X2 has made its predictions (§3.3), X1 its budget (§4.3), and P0, X3 and X4
 are drafted as [`board_icd.md`](board_icd.md),
 [`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) and
@@ -1131,6 +1143,14 @@ layer mis-sized, and the NPU's read-ahead dropped.
   revises what the proposal asked of the 1.0%, asks that the 2.0% on the
   largest error be restated, and asks that the 99.5% be set after the frozen
   classifier has been through the model.
+- *And §10.5 of it, the same day*
+  ([kubeworkz/grxgpu#10](https://github.com/kubeworkz/grxgpu/pull/10)): the
+  range that clips nothing, run. It withdraws what §10.3 first proposed for the
+  1.0%, a bound in steps of the declared output format, since a bound in steps
+  or as a share of full scale is met by declaring a wider range. It asks
+  instead that the manifest fix the range by rule, as the smallest step that
+  holds the reference and no wider, and that the bound then be stated against
+  the reference.
 
 **The demonstration's last layer, on a stand-in (2026-10-13).**
 [`pta_board_chain.py`](pta_board_chain.py) holds what grx930's harness ran (its
@@ -1184,7 +1204,8 @@ the converter's full scale on the test set, to 1.33 of it at the most, and with
 no noise at all their largest error is 2.2 to 24.1% of the largest the
 reference is. Where no sum is past the range the format alone has 0.40 to
 0.67%. That rule was written for the class, which a clipped sum seldom moves. A
-range that clips nothing, and the larger step it needs, was not run.
+range that clips nothing, and the larger step it needs, ~~was not run~~ *was
+run the same day: the block after this one.*
 
 **The class is at the gate on one data set of three.** The demonstration holds
 the final class to its declared reference's, on 99.5% of 1,000 vectors. As
@@ -1210,6 +1231,92 @@ has no light. **Int8 weights**: these are 6 bits. **A ruling on full scale**,
 which is grxgpu's. And four of the twelve predictions written before it were
 right as written: the ones that were wrong put the largest error too low and
 Fashion-MNIST's class too high. No decision of this plan is changed by it.
+
+**The same layer, with a range that clips nothing (2026-10-13).**
+[`pta_board_range.py`](pta_board_range.py) holds what grx930's harness ran (its
+design note §5, "The first board's last layer, with a range that clips
+nothing"). The block before this one found the largest error decided, in five
+networks of thirty, by the converter's range: the harness sets a range on a
+thousand training images, to pass all but one sum in ten thousand, which is a
+rule for the class. Here the last layer's range is fitted to its declared
+reference on the images that are run: the smallest step at which the largest
+the reference is, is within the converter's 127 codes. And again with a bit
+spare, within 63. The same networks, tile and draws, **measured in a model**.
+
+**What a range costs, as it is modelled.** B14's noise is in LSB of the
+converter. A converter's range is hardware, and a sum is brought inside it by
+turning the light or the gain down, so a fitted converter's noise is in its own
+LSB. With a step twice as large the rounding and the receiver's noise are twice
+as large in a sum's own units and the shot noise root two times; the
+programming error and the crosstalk are what they were. A converter with a bit
+more at the step it had is the other way to buy range. That is the interface
+chip's to price, and is not modelled here.
+
+| As budgeted, 10,000 images, the reference networks | MNIST | Fashion-MNIST | MNIST, inverted |
+|---|---|---|---|
+| Networks of five whose step grows, fitted | 1 | 2 | 0 |
+| The most sums past the range in a run, of 160,000: training's range | 27 | 161 | 0 |
+| fitted | 0 | 0 | 0 |
+| Largest error, the most in any run, % of the largest the reference is: training's | 8.97 | 24.05 | 8.59 |
+| fitted | 8.97 | 8.95 | 8.59 |
+| a bit spare | 12.70 | 11.84 | 11.40 |
+| rms error, % of the reference's rms: training's | 4.46 | 4.67 | 4.18 |
+| fitted | 4.64 | 5.05 | 4.18 |
+| a bit spare | 5.75 | 6.75 | 5.23 |
+| rms error, % of the converter's full scale: training's | 1.44 | 1.13 | 1.26 |
+| fitted | 1.32 | 0.91 | 1.26 |
+| a bit spare | 0.81 | 0.61 | 0.79 |
+| The declared reference's class, %: training's | 99.59 | 96.78 | 99.23 |
+| fitted | 99.55 | 96.20 | 99.23 |
+| a bit spare | 99.26 | 93.20 | 98.83 |
+| Points of accuracy fitting adds | 0.02 ± 0.02 | 0.12 ± 0.07 | 0.00 ± 0.00 |
+| and a bit spare, over fitted | 0.10 ± 0.04 | **0.94 ± 0.12** | **0.17 ± 0.02** |
+
+**Fitted, nothing is clipped.** No sum is past the range in any of the 600
+fitted runs, with the noise or without it, where 70 of the same 600 had one.
+Fitting moves the step of 5 networks of 30 on 10,000 images and of 2 on the
+first thousand, by a bit each, and makes none smaller. The format alone is then
+0.40 to 0.77% off at the most, which is half a step, and within the
+demonstration's 2.0% in all 300 of its runs.
+
+**It does not bring the tile as budgeted within 2.0%.** Its largest error is
+then the noise's alone: 7.2 to 8.4% of the largest the reference is in a set's
+mean, 9.7% at the most where it was 24.1%, and 6.1% at the least. The tail
+argument of the block before stands by itself.
+
+**Where it is needed it costs a fifth more error.** A network whose step grew
+by a bit has 1.20 to 1.24 times the rms error it had, in the sum's own units.
+The reference networks give their declared reference's class on 99.55, 96.20
+and 99.23% of 10,000 images, where they gave it on 99.59, 96.78 and 99.23%. On
+the first thousand, where one reference network moves and that on
+Fashion-MNIST, it is 99.49, 96.60 and 99.10% with 13, 0 and 1 runs of 25 at
+99.5%, as it was on MNIST and on the inverted set.
+
+**A bit to spare costs a quarter more again, and every network pays it.** 1.21
+to 1.38 times the fitted rms error, 1.28 in the mean of the thirty. The class
+falls to 99.26, 93.20 and 98.83%, and to 3, 0 and 0 runs at 99.5% on the first
+thousand. In this plan's own unit it is 0.10 ± 0.04, 0.94 ± 0.12 and 0.17 ±
+0.02 of a point over fitted, clear on Fashion-MNIST and on the inverted set.
+Headroom is not free, and a format that only rounds twice as coarsely already
+moves the class: 99.59, 95.31 and 99.43% for the format alone.
+
+**And a wider range reads better as a share of full scale.** In steps of the
+converter each row has, the error is 1.43 to 1.83 with training's range, 1.15
+to 1.67 fitted and 0.77 to 1.03 with a bit spare. Of the 150 runs as budgeted,
+20, 45 and 150 are within 1.0% of the converter's full scale, and none is
+within 1.0% of the reference's rms at any of the three. So a bound in steps or
+of full scale is met by declaring a larger full scale, while the tile gets
+worse. The proposal to grxgpu had asked for a bound in steps. That is withdrawn
+there, and replaced: fix the range by rule, as the smallest step that holds the
+reference, and state the bound against the reference.
+
+What it is not. Everything the block before says of itself. **A range a board
+could set without its golden manifest**: this one is fitted to the very images
+it is then run on. **A converter with more bits.** **A remedy for the largest
+error**, which is the noise's and is where it was. And four of the nine
+predictions written before it were right as written: the cost of a bit was put
+at 1.3 to 1.5 times and is 1.2, and what a bit spare does to the class and to
+the accuracy was put too low. No decision of this plan is changed by it.
 
 ### 4.3 To the PTA chiplet: EIC requirements
 
@@ -4551,6 +4658,12 @@ and 99.10% of a thousand images. That is a classifier of ours on three data
 sets, in a model, and it is put to grxgpu as what its thresholds would be set
 against. It settles none of the three things above, and B5 and B10 to B17
 stand.
+
+*And its range fitted, the same day* (§4.2). With the last converter's range
+fitted to the declared reference no sum is clipped, at a fifth more rms error
+for the networks it moves; a bit of range to spare costs every network a
+quarter more again. B14's converter stands at 8 bits, and what its range is set
+from on the first board is the demonstration's to say.
 
 ---
 
