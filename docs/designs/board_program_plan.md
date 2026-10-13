@@ -180,6 +180,22 @@ settled as B1, B3, B4, B6, B7 and B9 is now the board after it, rev A. B10 to
 B17, which are the PTA's own, stand for both. What the two sets of documents
 have to reconcile was put to the grxgpu team as a proposal the same day
 (§4.2).
+*What the tile does on that demonstration's terms was then put to a stand-in*
+(§4.2; 2026-10-13). grx930's harness can now run a network's first layers on
+the host, exactly, and its last on the tile, and measure that layer against a
+reference in its declared format, which is what the demonstration holds the PTA
+to. A stand-in for its classifier, ours and not grxgpu's, was trained on this
+plan's three data sets pooled to 8 × 8. **As budgeted the tile is a step and a
+half of its converter off its declared format**: 4.2 to 4.8% of the reference's
+rms and 1.3 to 1.7% of the largest the reference is, where the demonstration
+asks 1.0% of something it does not name. Its largest error is within the
+demonstration's 2.0% in no run of 300, and for an analog engine cannot be at
+twice an rms bound: the largest of 16,000 outputs with noise on them sits four
+and a half rms out. It gives its declared reference's class on 99.49, 96.85 and
+99.10% of a thousand images, where the demonstration asks 99.5%: at the gate on
+MNIST, where 13 runs of 25 pass, and under it on the other two. No decision is
+changed by it. What it asks of the demonstration's thresholds is put to grxgpu
+(§4.2).
 X2 has made its predictions (§3.3), X1 its budget (§4.3), and P0, X3 and X4
 are drafted as [`board_icd.md`](board_icd.md),
 [`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) and
@@ -1108,6 +1124,92 @@ layer mis-sized, and the NPU's read-ahead dropped.
   layer; and which bus reaches the PTA module from the GRX930. It says of
   the two proposals above that they describe rev A, that nothing in them is
   needed for the first board, and that nothing in them is withdrawn.
+- *Added to it, 2026-10-13:* §10 of the same proposal
+  ([kubeworkz/grxgpu#9](https://github.com/kubeworkz/grxgpu/pull/9)), a
+  stand-in for the demo's classifier with its last layer on the tile, and what
+  that says of Gate F's three thresholds. The block after this list has it. It
+  revises what the proposal asked of the 1.0%, asks that the 2.0% on the
+  largest error be restated, and asks that the 99.5% be set after the frozen
+  classifier has been through the model.
+
+**The demonstration's last layer, on a stand-in (2026-10-13).**
+[`pta_board_chain.py`](pta_board_chain.py) holds what grx930's harness ran (its
+design note §5, "The first board's last layer"). It is **measured in a model**,
+on a classifier that is ours and not grxgpu's: the demonstration's shape,
+64-64-64-16, trained on this plan's three data sets with each image pooled from
+28 × 28 to 8 × 8. The first two layers run on the host, exactly, as a digital
+engine has them. The last, 64 inputs to 16 outputs, runs on the working tile at
+version 2, one launch a vector. The reference it is held to is in its declared
+format: the exact product of the activations at the tile's 6 bits and the
+weights as the network has them. Five networks a kind and five draws, on the
+test set's 10,000 images and on its first thousand, which is the size of the
+demonstration's acceptance set.
+
+| As budgeted, the first thousand images, the reference networks | MNIST | Fashion-MNIST | MNIST, inverted | The demonstration asks |
+|---|---|---|---|---|
+| rms error, % of the reference's rms | 4.52 | 4.67 | 4.24 | 1.0%, of what it does not say |
+| % of the largest the reference is | 1.72 | 1.42 | 1.54 |  |
+| % of the converter's full scale, 127 steps | 1.40 | 1.12 | 1.22 |  |
+| in steps of the 8-bit converter | 1.78 | 1.42 | 1.55 |  |
+| Largest error, % of the largest the reference is | 7.69 | 7.53 | 7.16 | 2.0% |
+| % of the converter's full scale | 6.24 | 5.96 | 5.67 |  |
+| in the run's own rms errors | 4.5 | 5.3 | 4.6 |  |
+| The class the declared reference gives, % of the images | 99.49 | 96.85 | 99.10 | 99.5% |
+| runs of 25 at 99.5% or more | 13 | 0 | 1 |  |
+| The same class with the format alone, % | 99.76 | 98.58 | 99.64 |  |
+| The class the host gives, % | 99.34 | 96.46 | 98.79 |  |
+
+**A step and a half of the converter.** As budgeted the last layer's rms error
+against its declared format is 1.43 to 1.83 steps of its 8-bit converter over
+both kinds of network, and 1.43 to 1.84 at the end of B15's cycle. The format
+alone is off by 0.29 of a step, which is the converter's rounding.
+
+**The 1.0% is passed or failed by what it is divided by.** On 10,000 images
+that rms is 4.2 to 4.8% of the reference's rms, 1.3 to 1.7% of the largest the
+reference is, 1.1 to 1.4% of the converter's full scale and 0.56 to 0.72% of
+its whole span. Of the 150 runs on the first thousand images, 0, 0, 25 and 150
+are within 1.0%.
+
+**The 2.0% on the largest error is met by no run, on any of them.** Its mean is
+7.2 to 8.4% of the largest the reference is on the first thousand images, which
+is 4.5 to 5.3 of the row's own rms errors. That is where a tail sits: the
+largest of 16,000 figures with Gaussian noise on them is about 4.4 rms out. A
+bound on the largest at twice the bound on the rms is one a digital engine
+meets and noise does not.
+
+**And a converter's range decides the rest.** grx930's harness sets a
+converter's range on a thousand training images, to pass all but one sum in ten
+thousand. 5 of the 30 networks then have a declared reference that reaches past
+the converter's full scale on the test set, to 1.33 of it at the most, and with
+no noise at all their largest error is 2.2 to 24.1% of the largest the
+reference is. Where no sum is past the range the format alone has 0.40 to
+0.67%. That rule was written for the class, which a clipped sum seldom moves. A
+range that clips nothing, and the larger step it needs, was not run.
+
+**The class is at the gate on one data set of three.** The demonstration holds
+the final class to its declared reference's, on 99.5% of 1,000 vectors. As
+budgeted the reference networks give that class on 99.49, 96.85 and 99.10% of
+the first thousand images, and 13, 0 and 1 runs of 25 are at 99.5% or more. On
+10,000 images it is 99.59, 96.78 and 99.23%. The format alone, which is a tile
+with no noise that rounds to its converter, has 99.76, 98.58 and 99.64% on the
+first thousand: it is under 99.5% on Fashion-MNIST by itself. The networks
+trained before B17 give their declared reference's class less often than B17's
+do, by 0.18, 0.86 and 0.38 of a point on 10,000 images, on the same error.
+
+**In this plan's own unit it is small.** Over the format alone the tile as
+budgeted loses the reference networks 0.03 ± 0.02, 0.17 ± 0.04 and 0.02 ± 0.03
+of a point, clear on Fashion-MNIST alone, and the end of a cycle adds 0.01 ±
+0.02, 0.02 ± 0.06 and 0.01 ± 0.02, clear on none. Against their host they lose
+0.12, 0.35 and 0.19, of which the format alone is 0.09, 0.18 and 0.18.
+
+What it is not. **grxgpu's classifier**, its data or its thresholds: every
+figure moves with the network, as the three columns show. **The chain**: the
+NPU and the G100 are taken as exact. **A lit tile**: B16's source rows add to
+all of it, since the harness lights whole networks and a layer the host runs
+has no light. **Int8 weights**: these are 6 bits. **A ruling on full scale**,
+which is grxgpu's. And four of the twelve predictions written before it were
+right as written: the ones that were wrong put the largest error too low and
+Fashion-MNIST's class too high. No decision of this plan is changed by it.
 
 ### 4.3 To the PTA chiplet: EIC requirements
 
@@ -4441,6 +4543,14 @@ stand-in may claim. The demo holds the PTA to a raw output error and a class
 agreement, where this plan budgets it in points of accuracy lost. And the
 demo counts calibration in a cold start, where B15 has it every six minutes.
 *Needed by:* P2, S1, S4 and the ICD.
+
+*A stand-in was run, 2026-10-13* (§4.2). On the demonstration's terms the
+working tile at B14's version 2 is 1.42 to 1.78 steps of its converter off its
+declared format, rms, and gives its declared reference's class on 99.49, 96.85
+and 99.10% of a thousand images. That is a classifier of ours on three data
+sets, in a model, and it is put to grxgpu as what its thresholds would be set
+against. It settles none of the three things above, and B5 and B10 to B17
+stand.
 
 ---
 
