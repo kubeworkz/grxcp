@@ -237,6 +237,23 @@ them raised. What that leaves is the same in every shot, and the source by
 itself is further off than what it adds to the tile. No decision is changed by
 it. B16's rows stand, and what keeps a weight clear of its rail is still not
 chosen (§7, B16).
+*And row by row, the same day* (§4.2). Four runs had moved that layer's error
+by a quarter at the most and none had said what it is made of. With no source,
+of B14's four rows **the crosstalk and the shot noise are 89 to 93% of the
+squared error**: alone over the format they add 3.45, 3.26 and 3.01 and 2.56,
+2.99 and 2.61% of the reference's rms, where the receiver's noise and the
+programming error add 0.61, 0.89 and 0.66 and 0.61, 0.49 and 0.67. The rows add
+in squares. **But the class is the shot noise's.** Left out of the tile it
+gives the declared reference's class on 0.15, 1.02 and 0.29 of a point more
+images, and the crosstalk left out on 0.01, 0.03 and 0.05: most of the
+crosstalk is a gain on every output, +0.0246, +0.0244 and +0.0221, and a class
+does not see a gain. B16's source, read and corrected on the weights, takes
+gain off, −0.0052, −0.0218 and −0.0230. That is what the run before could not
+name, and on two of three sets the lit tile is nearer its reference with the
+crosstalk than without. And the format alone, an 8-bit converter with no row of
+the budget, is already 0.71, 1.04 and 0.76% of the reference's rms off, where
+the demonstration asks for 1.0%. No decision is changed by it, and one question
+is opened (§8, question 10).
 X2 has made its predictions (§3.3), X1 its budget (§4.3), and P0, X3 and X4
 are drafted as [`board_icd.md`](board_icd.md),
 [`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) and
@@ -1198,6 +1215,13 @@ layer mis-sized, and the NPU's read-ahead dropped.
   the demonstration to set Gate F against, which were a tile's with no source,
   and tells it that part of the PTA's error is fixed between calibrations and
   will not average away.
+- *And §10.8 of it, the same day*
+  ([kubeworkz/grxgpu#16](https://github.com/kubeworkz/grxgpu/pull/16)): what
+  the PTA's error at that layer is made of. It tells the demonstration that a
+  1.0% bound over the reference's rms is at an 8-bit converter's own rounding,
+  that two of the PTA's errors partly cancel and a gate should not pass on
+  that, and it asks whether the declared reference may carry one output scale
+  for the PTA.
 
 **The demonstration's last layer, on a stand-in (2026-10-13).**
 [`pta_board_chain.py`](pta_board_chain.py) holds what grx930's harness ran (its
@@ -1542,6 +1566,7 @@ nearer its reference than the tile with no source: 4.70% against 4.81%. What
 the rail leaves comes out the same way in every shot, and it meets something in
 the tile that comes out the other way. grx930's note has a look at one network
 that points at the crosstalk; it is one network, and is not in this model.
+*All thirty were run the same day, and are in the block after this one.*
 
 **The largest error grows more than the rms does**: 9.4 to 14.9% of the largest
 the reference is in a set's mean, where it was 7.2 to 11.5%, and 19.5% at the
@@ -1556,6 +1581,108 @@ remedy.** And two of the eleven predictions written before it were right as
 written. Most of the rest put the source's cost too high, the rail's share of
 the weights was put under 1% and is 5%, and the source's share was expected to
 add in squares. No decision of this plan is changed by it.
+
+**The same layer, its budget a row at a time (2026-10-13).**
+[`pta_board_budget.py`](pta_board_budget.py) holds what grx930's harness ran
+(its design note §5, "The first board's last layer, its budget a row at a
+time"). The four blocks before this one give that layer's error as one figure.
+Here each of B14's four rows is run alone over the format and left out of the
+tile as budgeted, and the shot noise and the crosstalk are left out together;
+and all of it again with B16's source lit, read and corrected on the weights.
+The same networks, tile and draws, 10,000 images, **measured in a model**. The
+harness was not changed to run it.
+
+**The probe's gain**, which the files before this one did not hold. The
+harness's probe measures a run's error against the host's own network and fits
+a gain to it: the slope of the error on the outputs themselves, with each
+image's common shift taken out first. A positive gain is a last layer whose
+every output is that fraction too large. A class does not move with a shift or
+with a gain. It is against the host's network and not against the declared
+format, so a row's gain is read against the format alone's.
+
+| No source unless said, 10,000 images, the reference networks | MNIST | Fashion-MNIST | MNIST, inverted |
+|---|---|---|---|
+| rms error against the declared format, % of the reference's rms: the format alone | 0.71 | 1.04 | 0.76 |
+| the tile as budgeted | 4.46 | 4.67 | 4.18 |
+| What a row adds alone, squares for squares: the crosstalk, 2% | 3.45 | 3.26 | 3.01 |
+| the shot noise, 30 photons an LSB | 2.56 | 2.99 | 2.61 |
+| the receiver's noise, 0.25 LSB | 0.61 | 0.89 | 0.66 |
+| the programming error, 1 LSB of an 8-bit weight | 0.61 | 0.49 | 0.67 |
+| The tile less the crosstalk, rms | 2.80 | 3.30 | 2.88 |
+| less the shot noise | 3.63 | 3.57 | 3.24 |
+| less both | 1.12 | 1.44 | 1.20 |
+| The declared reference's class, %: the tile as budgeted | 99.59 | 96.78 | 99.23 |
+| less the crosstalk | 99.60 | 96.81 | 99.28 |
+| less the shot noise | 99.74 | 97.80 | 99.52 |
+| The crosstalk's gain on the outputs | +0.0246 | +0.0244 | +0.0221 |
+| The source's gain, lit and read | −0.0052 | −0.0218 | −0.0230 |
+| What the source adds, squares for squares: over a row with no crosstalk | 4.13 | 5.10 | 5.36 |
+| over a row with it | 2.65 | 2.73 | 3.29 |
+| Lit, rms: the tile as budgeted | 5.18 | 5.34 | 5.27 |
+| the tile less the crosstalk | 4.98 | 5.97 | 6.02 |
+
+**The crosstalk and the shot noise are nine tenths of it, and the rows add.**
+Alone over the format the crosstalk adds 3.45, 3.26 and 3.01% of the
+reference's rms in squares and the shot noise 2.56, 2.99 and 2.61. The
+crosstalk is the largest of the four on every set and kind and the shot noise
+the second. The receiver's noise and the programming error are 4 to 5% of the
+squared error between them. With no source the root of the five's squares is
+0.994 to 0.995 of the tile as budgeted's, and a row left out takes off what it
+adds alone.
+
+**At the demonstration's 1.0%, the converter's own rounding is at the bar.**
+The format alone is 0.71, 1.04 and 0.76% of the reference's rms off, and with
+the two large rows both out the tile is 1.12, 1.44 and 1.20%: no run of 150 is
+within 1.0%. Over the largest the reference is, which the demonstration's word
+could also mean, the tile as budgeted is 1.57, 1.27 and 1.48%, and less the
+crosstalk 0.98, 0.90 and 1.02%, with 80 of 150 runs within. Its 2.0% on the
+largest error is met by no run with either large row in it: in a run with no
+sum past the range the shot noise alone has 6.2% at the most and the crosstalk
+alone 4.6.
+
+**The class is the shot noise's.** Leaving the shot noise out gives the
+reference networks their declared reference's class on 0.15 ± 0.02, 1.02 ± 0.08
+and 0.29 ± 0.01 of a point more of the images, clear on all three sets. Leaving
+the crosstalk out gives it on 0.01 ± 0.01, 0.03 ± 0.07 and 0.05 ± 0.02, clear
+on one. Of 25 runs 23, 0 and 0 are at 99.5% as budgeted and 25, 0 and 14
+without the shot noise.
+
+**Because most of the crosstalk is a gain.** Every row with the crosstalk in it
+and no source has a gain +0.0220 to +0.0281 above the format alone's, and no
+row without it is off the format's by more than 0.0005 in any run. In the
+tile's model a row's weight is its own and 5/256 of each neighbour's, so a
+column's error is its own weights times the neighbours' activations. The last
+layer's activations are none below nought and share a level, and the error
+comes out as 0.56 to 0.72 of the sum itself times twice that fraction. With the
+shift and the gain out the crosstalk adds 1.82, 1.38 and 1.59, where against
+the declared format it adds 3.45, 3.26 and 3.01. The shot noise is no gain at
+all.
+
+**And the source takes gain off, which is what the block before could not
+name.** The format alone, lit, has a gain −0.0052, −0.0218 and −0.0230 from the
+format alone's, below nought in 134 of 150 runs. It goes with the share of the
+weights the rail held back, r = −0.57: a weight raised for a dim line and held
+at the rail is a weight too small. The two gains add, to 0.0015. So the source
+adds 4.13, 5.10 and 5.36 over any row with no crosstalk in it and 2.65, 2.73
+and 3.29 over any row with it, and on Fashion-MNIST and on the inverted set the
+lit tile is nearer its reference with the crosstalk than without: 5.34 against
+5.97, and 5.27 against 6.02. **It is two errors of opposite sign and not a
+remedy.** With the shift and the gain out the lit tile is 5.35, 5.22 and 5.24%
+off with the crosstalk and 4.77, 4.88 and 4.96% without, the worse with it
+everywhere.
+
+What it is not. Everything the four blocks before say of themselves. **A
+device's crosstalk**: the model's is the same fraction of each neighbour in
+every column, and a chip's need not come out as a gain. **A gain against the
+declared format**, which is what the demonstration compares: the probe's is
+against the host's network. **A tile with its gain calibrated out**: none was
+run, and what is left against the host's network is only an estimate of it. **A
+remedy** for the crosstalk, the shot noise or the rail. And five of the ten
+predictions written before it were right as written. The receiver's noise and
+the programming error were put in bands Fashion-MNIST is outside of, the
+largest error's means were put too low where sums are past the range, and how
+much less a source adds over the crosstalk was put at 0.7 to 1.5 and is over 2
+on two sets. No decision of this plan is changed by it.
 
 ### 4.3 To the PTA chiplet: EIC requirements
 
@@ -4243,6 +4370,16 @@ nothing is the fitted one, at the cost §4.2 has. Whether the first board's
 range is fitted is not settled by this, and is the demonstration's to say
 (B18).
 
+*Its rows at the first board's gate, 2026-10-13* (§4.2, "its budget a row at a
+time"). Held to a raw output, version 2's rows are not equal. The crosstalk at
+2% and the shot noise at 30 photons an LSB are 89 to 93% of the last layer's
+squared error; the receiver's 0.25 LSB and the programming error's 1 LSB are 4
+to 5%. Held to a class, it is the shot noise that costs: the crosstalk is
+mostly a gain. **No row is changed by it.** This plan's own test of version 2
+is in points of accuracy, which leaving the crosstalk out of the tile moves by
+0.00 ± 0.01, 0.04 ± 0.04 and −0.01 ± 0.02 for the reference networks, clear on
+none, and B14 was set on that.
+
 **B15 — How often version 2 is calibrated: every six minutes.** *Settled
 2026-10-06.*
 
@@ -4732,6 +4869,15 @@ squares, where the second adds 1.74, 1.60 and 1.98 and the first 1.00, 1.00 and
 1.00. **No row is changed by it.** The three ways above are still the ways in
 reach, and still not run.
 
+*And part of what the rail costs is a gain, the same day* (§4.2, "its budget a
+row at a time"). The source read and corrected on the weights leaves the last
+layer's outputs −0.0052, −0.0218 and −0.0230 off in gain, by more where more
+weights are at the rail. Against a raw output that is error, and it happens to
+meet the crosstalk's gain the other way. With a shift and a gain taken out the
+source still adds 3.35, 3.23 and 3.66% of the reference's rms to the format for
+the reference networks, where the shot noise adds 2.55, 2.98 and 2.59. **No row
+is changed by it**, and the three ways above are still not run.
+
 **What is still not known.** How fast a comb's lines move, which is what says
 how often they have to be read: at each calibration is where the read was
 put, and nothing was measured for it. Whether a comb as made is inside 20%.
@@ -4941,6 +5087,14 @@ ninth is open (§8, question 9).~~ *Settled the same day: it is not asked for
 4.18%, and gives its declared reference's class on 99.33, 96.41 and 98.66% of a
 thousand images. Those are the figures the demonstration's thresholds are now
 put against. It settles none of the three things above.
+
+*And row by row, the same day* (§4.2). The demonstration's 1.0% on the rms,
+read over the reference's rms, is at the 8-bit converter's own rounding: 0.71,
+1.04 and 0.76% with no row of B14's budget, and 1.12, 1.44 and 1.20% with the
+two large rows out. Read over the largest the reference is, the tile as
+budgeted is 1.57, 1.27 and 1.48%. Which it is has been asked of the
+demonstration, with whether its reference may carry one output scale for the
+PTA (§4.2's proposal, §10.8). It settles none of the three things above.
 
 ---
 
@@ -5795,6 +5949,20 @@ put against. It settles none of the three things above.
    Neither brings the largest error within the demonstration's 2.0%. *Needs:*
    the receiver's linear range, from the interface chip. Until it is answered
    B14 stands at 8 bits.
+
+10. **Is the last layer's gain calibrated, and against what?** *Opened
+    2026-10-13* (§4.2, [`pta_board_budget.py`](pta_board_budget.py)). On the
+    first board's last layer, in a model, most of the crosstalk's error is a
+    gain on every output, +0.0220 to +0.0281, and B16's source takes 0.0052 to
+    0.0232 off. A class sees neither, and this plan's budget is in points of
+    accuracy. The demonstration's bounds on a raw output see both. One constant
+    would take a gain out: on the weights as they are written, on the
+    converter's codes, or in the scale the declared reference is given. None
+    was run, and the gain here was fitted against the host's network and not
+    against the declared format. *Needs:* from the demonstration, whether its
+    reference may carry an output scale (§4.2's proposal, §10.8); from grx930,
+    a run with the gain fitted against the declared format and taken out. Until
+    it is answered nothing is calibrated for gain, and B15 is what it was.
 
 ---
 
