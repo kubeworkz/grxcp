@@ -10,8 +10,9 @@
 
 **Status: PLAN, drafted 2026-09-21. All seven decisions of §2 are settled, each
 as recommended: B1 and B3 that day, and B2, B4, B5, B6 and B7 on 2026-09-22.
-Eleven more were raised and settled later and are in §7, the last of them
-B18 on 2026-10-11, at the end of this status: B8, B9, and on
+Twelve more were raised and settled later and are in §7, the last of them
+B19 on 2026-10-13 and B18 on 2026-10-11 before it, both at the end of this
+status: B8, B9, and on
 2026-10-05 B10, the chiplet's working geometry, B11, its working shot rate,
 1 GS/s, B12, its topology, a ring bank lit by a comb, and B13, how it signs a
 weight, a balanced pair of photodiodes; and on 2026-10-06 B14, the interface
@@ -254,6 +255,16 @@ crosstalk than without. And the format alone, an 8-bit converter with no row of
 the budget, is already 0.71, 1.04 and 0.76% of the reference's rms off, where
 the demonstration asks for 1.0%. No decision is changed by it, and one question
 is opened (§8, question 10).
+**On 2026-10-13 the first board's gate was given its reading and its date**
+(§7, B19). The demonstration's side answered the note of §4.2 with a
+recommendation, the freeze was given a named owner, Gridworkz, and the owner
+ruled the same day, as this plan recommended, and set a date. The last layer's
+rms error is read over the reference's rms on the frozen thousand vectors, one
+shot a vector. The demonstration's 1.0% is replaced by a band, set after the
+frozen classifier has been through the model: read that way the 8-bit converter
+alone is 0.74, 1.02 and 0.79% off. grx930's harness trains the last layer.
+Whether the reference carries an output scale waits on a run (§8, question 10).
+And the workload and the thresholds are frozen on 2026-11-25.
 X2 has made its predictions (§3.3), X1 its budget (§4.3), and P0, X3 and X4
 are drafted as [`board_icd.md`](board_icd.md),
 [`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) and
@@ -1222,11 +1233,11 @@ layer mis-sized, and the NPU's read-ahead dropped.
   that two of the PTA's errors partly cancel and a gate should not pass on
   that, and it asks whether the declared reference may carry one output scale
   for the PTA.
-- *And §10.9 of it, the same day*
+- *And §10.9 and §10.10 of it, the same day*
   ([kubeworkz/grxgpu#17](https://github.com/kubeworkz/grxgpu/pull/17)): the
-  reply the demonstration's side gave to the note, which recommends the rms
-  over the reference's rms and one shot a vector and rules nothing, and the
-  freeze's named owner.
+  reply the demonstration's side gave to the note, the freeze's named owner,
+  and what the owner then ruled (§7, B19). Of the proposal's five rulings the
+  third and the fourth are made by it.
 
 **The demonstration's last layer, on a stand-in (2026-10-13).**
 [`pta_board_chain.py`](pta_board_chain.py) holds what grx930's harness ran (its
@@ -5105,14 +5116,59 @@ PTA (§4.2's proposal, §10.8). It settles none of the three things above.
 It recommends, and does not rule: the rms error over the reference's rms on the
 frozen thousand vectors, one shot a vector, and a last layer of 6-bit
 activations and 6-bit weights trained for the tile behind the 8-bit converter,
-which is the stand-in's own format. On the first thousand images the format
-alone is 0.74, 1.02 and 0.79% of the reference's rms off, so read that way the
-1.0% is still at the converter's own rounding, and the tile as budgeted is
-4.52, 4.67 and 4.24%. **Gridworkz is the named owner of the freeze**, of the
-demonstration's workload and of its thresholds: decided 2026-10-13, with no
-date set. Still open, and the owner's to rule: the rms bound under that
-normaliser, whether the reference carries an output scale (§8, question 10),
-and who trains the last layer. None of the three things above is settled by it.
+which is the stand-in's own format. **Gridworkz is the named owner of the
+freeze**, of the demonstration's workload and of its thresholds: decided
+2026-10-13. What the reply left open went to the owner, who ruled the same day:
+B19.
+
+**B19 — How the first board's gate reads the PTA, and when it is frozen.**
+*Settled 2026-10-13.*
+
+B18 left three things with the demonstration, and one was how it holds the PTA:
+to a raw output error and a class agreement, with a normalised rms error within
+1.0% that did not say what it is normalised by. The demonstration's side
+recommended a reading (B18, at its end), the freeze was given an owner, and
+four things went to the owner with this plan's recommendation on each. The date
+was the owner's to set.
+
+*Recommended, and settled as recommended:*
+
+| | Ruled |
+|---|---|
+| The last layer's rms error | Over the reference's rms, on the frozen and ordered thousand vectors. One shot a vector, with no averaging. What moves from repeat to repeat is reported apart, and the largest error is held apart |
+| The demonstration's 1.0% | Replaced by a band, set after the frozen classifier has been through the model. This plan proposes it from that run and the owner rules it. No figure for it exists yet |
+| An output scale for the PTA in the declared reference | Not ruled. It waits on a run with the gain fitted against the declared format and taken out (§8, question 10) |
+| Who trains the last layer | grx930's harness, which trained the stand-in: for the tile, with 6-bit weights and activations behind the 8-bit converter |
+| The freeze, of the workload and of the thresholds | 2026-11-25, owned by Gridworkz |
+
+**Why the 1.0% could not stand.** Read over the reference's rms, the format
+alone is 0.74, 1.02 and 0.79% off on the first thousand images, with no row of
+B14's budget in it, and the tile as budgeted 4.52, 4.67 and 4.24% (§4.2). The
+converter alone uses 74 to 102% of it. B14 stays at 8 bits, and the bound has
+to be one an 8-bit converter can be held to.
+
+**What it costs here.** Four things, none of them done yet, and all of them
+before 2026-11-25.
+
+- **The last layer trained for the demonstration's classifier.** It waits on
+  the demonstration's data set and its first two layers. grx930's harness
+  trains a network whole, and has no way to train one layer over two it is
+  given.
+
+- **The frozen classifier through the model, and the band from it.** It waits
+  on the last layer.
+
+- **The gain fitted against the declared format and taken out** (§8, question
+  10). It is the next run, and the ruling on an output scale waits on it.
+
+- **What moves from repeat to repeat, reported apart.** The model's draws have
+  it and no table does.
+
+**What it does not settle.** The band's figures. The demonstration's 2.0% on
+the largest error and its 99.5% on the class: §4.2's proposal has what this
+plan would ask of both, and neither is ruled. And B18's other two: what stands
+in for a photonic module, and calibration counted in a cold start. B5 and B10
+to B18 stand. *Needed by:* the demonstration's freeze, and P2.
 
 ---
 
@@ -5983,8 +6039,8 @@ and who trains the last layer. None of the three things above is settled by it.
     it is answered nothing is calibrated for gain, and B15 is what it was.
 
     *The demonstration's reply of 2026-10-13 does not answer it (§4.2's
-    proposal, §10.9). The freeze's named owner, whose it is to rule, is
-    Gridworkz (B18).*
+    proposal, §10.9). The freeze's owner ruled the same day that it waits on
+    grx930's run (B19): until then the reference carries no output scale.*
 
 ---
 
