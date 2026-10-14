@@ -1222,6 +1222,11 @@ layer mis-sized, and the NPU's read-ahead dropped.
   that two of the PTA's errors partly cancel and a gate should not pass on
   that, and it asks whether the declared reference may carry one output scale
   for the PTA.
+- *And §10.9 of it, the same day*
+  ([kubeworkz/grxgpu#17](https://github.com/kubeworkz/grxgpu/pull/17)): the
+  reply the demonstration's side gave to the note, which recommends the rms
+  over the reference's rms and one shot a vector and rules nothing, and the
+  freeze's named owner.
 
 **The demonstration's last layer, on a stand-in (2026-10-13).**
 [`pta_board_chain.py`](pta_board_chain.py) holds what grx930's harness ran (its
@@ -5096,6 +5101,19 @@ budgeted is 1.57, 1.27 and 1.48%. Which it is has been asked of the
 demonstration, with whether its reference may carry one output scale for the
 PTA (§4.2's proposal, §10.8). It settles none of the three things above.
 
+*And the demonstration's side answered, the same day* (§4.2's proposal, §10.9).
+It recommends, and does not rule: the rms error over the reference's rms on the
+frozen thousand vectors, one shot a vector, and a last layer of 6-bit
+activations and 6-bit weights trained for the tile behind the 8-bit converter,
+which is the stand-in's own format. On the first thousand images the format
+alone is 0.74, 1.02 and 0.79% of the reference's rms off, so read that way the
+1.0% is still at the converter's own rounding, and the tile as budgeted is
+4.52, 4.67 and 4.24%. **Gridworkz is the named owner of the freeze**, of the
+demonstration's workload and of its thresholds: decided 2026-10-13, with no
+date set. Still open, and the owner's to rule: the rms bound under that
+normaliser, whether the reference carries an output scale (§8, question 10),
+and who trains the last layer. None of the three things above is settled by it.
+
 ---
 
 ## 8. Open questions
@@ -5963,6 +5981,10 @@ PTA (§4.2's proposal, §10.8). It settles none of the three things above.
     reference may carry an output scale (§4.2's proposal, §10.8); from grx930,
     a run with the gain fitted against the declared format and taken out. Until
     it is answered nothing is calibrated for gain, and B15 is what it was.
+
+    *The demonstration's reply of 2026-10-13 does not answer it (§4.2's
+    proposal, §10.9). The freeze's named owner, whose it is to rule, is
+    Gridworkz (B18).*
 
 ---
 
