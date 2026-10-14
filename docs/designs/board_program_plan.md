@@ -10,9 +10,9 @@
 
 **Status: PLAN, drafted 2026-09-21. All seven decisions of §2 are settled, each
 as recommended: B1 and B3 that day, and B2, B4, B5, B6 and B7 on 2026-09-22.
-Twelve more were raised and settled later and are in §7, the last of them
-B19 on 2026-10-13 and B18 on 2026-10-11 before it, both at the end of this
-status: B8, B9, and on
+Thirteen more were raised and settled later and are in §7, the last of them
+B20 on 2026-10-14, B19 on 2026-10-13 and B18 on 2026-10-11, all three at the
+end of this status: B8, B9, and on
 2026-10-05 B10, the chiplet's working geometry, B11, its working shot rate,
 1 GS/s, B12, its topology, a ring bank lit by a comb, and B13, how it signs a
 weight, a balanced pair of photodiodes; and on 2026-10-06 B14, the interface
@@ -276,6 +276,14 @@ taken gain off. It is the tile's and not the images': within 0.0016 of the
 scale the test images would fit themselves. It moves no class and brings no run
 within 1.0%. Whether the reference carries it is the owner's to rule, and this
 plan recommends that it may (B19, at its end).
+*And the canary's data set and its first two layers, the same day* (§7, B20).
+The owner ruled them as this plan recommended: MNIST, each image pooled to 8 ×
+8, from the four original files, which a fetch from PyTorch's mirror confirmed
+the same content as every run has used; FC1 and FC2 in int8, with int32 sums
+and a rescale by a power of two, as grx930's harness runs a host layer; FC2's
+output rounded half up to FC3's six bits; and all three layers trained in one
+run of grx930's harness. The acceptance thousand is the first thousand test
+images in file order, and none of them is a training or held-out vector.
 X2 has made its predictions (§3.3), X1 its budget (§4.3), and P0, X3 and X4
 are drafted as [`board_icd.md`](board_icd.md),
 [`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) and
@@ -1253,6 +1261,10 @@ layer mis-sized, and the NPU's read-ahead dropped.
   ([kubeworkz/grxgpu#18](https://github.com/kubeworkz/grxgpu/pull/18)): what
   one output scale buys at Gate F, with this plan's recommendation for the
   ruling B19 left open.
+- *And §10.12 of it, the same day*
+  ([kubeworkz/grxgpu#19](https://github.com/kubeworkz/grxgpu/pull/19)): the
+  canary's data set and its first two layers as the owner ruled them, with what
+  fills the canary manifest's fields for them.
 
 **The demonstration's last layer, on a stand-in (2026-10-13).**
 [`pta_board_chain.py`](pta_board_chain.py) holds what grx930's harness ran (its
@@ -5239,7 +5251,8 @@ before 2026-11-25.
 - **The last layer trained for the demonstration's classifier.** It waits on
   the demonstration's data set and its first two layers. grx930's harness
   trains a network whole, and has no way to train one layer over two it is
-  given.
+  given. *Both were fixed on 2026-10-14, and the harness trains all three
+  layers (B20).*
 
 - **The frozen classifier through the model, and the band from it.** It waits
   on the last layer.
@@ -5272,6 +5285,64 @@ A gain common to every output is what a calibration is for, and it does not
 move a class; lit it buys 0.34, 0.18 and 0.13 of a point, so it does not decide
 whether the board passes. The ruling is the owner's, and §4.2's proposal
 (§10.11) puts it to the demonstration's side the same way.
+
+**B20 — The first board's canary: its data set and its first two layers.**
+*Settled 2026-10-14.*
+
+B19 left the canary's last layer to grx930's harness to train, and two things
+to fix before it: the canary's data set and its first two layers. The
+demonstration had fixed the canary's shape and formats: 64 signed int8 inputs,
+FC1 64 → 64 in int8 on the GRX930 NPU, FC2 64 → 64 in int8 where the G100 has
+it, FC3 64 → 16 on the PTA at six bits, and 16 outputs. It left the data set,
+the classes, the splits and the first two layers' rounding open. Three of them
+went to the owner with this plan's recommendation, and were ruled as
+recommended.
+
+*Recommended, and settled as recommended:*
+
+| | Ruled |
+|---|---|
+| The data set | MNIST, each image pooled to 8 × 8: the set every model figure of §4.2 was run on, and the one on which the stand-in gave its declared reference's class most often |
+| Who trains FC1 and FC2 | grx930's harness, with FC3, in one run: FC1 and FC2 at eight bits and with no tile noise, FC3 at six bits and trained for the tile |
+| FC2's output into FC3 | The PTA contract's quantiser, as every figure of §4.2 has it: (x + 2) >> 2, held at 31 |
+
+*What follows from them, recorded here so that the canary's manifest can be
+filled from it:*
+
+| | |
+|---|---|
+| Source | MNIST's four original files, fetched on 2026-10-14 from PyTorch's mirror, `ossci-datasets.s3.amazonaws.com/mnist/`. Their MD5s are the ones torchvision lists. Their contents' SHA-256: training images `ba891046e6505d7a…`, training labels `65a50cbbf4e906d7…`, test images `0fa7898d509279e4…`, test labels `ff7bcfd416de3373…`; the copy every run of §4.2 used is the same content. Terms: CC BY-SA 3.0, copyright Yann LeCun and Corinna Cortes, as Keras's documentation states them |
+| Preprocessing | The middle 24 × 24 of each 28 × 28 image in 3 × 3 blocks, each block's mean rounded half up, (2s + 9) div 18; then (127p + 127) div 255, from 0 to 127, stored as signed int8 |
+| Classes | The digits 0 to 9 on outputs 0 to 9; outputs 10 to 15 are trained toward no class. The class is the largest of all sixteen outputs, the lowest index on a tie |
+| Splits | Training: the first 54,000 training images. Held out: the last 6,000, never trained on; the first 1,000 of them fix an output scale if one is ruled. Acceptance: the first 1,000 test images in file order, `mnist-t10k-00000` to `mnist-t10k-00999`. The hidden layers' rescales are set on the first 10,000 training images |
+| FC1 and FC2 | Weights round(128w), held to −128 … 127. Activations 0 … 127. The sum in int32: 64 products of at most 127 × 128 come to under 2²⁰. The bias, an int32 in the sum's units, is added before the ReLU; after it the sum is shifted right by the layer's own power of two, rounded half up, and held at 127. A layer's shift is the smallest at which no more than one positive sum in 10,000, on the training images, is held |
+
+**What was checked the same day.** Written apart from the harness, the pooling
+gives the harness's own pooled files byte for byte, all 70,000 images. No
+vector of the acceptance thousand is, byte for byte, a training or held-out
+vector, and none repeats within the thousand. None is all nought, and every
+digit is there, 85 to 126 times. The thousand's inputs are 64,000 bytes with
+SHA-256 `d968e50d76c4c3bf…`, its labels `d14ba0a1a3818ede…` and its ordered ids
+`81e4e1694930066d…`: the canary's golden generation has to give the same bytes.
+In jobs of 16 the thousand is 62 full jobs and one of eight, which the
+demonstration tests apart.
+
+**What it costs here.** grx930's harness gives every layer one weight width
+today, and puts the tile's noise on every layer's sums as a network trains:
+B17's reference networks were trained that way. The canary needs a width a
+layer and the noise on the last layer alone. And a rule, written before any
+canary is trained, for which network is the canary. This plan recommends seed
+1's, with the other four seeds' reported beside it, so that no network is
+chosen on its results.
+
+**What it does not settle.** FC3's declared reference: whether it is the exact
+sum before the 8-bit converter, as every figure of §4.2 has it, or the
+converter's codes, as the canary manifest's draft words it. On the first, the
+converter's own rounding is part of what Gate F reads, 0.74% of the reference's
+rms on the stand-in's thousand; on the second it is not. That belongs to the
+canary's golden generation. The output scale (B19, at its end), the band, the
+2.0% and the 99.5% are where they were. *Needed by:* the canary's training, and
+the freeze on 2026-11-25.
 
 ---
 
