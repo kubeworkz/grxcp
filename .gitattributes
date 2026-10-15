@@ -15,3 +15,6 @@ third_party/grx930/*.h          -text
 third_party/grx930/*.txt        -text
 tests/libs/pta_gemm_golden.txt  -text
 tests/libs/pta_gemm_distribution.txt  -text
+# The first board's canary's golden bundle: generated, held to the SHA-256s in
+# its manifest and SHA256SUMS, and never edited.
+docs/designs/canary/*           -text
