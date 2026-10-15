@@ -315,6 +315,10 @@ fails closed, and names only grxgpu's review and the owner's approval.
 *And frozen, the same day* (§4.2, B23). The grxgpu team reviewed the package,
 and every check passed with no finding. The owner approved the freeze at 21:16
 UTC. The manifest is revision 1.0, frozen, and `--freeze` passes.
+*And the first board's PTA link, the same day* (B24). CXL 2.0 from the GRX930
+host, the PTA module a Type-1 device, and rev A unchanged. The interface
+document's first-board section and the host's transport for the PTA's driver
+waited on it, and can be written.
 X2 has made its predictions (§3.3), X1 its budget (§4.3), and P0, X3 and X4
 are drafted as [`board_icd.md`](board_icd.md),
 [`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) and
@@ -1313,6 +1317,9 @@ layer mis-sized, and the NPU's read-ahead dropped.
 - *And §10.17 of it, the same day*
   ([kubeworkz/grxgpu#24](https://github.com/kubeworkz/grxgpu/pull/24)): the
   canary frozen.
+- *And §10.18 of it, the same day*
+  ([kubeworkz/grxgpu#25](https://github.com/kubeworkz/grxgpu/pull/25)): the PTA
+  module's link, CXL, as the owner ruled its fifth question.
 
 **The demonstration's last layer, on a stand-in (2026-10-13).**
 [`pta_board_chain.py`](pta_board_chain.py) holds what grx930's harness ran (its
@@ -5501,6 +5508,10 @@ freeze**, of the demonstration's workload and of its thresholds: decided
 2026-10-13. What the reply left open went to the owner, who ruled the same day:
 B19.
 
+*And its PTA link, 2026-10-15* (B24): CXL 2.0, the PTA module a Type-1 device.
+S1's enumeration over CXL comes forward to the first board, and S4's transport
+and the ICD's first-board section can be written.
+
 **B19 — How the first board's gate reads the PTA, and when it is frozen.**
 *Settled 2026-10-13.*
 
@@ -5765,6 +5776,48 @@ by:* the freeze on 2026-11-25.
 *Reviewed, approved and frozen, 2026-10-15* (§4.2, "Frozen"). The grxgpu team's
 review found nothing. The owner approved at 21:16 UTC: the freeze B19 set for
 2026-11-25 at the latest was made on 2026-10-15. The manifest is revision 1.0.
+
+**B24 — The first board's PTA link: CXL 2.0, the PTA a Type-1 device.**
+*Settled 2026-10-15.*
+
+B18 left the PTA module's link from the GRX930 host unchosen, and it went to
+grxgpu as the fifth question of §4.2's proposal, which said the transport
+waited on it. The owner ruled on 2026-10-15, at 22:46 UTC:
+
+| | Ruled |
+|---|---|
+| The PTA module's link on the first board | CXL, between the GRX930 host and the PTA module. Rev A is unchanged: there the PTA is reached through the G100 over UCIe (B3, B4, B7, B9) |
+| What the PTA presents | A CXL Type-1 device: CXL.io for its configuration space, its enumeration and its register block (B7's map, reached from the host), and CXL.cache to read its operands from host memory and write its results, coherently. No CXL.mem: the PTA has no memory to expose (B9) |
+| The generation | CXL 2.0 on the PCIe 5.0 PHY, as B3 has it for rev A |
+
+This plan had recommended CXL.io alone, as the least host RTL for bring-up,
+with nothing in the canary's traffic that needs more. The owner chose Type 1,
+so that the PTA reads its operands from host memory coherently, with no flush
+before a job.
+
+**What follows.** S1's enumeration over CXL, which B18 left to rev A, comes
+forward to the first board. S4's three hooks get their transport: the register
+block over CXL.io MMIO, and the operands in host memory, which the PTA caches
+over CXL.cache. B9's exception is the first board's: the PTA's operands are the
+host's, and CXL.cache is how it reaches them. The ICD gains a first-board
+section. A stand-in, if the proposal's first question is ruled yes, is an FPGA
+module with CXL device IP, which is the side most FPGA CXL IP serves (B6).
+
+**What it costs here.** The GRX930 as a CXL 2.0 host on the first board: a root
+port, the home agent, and an L2 that answers the PTA's snoops. That is B3's
+list for rev A, now needed first. B6 found FPGA CXL IP mostly device-side, so
+the root port may be new RTL. Today's FPGA targets stop at PCIe Gen2, so the
+host needs a part with PCIe 5.0-class transceivers. A x16 link carries 64 GB/s
+a direction before protocol overhead. That is about what the tile takes at its
+working rate on the canary's shape: 64 GB/s of one-byte activation codes in and
+16 out, one vector a shot at 1 GS/s (B11). The first board's PTA runs at up to
+about its working rate, then, and no faster.
+
+**What it does not settle.** Which part hosts the GRX930 on the first board (§8
+has the CXL-capable platform open), or the lane count. The stand-in, and
+whether the register map is the PTA's discovery contract: the proposal's first
+and second questions. The G100's link on the first board. Rev A, where B3, B4,
+B7 and B9 stand. B5 and B10 to B23 stand. *Needed by:* L1, S1, S4 and the ICD.
 
 ---
 
