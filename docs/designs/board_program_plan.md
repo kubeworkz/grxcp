@@ -284,6 +284,13 @@ and a rescale by a power of two, as grx930's harness runs a host layer; FC2's
 output rounded half up to FC3's six bits; and all three layers trained in one
 run of grx930's harness. The acceptance thousand is the first thousand test
 images in file order, and none of them is a training or held-out vector.
+*And the canary trained and run, the same day* (§4.2). grx930's harness trains
+it as B20 fixed it (`train --host 2`), five networks by one recipe, seed 1's
+the canary. At the gate it is the stand-in: no difference of error from the
+stand-in's networks of the same seeds is clear in any row. The canary is 5.09%
+of the reference's rms off lit and fitted on the gate's thousand, and gives its
+declared reference's class on 99.42% of it. The recipe gives up a tenth of a
+point of accuracy on 10,000 images. The golden tensors are next.
 X2 has made its predictions (§3.3), X1 its budget (§4.3), and P0, X3 and X4
 are drafted as [`board_icd.md`](board_icd.md),
 [`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) and
@@ -1265,6 +1272,9 @@ layer mis-sized, and the NPU's read-ahead dropped.
   ([kubeworkz/grxgpu#19](https://github.com/kubeworkz/grxgpu/pull/19)): the
   canary's data set and its first two layers as the owner ruled them, with what
   fills the canary manifest's fields for them.
+- *And §10.13 of it, the same day*
+  ([kubeworkz/grxgpu#20](https://github.com/kubeworkz/grxgpu/pull/20)): the
+  canary trained, and run through the model.
 
 **The demonstration's last layer, on a stand-in (2026-10-13).**
 [`pta_board_chain.py`](pta_board_chain.py) holds what grx930's harness ran (its
@@ -1797,6 +1807,50 @@ The lit tile's scale was put at 0.97 to 0.995 and is 0.984, 1.000 and 1.003;
 Fashion-MNIST's rms over the largest the reference is, with the scale, was put
 under 1.0 and is 1.05; and the largest error was put at 0.8 to 1.0 of what it
 was and is 0.68 to 0.97. No decision of this plan is changed by it.
+
+**The canary, trained and run (2026-10-14).**
+[`pta_board_canary.py`](pta_board_canary.py) holds what grx930's harness ran
+(its design note §5, "The first board's canary"). Five networks of B20's
+recipe, seeds 1 to 5, each from its seed's 8-bit network: FC1 and FC2 the
+host's at eight bits with no noise as they train, FC3 at six bits with noise of
+a tenth of its sums' rms, eight epochs. Seed 1's is the canary, by a rule made
+before any was trained. Each was run as the block before ran the stand-in's
+reference networks: the format alone and the tile as budgeted, fitted, lit, and
+lit and fitted, on 10,000 images and the gate's thousand, five draws. 250 runs,
+**measured in a model**.
+
+| The canary, seed 1, and the five networks of its recipe (MNIST) | The canary | The five | The stand-in's five |
+|---|---|---|---|
+| Right on the host, test images, % | 96.84 | 96.97 | 97.09 |
+| rms error, % of the reference's rms: as budgeted, 10,000 images | 4.54 | 4.47 | 4.46 |
+| the gate's thousand | 4.61 | 4.53 | 4.52 |
+| lit and fitted, the gate's thousand | 5.09 | 5.34 | 5.22 |
+| with the scale, lit and fitted, the gate's thousand | 4.64 | 5.05 | 4.87 |
+| Largest error, % of the largest reference: lit and fitted, the gate's thousand | 9.33 | 10.48 | 10.43 |
+| Class the declared reference's, %: as budgeted, the gate's thousand | 99.74 | 99.56 | 99.49 |
+| lit and fitted, the gate's thousand | 99.42 | 99.39 | 99.33 |
+
+**At the gate the canary is the stand-in.** Network for network, the canary's
+five less the stand-in's of the same seeds are +0.007 ± 0.015 of the
+reference's rms as budgeted and +0.117 ± 0.048 lit and fitted on the gate's
+thousand, and no difference of rms, of rms over the largest the reference is,
+or of the largest error is clear in any of the ten rows. The scale is the
+stand-in's to 0.0019. So in every row run here the stand-in's MNIST figures at
+the gate stand for the canary's.
+
+**What the recipe gives up is a tenth of a point.** The five are 96.76 to
+97.16% right on the host, where the stand-in's were 96.87 to 97.40 by their
+training logs. On the tile on 10,000 images they are 0.10 ± 0.03 of a point
+less often right with the format alone, clear in 4 of ten rows; on the gate's
+thousand no difference of accuracy or class is clear.
+
+What it is not. Everything the blocks before say of themselves. **The frozen
+canary**: no golden tensor exists, and FC3's declared reference, the sum before
+the converter or its codes, is not settled (B20). **The NPU's or the G100's
+output**: the first two layers run on the host, exactly, at eight bits. And all
+ten predictions written before any canary network was trained were right; they
+were put beside the stand-in's figures, and the canary is the stand-in at the
+gate. No decision of this plan is changed by it.
 
 ### 4.3 To the PTA chiplet: EIC requirements
 
@@ -5343,6 +5397,14 @@ rms on the stand-in's thousand; on the second it is not. That belongs to the
 canary's golden generation. The output scale (B19, at its end), the band, the
 2.0% and the 99.5% are where they were. *Needed by:* the canary's training, and
 the freeze on 2026-11-25.
+
+*Trained and run, the same day* (§4.2, "The canary, trained and run"). grx930's
+harness gained `train --host N` and trained five networks of the recipe. Seed
+1's, the canary, is 4.61% of the reference's rms off on the gate's thousand as
+budgeted and 5.09% lit and fitted; at the gate the five are the stand-in's to
+within chance. What is left before the freeze: the golden tensors, with FC3's
+declared reference settled; the band from the frozen canary's run; and the
+output scale, the owner's (B19).
 
 ---
 
