@@ -265,6 +265,17 @@ frozen classifier has been through the model: read that way the 8-bit converter
 alone is 0.74, 1.02 and 0.79% off. grx930's harness trains the last layer.
 Whether the reference carries an output scale waits on a run (§8, question 10).
 And the workload and the thresholds are frozen on 2026-11-25.
+*And with one scale on its outputs, 2026-10-14* (§4.2). The run B19 waited on.
+grx930's harness fixes one scale for the last layer at calibration, on a
+thousand images the gate is not judged on, and gives the gate's figures again
+with the outputs times it. With no source the scale is 0.969, 0.970 and 0.973,
+the crosstalk's gain, and **it takes about half the tile's squared error**:
+from 4.46, 4.67 and 4.18 to 3.13, 3.46 and 3.14% of the reference's rms. **Lit,
+it buys 0.34, 0.18 and 0.13 of a point**, because B16's source had already
+taken gain off. It is the tile's and not the images': within 0.0016 of the
+scale the test images would fit themselves. It moves no class and brings no run
+within 1.0%. Whether the reference carries it is the owner's to rule, and this
+plan recommends that it may (B19, at its end).
 X2 has made its predictions (§3.3), X1 its budget (§4.3), and P0, X3 and X4
 are drafted as [`board_icd.md`](board_icd.md),
 [`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) and
@@ -1238,6 +1249,10 @@ layer mis-sized, and the NPU's read-ahead dropped.
   reply the demonstration's side gave to the note, the freeze's named owner,
   and what the owner then ruled (§7, B19). Of the proposal's five rulings the
   third and the fourth are made by it.
+- *And §10.11 of it, 2026-10-14*
+  ([kubeworkz/grxgpu#18](https://github.com/kubeworkz/grxgpu/pull/18)): what
+  one output scale buys at Gate F, with this plan's recommendation for the
+  ruling B19 left open.
 
 **The demonstration's last layer, on a stand-in (2026-10-13).**
 [`pta_board_chain.py`](pta_board_chain.py) holds what grx930's harness ran (its
@@ -1692,13 +1707,84 @@ device's crosstalk**: the model's is the same fraction of each neighbour in
 every column, and a chip's need not come out as a gain. **A gain against the
 declared format**, which is what the demonstration compares: the probe's is
 against the host's network. **A tile with its gain calibrated out**: none was
-run, and what is left against the host's network is only an estimate of it. **A
-remedy** for the crosstalk, the shot noise or the rail. And five of the ten
+run, and what is left against the host's network is only an estimate of it.
+*The block after this one runs it.* **A remedy** for the crosstalk, the shot
+noise or the rail. And five of the ten
 predictions written before it were right as written. The receiver's noise and
 the programming error were put in bands Fashion-MNIST is outside of, the
 largest error's means were put too low where sums are past the range, and how
 much less a source adds over the crosstalk was put at 0.7 to 1.5 and is over 2
 on two sets. No decision of this plan is changed by it.
+
+**The same layer, with one scale on its outputs (2026-10-14).**
+[`pta_board_scale.py`](pta_board_scale.py) holds what grx930's harness ran (its
+design note §5, "The first board's last layer, with one scale on its outputs").
+`eval --gatescale` runs a thousand more images through the same tile after the
+test images, the first of the 6,000 the network was not trained on, and fixes
+one scale on them: the least-squares slope of the declared reference on the
+tile's outputs, with no offset. It then gives the gate's figures again with the
+test images' outputs times it, and the scale the test images would fit
+themselves. Nine rows of the blocks before, on 10,000 images and on the gate's
+thousand, on the same networks, tile and draws: 900 runs a data set, 700 of
+them the lines the modes before wrote, up to the scale's figures. **Measured in
+a model**, with the scale applied on the host's side, exactly.
+
+| The reference networks, a mean over 25 runs | MNIST | Fashion-MNIST | MNIST, inverted |
+|---|---|---|---|
+| The scale, fixed on 1,000 held-out images: as budgeted, no source | 0.969 | 0.970 | 0.973 |
+| lit, at training's range | 0.984 | 1.000 | 1.003 |
+| rms error, % of the reference's rms, 10,000 images: as budgeted, no scale | 4.46 | 4.67 | 4.18 |
+| with the scale | 3.13 | 3.46 | 3.14 |
+| lit, no scale | 5.18 | 5.34 | 5.27 |
+| lit, with the scale | 4.84 | 5.16 | 5.15 |
+| The crosstalk alone, no scale | 3.52 | 3.42 | 3.10 |
+| with the scale | 1.65 | 1.58 | 1.55 |
+| The gate's thousand: as budgeted, no scale | 4.52 | 4.67 | 4.24 |
+| with the scale | 3.18 | 3.46 | 3.21 |
+| lit and fitted, no scale | 5.22 | 5.48 | 5.31 |
+| lit and fitted, with the scale | 4.87 | 5.30 | 5.19 |
+| rms over the largest the reference is, as budgeted, with the scale | 1.21 | 1.05 | 1.17 |
+| lit and fitted, with the scale | 1.86 | 1.61 | 1.89 |
+| The declared reference's class, %, the gate's thousand, as budgeted: no scale | 99.49 | 96.85 | 99.10 |
+| with the scale | 99.49 | 96.85 | 99.10 |
+
+**With no source it takes about half the squared error, and it is the
+crosstalk's gain.** Every row with the crosstalk in it has a scale 0.967 to
+0.974, and every row without it a scale within 0.0011 of one. As budgeted, the
+scale takes 0.43 to 0.51 of the squared error; the crosstalk alone goes from
+3.52, 3.42 and 3.10 to 1.65, 1.58 and 1.55%, and still adds 1.49, 1.19 and 1.36
+over the format alone, in squares. The scale is the gain the block before's
+probe found, read against the format alone's: one and the format's gain over
+one and the row's is the scale to 0.0089 in every run with no source.
+
+**It is the tile's, not the images'.** Fixed on a thousand other images it is
+within 0.0016 of the scale the test images would fit themselves in every run
+with no source, and 0.0041 lit, and leaves at most 0.016 of a point more than
+theirs.
+
+**Lit, it buys little.** With B16's source the scale is 0.984, 1.000 and 1.003,
+and it takes the lit tile from 5.18, 5.34 and 5.27 to 4.84, 5.16 and 5.15%,
+0.05 to 0.13 of the squared error. The source had taken gain off, as the block
+before found. Lit and fitted on the gate's thousand, from 5.22, 5.48 and 5.31
+to 4.87, 5.30 and 5.19%.
+
+**At the gate it moves the figures and not the verdict.** No run of 150 is
+within 1.0% of the reference's rms with the scale, with no source or lit. Over
+the largest the reference is, the tile with no source goes from 1.72, 1.42 and
+1.54 to 1.21, 1.05 and 1.17%, and lit and fitted from 1.99, 1.67 and 1.93 to
+1.86, 1.61 and 1.89%. With no source the largest error is 0.67 to 0.82 of what
+it was, and no run of 300 is within 2.0%. The class is the declared reference's
+as often with the scale as without, to 0.004 of a point.
+
+What it is not. Everything the five blocks before say of themselves. **A scale
+on a chip**: writing it into the weights or the converter's codes rounds, and
+is not modelled. **A scale an output**, or one with an offset. **A drifted
+tile**, or a scale fixed again in a cycle. **A ruling**: B19 left it with the
+owner. And 7 of the ten predictions written before it were right as written.
+The lit tile's scale was put at 0.97 to 0.995 and is 0.984, 1.000 and 1.003;
+Fashion-MNIST's rms over the largest the reference is, with the scale, was put
+under 1.0 and is 1.05; and the largest error was put at 0.8 to 1.0 of what it
+was and is 0.68 to 0.97. No decision of this plan is changed by it.
 
 ### 4.3 To the PTA chiplet: EIC requirements
 
@@ -5159,7 +5245,8 @@ before 2026-11-25.
   on the last layer.
 
 - **The gain fitted against the declared format and taken out** (§8, question
-  10). It is the next run, and the ruling on an output scale waits on it.
+  10). It is the next run, and the ruling on an output scale waits on it. *Run
+  on 2026-10-14; the ruling is the owner's (below).*
 
 - **What moves from repeat to repeat, reported apart.** The model's draws have
   it and no table does.
@@ -5169,6 +5256,22 @@ the largest error and its 99.5% on the class: §4.2's proposal has what this
 plan would ask of both, and neither is ruled. And B18's other two: what stands
 in for a photonic module, and calibration counted in a cold start. B5 and B10
 to B18 stand. *Needed by:* the demonstration's freeze, and P2.
+
+*And the run it waited on, 2026-10-14* (§4.2, "with one scale on its outputs").
+One scale fixed at calibration takes the tile with no source from 4.52, 4.67
+and 4.24 to 3.18, 3.46 and 3.21% of the reference's rms on the gate's thousand,
+and the lit tile, fitted, from 5.22, 5.48 and 5.31 to 4.87, 5.30 and 5.19%. It
+is the tile's: fixed on a thousand other images, it is within 0.0041 of what
+the test images' own would fit. It moves no class, and no run is within 1.0%
+with it. **This plan recommends** that the declared reference may carry one
+output scale for FC3, a single number for all its outputs, fixed once at
+calibration on a set of its own that is declared and frozen with the workload
+and is never the gate's thousand; that Gate F report its rms and its largest
+error both with it and without; and that the band be set on the figure with it.
+A gain common to every output is what a calibration is for, and it does not
+move a class; lit it buys 0.34, 0.18 and 0.13 of a point, so it does not decide
+whether the board passes. The ruling is the owner's, and §4.2's proposal
+(§10.11) puts it to the demonstration's side the same way.
 
 ---
 
@@ -6041,6 +6144,13 @@ to B18 stand. *Needed by:* the demonstration's freeze, and P2.
     *The demonstration's reply of 2026-10-13 does not answer it (§4.2's
     proposal, §10.9). The freeze's owner ruled the same day that it waits on
     grx930's run (B19): until then the reference carries no output scale.*
+
+    *Run on 2026-10-14* (§4.2, [`pta_board_scale.py`](pta_board_scale.py)): one
+    scale, fitted against the declared format at calibration and taken out. It
+    takes about half the squared error with no source and 0.05 to 0.13 of it
+    lit, and it is within 0.0041 of the scale the test images would fit
+    themselves. What is left of the question is the owner's ruling (B19, at its
+    end).
 
 ---
 
