@@ -298,6 +298,13 @@ They are in [`canary/`](canary/) with a candidate manifest, and
 [`pta_board_canary_golden.py`](pta_board_canary_golden.py) works every one out
 again apart from the harness. The canary's run against them, and the band from
 it, are next.
+*And its band, 2026-10-15* (§4.2, B22). grx930's harness ran the canary through
+the model against its converter's codes, 1,000 draws a row. A rule written
+before the run gives a band of 2.5 to 7.3% on the rms error with the scale, a
+class of 98.5% and a tail of at most 16 outputs 17 or more codes off, and the
+owner ruled them. The manifest carries them, as revision 0.2-candidate. A fixed
+band cannot tell a tile a fifth over its budget from one at it, and a band set
+per board is an open question (§8, question 11).
 X2 has made its predictions (§3.3), X1 its budget (§4.3), and P0, X3 and X4
 are drafted as [`board_icd.md`](board_icd.md),
 [`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) and
@@ -1286,6 +1293,10 @@ layer mis-sized, and the NPU's read-ahead dropped.
   ([kubeworkz/grxgpu#21](https://github.com/kubeworkz/grxgpu/pull/21)): the
   canary's golden tensors, and the owner's rulings on FC3's declared reference
   and the output scale.
+- *And §10.15 of it, 2026-10-15*
+  ([kubeworkz/grxgpu#22](https://github.com/kubeworkz/grxgpu/pull/22)): Gate
+  F's band, its class threshold and its tail rule, as the owner ruled them from
+  the canary's model run.
 
 **The demonstration's last layer, on a stand-in (2026-10-13).**
 [`pta_board_chain.py`](pta_board_chain.py) holds what grx930's harness ran (its
@@ -1929,6 +1940,67 @@ manifest records; validation reports inside the bundle, which are this plan's
 checker and its output; the NPU's and the G100's own stage outputs; and the
 canary's run through the model against these codes, from which the band is
 proposed. It records B21 and changes no other decision of this plan.
+
+**The canary's band (2026-10-15).** [`pta_board_band.py`](pta_board_band.py)
+holds what grx930's harness ran (its design note §5, "The first board's canary,
+its band"), every run's figures in
+[`pta_board_band_runs.csv.gz`](pta_board_band_runs.csv.gz), and works every
+table the harness printed out again from them. The canary, with FC3 held to its
+converter's codes (B21) and one scale fixed on the calibration set: the format
+alone, version 2's budget dark and lit, lit at 0.4 to 1.4 times every row of
+the budget, and lit on ten sources a hundred times each; 1,000 draws a row, and
+the four other networks of its recipe on 100 of the budget's two rows. 8,805
+runs, **measured in a model**. With the scale:
+
+| The canary, 1,000 draws a row | rms error with the scale, %: mean | sd | least | median | 99th percentile | most | Class with the scale, %: least | Largest error, codes: most | Refused |
+|---|---|---|---|---|---|---|---|---|---|
+| as budgeted | 3.322 | 0.020 | 3.260 | 3.321 | 3.367 | 3.385 | 99.1 | 7.79 | 0 |
+| as budgeted, lit | 5.180 | 0.533 | 4.040 | 5.129 | 6.598 | 7.212 | 98.5 | 21.91 | 0 |
+| lit, 0.4 of the budget | 2.219 | 0.156 | 1.909 | 2.195 | 2.652 | 2.881 | 99.3 | 9.27 | 0 |
+| lit, 0.6 of the budget | 3.118 | 0.271 | 2.567 | 3.084 | 3.886 | 4.257 | 99.0 | 12.99 | 0 |
+| lit, 0.8 of the budget | 4.101 | 0.399 | 3.261 | 4.058 | 5.204 | 5.686 | 98.8 | 17.29 | 0 |
+| lit, 1.2 of the budget | 6.283 | 0.680 | 4.789 | 6.223 | 8.090 | 8.788 | 98.1 | 26.34 | 0 |
+| lit, 1.4 of the budget | 7.424 | 0.829 | 5.534 | 7.370 | 9.599 | 10.408 | 97.6 | 31.13 | 20 |
+| as budgeted, lit, ten sources | 4.879 | 0.474 | 4.170 | 4.784 | 5.763 | 5.823 | 98.5 | 15.21 | 0 |
+
+**What moves is the source.** With the format alone every network is its
+reference exactly. With no source the canary is 3.32% of the reference's rms
+off, ± 0.02 from draw to draw; lit, 5.18% ± 0.53. On one source it moves 0.043
+points from repeat to repeat, where the means of ten sources are 0.497 points
+apart: a draw here is which source a board has more than it is a repeat. 20
+draws at 1.4 times the budget have a line all but dark, which the reading of
+the lines cannot correct, and are refused, as a board's calibration would
+refuse that source.
+
+**The band, by the rule written before the run** (01:13 UTC): the upper edge
+the lit row's worst draw rounded up, 7.3%; the lower edge the 0.6 row's best
+rounded down, 2.5%; the class the lit row's worst, 98.5%; and the tail the
+fewest codes at which the lit row's worst draw has at most 16 outputs off, 17,
+with 16 allowed. How often the canary's draws pass:
+
+| The canary's draws | Inside the band, % | Class, % | Tail, % | All three, % |
+|---|---|---|---|---|
+| as budgeted | 100.0 | 100.0 | 100.0 | 100.0 |
+| as budgeted, lit | 100.0 | 100.0 | 100.0 | 100.0 |
+| lit, 0.4 of the budget | 5.2 | 100.0 | 100.0 | 5.2 |
+| lit, 0.6 of the budget | 100.0 | 100.0 | 100.0 | 100.0 |
+| lit, 0.8 of the budget | 100.0 | 100.0 | 100.0 | 100.0 |
+| lit, 1.2 of the budget | 92.0 | 98.6 | 99.5 | 91.6 |
+| lit, 1.4 of the budget (20 refused) | 46.0 | 88.2 | 95.5 | 44.3 |
+| as budgeted, lit, ten sources | 100.0 | 100.0 | 100.0 | 100.0 |
+
+A tile at 0.6 to 1.0 of its budget passes on every draw; at 0.4 on 5.2%, as
+more likely a wrong measurement than so good a tile. At 1.2 times its budget it
+passes on 91.6%, and at 1.4 on 44.3%. The other four networks lit at the budget
+pass on 99 to 100% of their draws. The demonstration's 99.5% on the class would
+fail a board at its budget on most runs.
+
+What it is not. Everything the blocks before say of themselves. **A board's
+source**: B16's is drawn here, and a board's may sit anywhere in this spread or
+outside it. **A band for any network but the canary.** Of the nine predictions
+written with the rule 5 were right: the lit spread was put at the noise's and
+is the source's, the 1.2 row and the tail were put too low, and the first sweep
+stopped on its refusals before its check. It records B22 and question 11.
 
 ### 4.3 To the PTA chiplet: EIC requirements
 
@@ -5421,6 +5493,10 @@ whether the board passes. The ruling is the owner's, and §4.2's proposal
 *Ruled, 2026-10-14* (B21): as recommended, with the calibration set the first
 1,000 of the 6,000 held-out training images.
 
+*The band, ruled 2026-10-15* (B22): 2.5 to 7.3% on the figure with the scale,
+by the rule written before the canary's model run; with a class of 98.5% and a
+tail rule in place of the 2.0%.
+
 **B20 — The first board's canary: its data set and its first two layers.**
 *Settled 2026-10-14.*
 
@@ -5528,6 +5604,51 @@ repeat to repeat, reported apart (B19).
 on the largest error and its 99.5% on the class. The freeze's approval. B18's
 other two: what stands in for a photonic module, and calibration counted in a
 cold start. B5 and B10 to B20 stand. *Needed by:* the freeze on 2026-11-25.
+
+*Run, and ruled, 2026-10-15* (§4.2, "The canary's band"; B22). The manifest is
+revision 0.2-candidate, with Gate F's band, tail rule and class threshold, and
+the band's evidence.
+
+**B22 — Gate F's band, its class and its tail, for the first board's canary.**
+*Settled 2026-10-15.*
+
+B19 replaced the demonstration's 1.0% with a band set once the frozen canary
+had been through the model, and B21 made the converter's codes the reference.
+The canary was run through the model 8,805 times (§4.2). This plan wrote,
+before the run, the rule its figures come from, and recommended them; the owner
+ruled them as recommended at 15:01 UTC.
+
+*Recommended, and settled as recommended:*
+
+| | Ruled |
+|---|---|
+| Gate F's band | 2.5% to 7.3% on the per-run rms error over the reference's rms with the output scale, both edges in the band. The upper edge is the canary's worst of 1,000 draws lit at its budget, rounded up; the lower its best of 1,000 at 0.6 of its budget, rounded down |
+| The class | The scaled outputs' class, with their biases, the reference's on at least 98.5% of the 1,000 vectors, in place of the demonstration's 99.5%: the canary's worst lit draw at its budget, rounded down |
+| The tail | At most 16 of a run's 16,000 outputs 17 or more codes off with the scale, in place of the 2.0% on the largest error: the fewest codes at which the canary's worst lit draw at its budget has at most 16 off |
+| A band per board | An open question (§8, question 11), to take up when a board exists and its source has been measured, under the manifest's change control |
+
+**Why these.** They are what a rule fixed before the run gives, so no figure
+was chosen on the run. A board whose tile meets its budget passes on every one
+of the model's draws; one whose figure is under 2.5% is more likely mismeasured
+than that good; and a stuck or misprogrammed output fails the tail. The
+demonstration's 99.5% would fail a board at its budget on most runs.
+
+**What follows from them.** The canary's manifest, revision 0.2-candidate,
+carries the band, the class and the tail, and names the runs they come from;
+[`pta_board_band.py`](pta_board_band.py) holds it to them. What moves from
+repeat to repeat is reported beside them and not in them: 0.043 points on one
+source.
+
+**What it costs here.** Nothing more before the freeze. The band does not tell
+a tile a fifth over its budget from one at it: at 1.2 times the budget 91.6% of
+draws pass, because most of the spread is which source a board has. That is
+question 11.
+
+**What it does not settle.** The freeze's approval, on 2026-11-25. A board's
+source, which may sit outside the model's spread. A band for another network.
+B18's other two: what stands in for a photonic module, and calibration counted
+in a cold start. B5 and B10 to B21 stand. *Needed by:* the freeze on
+2026-11-25.
 
 ---
 
@@ -6412,6 +6533,19 @@ cold start. B5 and B10 to B20 stand. *Needed by:* the freeze on 2026-11-25.
     lit, and it is within 0.0041 of the scale the test images would fit
     themselves. What is left of the question is the owner's ruling (B19, at its
     end).
+
+11. **Can Gate F's band be set per board?** *Opened 2026-10-15* (§4.2, "The
+    canary's band"; B22). The ruled band covers every source state the model
+    draws for B16's source, so it is wide: a tile at 1.2 times its budget
+    passes on 91.6% of draws. Most of the spread is the source's: on one source
+    the canary's figure moves 0.043 points from repeat to repeat, and 0.497
+    from source to source. A board's calibration reads its own source's lines
+    (B16). A band set from that reading, around the figure the model gives for
+    that source, would have to cover the repeats' spread and the model's own
+    error, and not the sources': the repeats' is under a tenth of the sources'.
+    *Needs:* a board, with its source measured; a harness that runs a measured
+    set of line levels; and evidence that the model's figure for one source
+    holds to a tenth of a point. Until it is answered the band is B22's.
 
 ---
 

@@ -1,6 +1,10 @@
 {
  "manifest_schema_version": "1.0",
- "manifest_revision": "0.1-candidate",
+ "manifest_revision": "0.2-candidate",
+ "change_record": [
+  "0.1-candidate, 2026-10-14: the canary's golden tensors, FC3's declared reference the converter's codes (GRXCP B21)",
+  "0.2-candidate, 2026-10-15: Gate F's band, tail rule and class threshold, ruled by the freeze's owner from the canary's model run (GRXCP B22); no artifact changed"
+ ],
  "manifest_status": "candidate_not_frozen",
  "workload_id": "GRXGPU-FIRST-BOARD-3ENGINE-CANARY",
  "workload_name": "Three-Engine Inference Chain",
@@ -12,7 +16,8 @@
   "B20, 2026-10-14: MNIST pooled to 8 x 8; FC1 and FC2 the host's at 8 bits, trained with no tile noise; FC3 trained for the tile at 6 bits; all three in one run of grx930's harness; FC2 to FC3 by min((x + 2) >> 2, 31)",
   "seed rule, 2026-10-14T21:39:28Z, before any canary network was trained: seed 1's network is the canary, seeds 2 to 5 reported beside it",
   "2026-10-14T23:37:11Z: FC3's declared reference is the 8-bit converter's codes",
-  "2026-10-14T23:37:11Z: one output scale for FC3, fixed once at calibration on the calibration set and never on the acceptance vectors; Gate F reported with it and without, the band set on the figure with it"
+  "2026-10-14T23:37:11Z: one output scale for FC3, fixed once at calibration on the calibration set and never on the acceptance vectors; Gate F reported with it and without, the band set on the figure with it",
+  "2026-10-15T15:01:44Z: Gate F's band 2.5% to 7.3% on the rms error over the reference's rms with the scale; the class with the scale the reference's on at least 98.5% of the vectors; at most 16 of a run's 16,000 outputs 17 or more codes off with the scale; a band set per board an open question, to revisit with a board's measured source"
  ],
  "workload": {
   "kind": "fixed-weight three-layer classifier",
@@ -352,10 +357,33 @@
   "reference": "fc3_declared_format_reference, the converter's codes",
   "per_run_normalized_rms_percent": "100 * sqrt(sum((output - reference)^2) / sum(reference^2)) over 1,000 vectors x 16 outputs, in codes",
   "output_scale": "one scale for FC3, the least-squares slope through the origin of calibration_fc3_reference on the PTA's codes over the calibration set, the PTA's codes times it; fixed once a calibration, never on the acceptance vectors",
-  "physical_rms_band_percent": null,
-  "physical_tail_threshold_and_allowed_count": null,
-  "class_agreement_threshold_percent": null,
-  "status": "the band, the tail rule and the class threshold are proposed from the frozen canary's model run and ruled by the freeze's owner"
+  "physical_rms_band_percent": [
+   "2.5",
+   "7.3"
+  ],
+  "physical_rms_band_figure": "the per-run normalised rms with the output scale, both edges inclusive",
+  "physical_tail_threshold_and_allowed_count": {
+   "codes_off_at_least": 17,
+   "outputs_allowed": 16,
+   "of_outputs": 16000,
+   "figure": "the outputs times the output scale against the reference, to the nearest code"
+  },
+  "class_agreement_threshold_percent": "98.5",
+  "class_agreement_figure": "the class of the outputs times the output scale, with their biases, against the reference's class",
+  "repeat_to_repeat": "reported apart: the model gives 0.043 points from repeat to repeat on one source, 0.497 from source to source",
+  "status": "ruled by the freeze's owner on 2026-10-15 (GRXCP B22), by the rule GRXCP wrote before the canary's model run (2026-10-15T01:13:20Z); a band per board is an open question",
+  "band_evidence": {
+   "model": "GRXCP docs/designs/pta_board_band.py",
+   "runs": "GRXCP docs/designs/pta_board_band_runs.csv.gz",
+   "runs_csv_sha256": "0df5f693167be82e27fd47a4d82104ca4e779c415657aa723b82890e487dc03f",
+   "command": "SHAPE=chain sim/pta_mnist.sh MNIST_GZ WORK band, BAND_DRAWS=1000 BAND_OTHER=100",
+   "harness_source_sha256": {
+    "pta_mnist.c": "495e370989f7275ba05fc276e8b9a894b03fa5b463274923b7ef2b564b3a728d",
+    "pta_tile_model.c": "a9d008d8ee6ed367a364c22cb2f7a978dbe566b3a0fa625e563ed536add385bd",
+    "pta_tile_model.h": "dd5255ccf8f6fa02f67f9f621d8efe065cfcf32b953f14aa24b288a8cb70b186",
+    "pta_mnist.sh": "66d50632de0b6f66a3fa2191f933aa59b4f46bae57ca966fd60e34ae58682a03"
+   }
+  }
  },
  "serialization": {
   "hash_algorithm": "SHA-256",
