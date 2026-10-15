@@ -1,0 +1,12 @@
+# The canary made again from nothing but this folder and MNIST's four archives: regenerate.sh, run
+# from a copy of the folder in an empty directory in WSL, on the archives as fetched from PyTorch's
+# mirror. Finished 2026-10-15T15:48:19Z. What it printed, and its exit status:
+
+harness: the four sources pinned here
+mnist: the four archives hold MNIST's files
+env: gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0; ldd (Ubuntu GLIBC 2.39-0ubuntu8.9) 2.39; Linux 6.18.33.2-microsoft-standard-WSL2 x86_64
+ran: canary and golden, 248 s
+== golden: written twice, the same byte for byte: golden: net_seed=1 net_wbits=6 net_host=2 images=1000 cal=1000 cal_first=54000 abits=6 adcbits=8 tile=128x64 sh=9,9 S=9 code_shift=5 clipped=0 tile_differ=0 of 32000 act_differ=0 of 256000 declared_right=96.60 highprec_right=96.80 highprec_agree=99.20
+held to this folder: 23 the same, byte for byte; 0 differ
+regenerate: every tensor, network and id list is this folder's own
+exit 0

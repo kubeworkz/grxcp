@@ -1,0 +1,13 @@
+# GRXCP's checker, docs/designs/pta_board_canary_golden.py, written apart from the harness, with
+# --report: what it found of the tensors, and nothing that depends on the manifest's package.
+
+The first board's canary: its golden tensors, checked.
+  23 artifacts, 730,780 bytes, each its manifest's length and SHA-256
+  the pixels, inputs, labels and ids of both sets: the corpus worked out apart from MNIST's files, byte for byte;
+  the inputs the pixels as FC1 takes them
+  worked out again here, byte for byte: cal_fc3_codes_int8.bin, class_ids_u8.bin, fc1_relu_int8.bin, fc2_relu_int8.bin, fc3_act_codes_u8.bin, fc3_codes_int8.bin, fc3_sums_int32.bin
+  FC3's codes on the acceptance vectors from -96 to 67, none held at the converter's range
+  the double-precision logits: the bundle's to the last bit
+  the declared format right on 96.60% of the acceptance vectors, the double-precision network on 96.80%, their classes the same on 99.20%
+
+All checks pass.

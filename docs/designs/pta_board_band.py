@@ -17,8 +17,8 @@ rule written before the sweep (band_rule below, 2026-10-15T01:13:20Z): the
 band's edges, the class threshold, the tail rule, and what moves from
 repeat to repeat. And it says how often a tile at each factor of its budget
 passes them, and how the predictions written with the rule fared. The owner
-ruled the rule's figures (B22), and canary/manifest.json, revision
-0.2-candidate, carries them: this file holds it to them and to these runs.
+ruled the rule's figures (B22), and canary/manifest.json carries them from
+revision 0.2-candidate on: this file holds it to them and to these runs.
 
 WHAT THIS IS NOT. A ruling: the band is the owner's to set (B19). Device
 evidence of any kind. A band for any network but the canary. A model of a
@@ -407,7 +407,7 @@ def manifest_holds():
     import json
     m = json.load(open(os.path.join(HERE, "canary", "manifest.json"), encoding="utf-8"))
     g = m["gate_f"]
-    assert m["manifest_revision"] == "0.2-candidate"
+    assert float(m["manifest_revision"].split("-")[0]) >= 0.2      # the band is in every revision from 0.2 on
     assert g["physical_rms_band_percent"] == ["%.1f" % (RULED["lower"] / 1000), "%.1f" % (RULED["upper"] / 1000)]
     assert g["class_agreement_threshold_percent"] == "%.1f" % (RULED["class"] / 100)
     t = g["physical_tail_threshold_and_allowed_count"]

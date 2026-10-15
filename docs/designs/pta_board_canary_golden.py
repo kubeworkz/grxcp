@@ -8,24 +8,31 @@ tensors"): the network B20 fixed and the owner's seed rule chose, its 1,000
 acceptance vectors and 1,000 calibration vectors, every stage's declared-format
 output, FC3's declared reference in the converter's codes as the owner ruled on
 2026-10-14, and a double-precision pass for the task's quality. manifest.json
-is GRXCP's candidate manifest for it.
+is GRXCP's candidate manifest for it, on the fields of grxgpu's template; and
+the folder is the freeze package: the numerical contract (CONTRACT.md), the
+harness that made the tensors (harness/), the environment it ran in
+(environment.lock), a script that makes them again from MNIST's archives
+(regenerate.sh), and the reports of what was checked (reports/).
 
-This file is written apart from the harness. It holds every artifact to the
-manifest's length and digest; the pixels, inputs, labels and ids of both sets
-to the corpus worked out apart from MNIST's files; and then works every integer
-tensor out again from the inputs and the integer weights, with arithmetic of
-its own, and the double-precision logits from the network's file. Each has to
-be the bundle's, byte for byte. Its own arithmetic is held first to cases
-worked by hand at every rounding and saturation boundary.
+This file is written apart from the harness. It holds every file in the folder
+to the manifest's length and digest, and the harness to the digests the
+manifest and regenerate.sh pin; the pixels, inputs, labels and ids of both
+sets to the corpus worked out apart from MNIST's files; and then works every
+integer tensor out again from the inputs and the integer weights, with
+arithmetic of its own, and the double-precision logits from the network's file.
+Each has to be the bundle's, byte for byte. Its own arithmetic is held first to
+cases worked by hand at every rounding and saturation boundary.
 
-WHAT THIS IS NOT. A frozen canary: the freeze is the owner's, on 2026-11-25. A
-check of how the harness derived the integer weights, biases and shifts from
-the trained network: those are the bundle's, and what they are is what is
-checked. Device evidence of any kind.
+WHAT THIS IS NOT. A frozen canary: the freeze is the owner's, on 2026-11-25,
+and --freeze says what it still needs. A check of how the harness derived the
+integer weights, biases and shifts from the trained network: those are the
+bundle's, and what they are is what is checked. Device evidence of any kind.
 
 Standard library only.  Run:  python3 docs/designs/pta_board_canary_golden.py
-(--recompute-only skips the manifest's digests; --dir DIR checks a bundle
-elsewhere.)
+(--recompute-only skips the digests; --dir DIR checks a bundle elsewhere;
+--report prints what the tensors' checks found and nothing that depends on the
+manifest's package, as reports/check.txt holds it; --freeze fails closed, with
+every field and approval a freeze still needs.)
 """
 import hashlib
 import json
@@ -167,19 +174,71 @@ def hand_cases():
     assert divmod(N, 16) == (62, 8)
 
 
+def sha(b):
+    return hashlib.sha256(b).hexdigest()
+
+
+def package_holds(manifest):
+    """Every file in the folder is an artifact or a package file, each its manifest's length and SHA-256;
+    SHA256SUMS lists them all and the manifest; and the harness kept here is the one the manifest,
+    regenerate.sh and the reference contract name, and the lock the one the manifest names."""
+    arts = {a["path"]: a for a in manifest["artifacts"]}
+    pkg = {p["path"]: p for p in manifest["package"]}
+    found = sorted(os.path.relpath(os.path.join(d, f), DIR).replace(os.sep, "/") for d, _, fs in os.walk(DIR) for f in fs)
+    assert found == sorted(list(arts) + list(pkg) + ["manifest.json", "SHA256SUMS"]), "files the manifest does not name"
+    for p, e in {**arts, **pkg}.items():
+        b = raw(p)
+        assert len(b) == e["byte_length"] and sha(b) == e["sha256"], p
+    sums = dict(reversed(line.split("  ", 1)) for line in raw("SHA256SUMS").decode().splitlines())
+    assert sums == {**{p: e["sha256"] for p, e in {**arts, **pkg}.items()}, "manifest.json": sha(raw("manifest.json"))}
+    pinned = manifest["reference_contract"]["source_sha256"]
+    script = raw("regenerate.sh").decode()
+    assert sorted(pinned) == ["pta_mnist.c", "pta_mnist.sh", "pta_tile_model.c", "pta_tile_model.h"]
+    for f, d in pinned.items():
+        assert sha(raw("harness/" + f)) == d and f"{d}  {f}" in script, f
+    assert manifest["training"]["dependency_lock_digest_sha256"] == sha(raw("environment.lock"))
+    return len(arts), len(pkg)
+
+
+def open_items(manifest):
+    """What a freeze needs and the manifest does not yet have, every one: a field left empty or pending,
+    a freeze blocker, an approval not given.  Fails closed: anything not known to be done is open."""
+    out = []
+
+    def walk(x, path):
+        if x is None:
+            out.append(path + ": empty")
+        elif isinstance(x, str) and (x.startswith("pending") or x.startswith("missing")):
+            out.append(path + ": " + x)
+        elif isinstance(x, dict):
+            for k, v in x.items():
+                walk(v, path + "." + k if path else k)
+        elif isinstance(x, list):
+            for i, v in enumerate(x):
+                walk(v, "%s[%d]" % (path, i))
+
+    walk({k: v for k, v in manifest.items() if k != "freeze_blockers"}, "")
+    out += ["freeze blocker: " + b for b in manifest["freeze_blockers"]]
+    for path, got, want in (("manifest_status", manifest["manifest_status"], "frozen"),
+                            ("approval.status", manifest["approval"]["status"], "frozen")):
+        if got != want:
+            out.append("%s: %s, not %s" % (path, got, want))
+    return out
+
+
 def main():
     recompute_only = "--recompute-only" in sys.argv[1:]
+    report = "--report" in sys.argv[1:]
+    freeze = "--freeze" in sys.argv[1:]
     hand_cases()
     manifest = json.loads(raw("manifest.json"))
     arts = {a["path"]: a for a in manifest["artifacts"]}
-    files = sorted(f for f in os.listdir(DIR) if f not in ("manifest.json", "SHA256SUMS"))
-    assert sorted(arts) == files, (sorted(arts), files)
     if not recompute_only:
         for f, a in arts.items():
             b = raw(f)
-            assert len(b) == a["byte_length"] and hashlib.sha256(b).hexdigest() == a["sha256"], f
-        sums = dict(reversed(line.split("  ")) for line in raw("SHA256SUMS").decode().splitlines())
-        assert sums == {**{f: a["sha256"] for f, a in arts.items()}, "manifest.json": hashlib.sha256(raw("manifest.json")).hexdigest()}
+            assert len(b) == a["byte_length"] and sha(b) == a["sha256"], f
+        if not report:
+            n_art, n_pkg = package_holds(manifest)
     for f, d in CORPUS.items():
         assert hashlib.sha256(raw(f)).hexdigest() == d, f
     assert raw("ids.txt").decode() == "".join(f"mnist-t10k-{n:05d}\n" for n in range(N))
@@ -246,7 +305,8 @@ def main():
     line = manifest["generation"]["harness_line"]
     assert f"declared_right={declared_right:.2f} highprec_right={hp_right:.2f} highprec_agree={agree:.2f}" in line
     assert " clipped=0 tile_differ=0 of 32000 act_differ=0 of 256000 " in line
-    assert manifest["freeze_authority"] == "Gridworkz" and manifest["calendar_freeze_date_utc"] == "2026-11-25"
+    assert manifest["freeze_authority"] == "Gridworkz" and manifest["approval"]["workload_freeze_dri"] == "Gridworkz"
+    assert manifest["approval"]["calendar_freeze_date_utc"] == "2026-11-25"
     assert manifest["gate_f"]["reference"].startswith("fc3_declared_format_reference")
     # with no number but integers and no character past ASCII, keys sorted and no whitespace is RFC 8785's form
     assert all(c < 128 for c in raw("manifest.json")) and not has_float(manifest)
@@ -255,6 +315,9 @@ def main():
     print("The first board's canary: its golden tensors, checked.")
     print(f"  {len(arts)} artifacts, {sum(a['byte_length'] for a in arts.values()):,} bytes"
           + ("" if recompute_only else ", each its manifest's length and SHA-256"))
+    if not (recompute_only or report):
+        print(f"  {n_pkg} files of the freeze package, each its manifest's length and SHA-256; the harness kept here"
+              " the one the manifest and regenerate.sh pin")
     print("  the pixels, inputs, labels and ids of both sets: the corpus worked out apart from MNIST's files, byte for byte;")
     print("  the inputs the pixels as FC1 takes them")
     print(f"  worked out again here, byte for byte: {', '.join(sorted(got))}")
@@ -262,7 +325,19 @@ def main():
     print(f"  the double-precision logits: the bundle's to the last bit")
     print(f"  the declared format right on {declared_right:.2f}% of the acceptance vectors, the double-precision"
           f" network on {hp_right:.2f}%, their classes the same on {agree:.2f}%")
-    print(f"  the manifest's canonical SHA-256 (RFC 8785's form): {hashlib.sha256(canon).hexdigest()}")
+    if not report:
+        print(f"  the manifest, revision {manifest['manifest_revision']}: its canonical SHA-256 (RFC 8785's form)"
+              f" {hashlib.sha256(canon).hexdigest()}")
+    if freeze:
+        items = open_items(manifest)
+        print()
+        if items:
+            print(f"The freeze is not ready: {len(items)} open, every one of them the freeze's to close:")
+            for it in items:
+                print("  " + it)
+            sys.exit(1)
+        print("Ready to freeze: no field empty or pending, no blocker, and approved.")
+        return
     print()
     print("All checks pass.")
 

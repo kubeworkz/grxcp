@@ -1,0 +1,26 @@
+# The canary's corpus, worked out apart from grx930's harness: GRXCP's canary_corpus.py with the
+# splits' digests, on MNIST's four archives as fetched from PyTorch's mirror on 2026-10-14, against
+# the pooled files the clean-room regeneration of 2026-10-15 made (reports/regeneration.txt). Run
+# 2026-10-15 in the environment of environment.lock.
+
+train-images-idx3-ubyte: content sha256 ba891046e6505d7aadcbbe25680a0738ad16aec93bde7f9b65e87a2fc25776db
+train-labels-idx1-ubyte: content sha256 65a50cbbf4e906d70832878ad85ccda5333a97f0f4c3dd2ef09a8a9eef7101c5
+t10k-images-idx3-ubyte: content sha256 0fa7898d509279e482958e8ce81c8e77db3f2f8254e26661ceb7762c4d494ce7
+t10k-labels-idx1-ubyte: content sha256 ff7bcfd416de33731a308c3f266cc351222c34898ecbeaf847f06e48f7ec33f2
+train-images-idx3-ubyte: pooled here, 60000 images, the same as the harness's pooled file, byte for byte
+t10k-images-idx3-ubyte: pooled here, 10000 images, the same as the harness's pooled file, byte for byte
+acceptance_inputs_int8_1000x64.bin: 64000 bytes, sha256 d968e50d76c4c3bfe3b0d0020db73fc0a1bade8f794cba389216f0777f0f23c4
+acceptance_labels_u8_1000.bin: 1000 bytes, sha256 d14ba0a1a3818edefa35518ed001ece84b7ac0eabe9394551c73928493175d3f
+acceptance_ids.txt: 17000 bytes, sha256 81e4e1694930066d6e678be2ac3b828a0677756e8dc0632048e605541c754711
+calibration_inputs_int8_1000x64.bin: 64000 bytes, sha256 c23d0a98df1376ce6dd6a43fa94926d1a0f37978945274f2674c9a5586b34f1c
+calibration_labels_u8_1000.bin: 1000 bytes, sha256 e9b9c3471c38b1ac45a646a16235eb657be54efdb54e30974f4f839d24a7c7a2
+calibration_pixels_u8_1000x64.bin: 64000 bytes, sha256 380935716cb694db23025ead0bb3fc287becda75b86782238fc7b20ffca8b72d
+acceptance_pixels_u8_1000x64.bin: 64000 bytes, sha256 49008ed471ac4de4f40e3779615eab182248422ead8bf269ad840424b48da444
+acceptance classes: 0:85 1:126 2:116 3:107 4:110 5:87 6:87 7:99 8:89 9:94
+jobs of 16: 62 full and one of 8
+split training, the first 54,000 training images: 54000 vectors, 3456000 bytes, sha256 abc217d5f5286233af688d334bd1e1f5cfc9a6d0179804cc2f9b8505ad337c66
+split held out, the last 6,000: 6000 vectors, 384000 bytes, sha256 ba2faf719d813f20ad2779bb1512d64232d82114760fdc0eee75b928e6c802a0
+split calibration, the first 1,000 held out: 1000 vectors, 64000 bytes, sha256 c23d0a98df1376ce6dd6a43fa94926d1a0f37978945274f2674c9a5586b34f1c
+split acceptance, the first 1,000 test images: 1000 vectors, 64000 bytes, sha256 d968e50d76c4c3bfe3b0d0020db73fc0a1bade8f794cba389216f0777f0f23c4
+leakage over operand bytes: 0 of the thousand are a training vector (0 of them with its label), 0 a held-out one, 0 a calibration one; 0 repeat within the thousand
+all-zero vectors in the thousand: 0

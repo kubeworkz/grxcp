@@ -305,6 +305,13 @@ class of 98.5% and a tail of at most 16 outputs 17 or more codes off, and the
 owner ruled them. The manifest carries them, as revision 0.2-candidate. A fixed
 band cannot tell a tile a fifth over its budget from one at it, and a band set
 per board is an open question (§8, question 11).
+*And its freeze package, 2026-10-15* (§4.2, B23). [`canary/`](canary/) now
+holds everything grxgpu's plan asks to freeze with the manifest: the numerical
+contract, the harness that made the tensors, the environment it ran in, a
+script that makes them again, and the reports. The manifest is on every field
+of grxgpu's template, as revision 0.3-candidate. Run from an empty directory,
+the script made all 23 artifacts again, byte for byte. The checker's `--freeze`
+fails closed, and names only grxgpu's review and the owner's approval.
 X2 has made its predictions (§3.3), X1 its budget (§4.3), and P0, X3 and X4
 are drafted as [`board_icd.md`](board_icd.md),
 [`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) and
@@ -1297,6 +1304,9 @@ layer mis-sized, and the NPU's read-ahead dropped.
   ([kubeworkz/grxgpu#22](https://github.com/kubeworkz/grxgpu/pull/22)): Gate
   F's band, its class threshold and its tail rule, as the owner ruled them from
   the canary's model run.
+- *And §10.16 of it, the same day*
+  ([kubeworkz/grxgpu#23](https://github.com/kubeworkz/grxgpu/pull/23)): the
+  canary's freeze package, and the review the owner asked of grxgpu.
 
 **The demonstration's last layer, on a stand-in (2026-10-13).**
 [`pta_board_chain.py`](pta_board_chain.py) holds what grx930's harness ran (its
@@ -2001,6 +2011,50 @@ outside it. **A band for any network but the canary.** Of the nine predictions
 written with the rule 5 were right: the lit spread was put at the noise's and
 is the source's, the 1.2 row and the tail were put too low, and the first sweep
 stopped on its refusals before its check. It records B22 and question 11.
+
+**The canary's freeze package (2026-10-15).** grxgpu's golden-generation plan
+asks for more than the tensors. It wants the generation scripts, a pinned
+environment, the exact commands and the test reports packaged with the
+manifest, and the package verified by regenerating every tensor in a clean
+directory. And it wants every field of its template filled from what exists,
+the rest left empty, so that a freeze review fails closed. [`canary/`](canary/)
+is now that package, 13 files of 912,735 bytes beside the artifacts:
+
+| In [`canary/`](canary/) | What it is |
+|---|---|
+| The 23 artifacts | The tensors, the networks and the ids (above) |
+| [`CONTRACT.md`](canary/CONTRACT.md) | The numerical contract: every step's arithmetic, rounding, saturation and order, the files' encodings, and Gate F as ruled |
+| `harness/` | grx930's four sources at a98656d, which made the tensors and the band's runs |
+| `environment.lock` | The environment they were made in: Ubuntu 24.04.3, gcc 13.3.0, glibc 2.39, Python 3.12.3, and 26 packages at their exact versions |
+| `regenerate.sh` | Makes the canary again from `harness/` and MNIST's four archives, and holds every tensor, network and id list to the folder's own |
+| `reports/` | The corpus worked out apart; how the tensors were made; the checker's report; the regeneration; the band; the planted errors |
+| `manifest.json` | Revision 0.3-candidate, on every field of grxgpu's template |
+
+**Made again from nothing.** `regenerate.sh`, run from a copy of the folder in
+an empty directory on MNIST's archives as fetched, trained the recipe's five
+networks and wrote the tensors in 248 seconds. All 23 artifacts came out the
+folder's own, byte for byte. The corpus, worked out apart from those same
+archives, is the harness's to the byte, and its training and held-out splits
+now carry digests of their own.
+
+**How it is checked.**
+[`pta_board_canary_golden.py`](pta_board_canary_golden.py) now holds every file
+in the folder to the manifest's length and SHA-256. It holds the harness to the
+digests the manifest and `regenerate.sh` both pin, and the lock to the
+manifest's. `--report` prints what it found of the tensors, which
+`reports/check.txt` keeps. `--freeze` lists every field empty or pending, every
+blocker and every approval not given, and fails while any is left; today it
+names nine, all of them grxgpu's review and the owner's approval and the fields
+they fill. Errors were planted in it, and every one was caught: 11 in the
+checker; 41 ways of spoiling the folder, among them a harness source changed
+with its manifest entry made to match, which `regenerate.sh`'s own pin still
+catches; and 11 ways of leaving one thing open in a manifest otherwise ready to
+freeze.
+
+What it is not. Everything the blocks before say of themselves. **The freeze**,
+which is the owner's on or before 2026-11-25, after grxgpu's review. **The
+engines' own runs**: FC1 on the NPU and FC2 on the G100 against their stage
+references are tested in integration, after the freeze (B23). It records B23.
 
 ### 4.3 To the PTA chiplet: EIC requirements
 
@@ -5649,6 +5703,40 @@ source, which may sit outside the model's spread. A band for another network.
 B18's other two: what stands in for a photonic module, and calibration counted
 in a cold start. B5 and B10 to B21 stand. *Needed by:* the freeze on
 2026-11-25.
+
+**B23 — What the first board's canary's freeze needs.**
+*Settled 2026-10-15.*
+
+With the freeze package built (§4.2), its fail-closed check named what was
+still open. Three of those things were the owner's to decide, and went to the
+owner with this plan's recommendation. They were ruled as recommended at 16:24
+UTC.
+
+*Recommended, and settled as recommended:*
+
+| | Ruled |
+|---|---|
+| FC1 on the GRX930 NPU and FC2 on the G100, against their stage references | Tested in integration, against the frozen references, after the freeze. Not a freeze blocker |
+| The independent reviewer of the numerical contract and the reference implementation | The grxgpu team |
+| The stand-in's implementation path, owner and schedule | Not part of the canary's freeze: the stand-in's own plan (§4.2's proposal, §6, ruling 1) |
+
+**Why these.** The freeze fixes the workload, its tensors and its thresholds,
+and none of them depends on an engine: the engines are what the frozen
+references test. So the freeze need not wait on a board. The grxgpu team wrote
+the golden-generation plan and the template, and did not generate the bundle.
+And the stand-in is a question of its own, open in the proposal.
+
+**What follows from them.** The manifest's blockers are two: grxgpu's review,
+and the owner's approval. The engines' runs are recorded as what follows the
+freeze. `--freeze` passes only when both are done and recorded, with every
+field they fill.
+
+**What it costs here.** Recording the review and the approval as they come,
+each a new revision, and nothing else before 2026-11-25.
+
+**What it does not settle.** The review's findings, and the approval. The
+stand-in. A band set per board (question 11). B5 and B10 to B22 stand. *Needed
+by:* the freeze on 2026-11-25.
 
 ---
 

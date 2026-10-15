@@ -1,0 +1,259 @@
+# Errors planted one at a time in what made and checks the canary, and what each check caught.
+# A plant that changes nothing on these data is reported as such, not as caught.
+
+== The golden pass and its command, grx930's harness, 2026-10-14
+as written: built, its self-test passes, the command writes, the checker says yes
+  caught by the self-test (5j): a hidden layer's rescale floored and not rounded
+  caught by the self-test (5j): a hidden layer's output not held at 127
+  caught by the self-test (5j): a hidden layer's bias after its ReLU
+  caught by the self-test (5j): FC3's activation codes truncated, the top six bits
+  caught by the self-test (5j): FC3's activation codes from FC1's outputs
+  caught by the self-test (5j): FC3's weight codes left as operands
+  caught by the self-test (5j): the converter rounding half down
+  caught by the self-test (5j): the converter a step too coarse
+  caught by the self-test (5j): a code held at the range not counted
+  caught by the self-test (5j): the class without its bias
+  caught by the self-test (5j): the class the last of the largest
+  caught by the self-test (5j): the floor shift rounding toward nought
+  caught by the checker: AssertionError: 0.4598425252056728: the double-precision pass on the inputs over 127
+  caught by the checker: AssertionError: 7.674565246302983: the double-precision pass without its biases
+  caught by the checker: AssertionError: FC3's weights written as operands
+  caught by the checker: AssertionError: fc1_relu_int8.bin: the biases written a sixteenth
+  caught by the checker: AssertionError: cal_inputs_int8.bin: the calibration set from the first training image
+  caught by the checker: AssertionError: cal_labels_u8.bin: the calibration labels the test images'
+  caught by the command: le_differ=16068 of 32000 act_differ=0 of 256000 declared_right=96.60 highprec_right=96.80 highprec_agree=99.20: the tile's last layer at the first layer's step
+  caught by the command: ffer=28522 of 32000 act_differ=146979 of 256000 declared_right=96.60 highprec_right=96.80 highprec_agree=99.20: the tile's host layers at the network's width
+  caught by the command: le_differ=31138 of 32000 act_differ=0 of 256000 declared_right=96.60 highprec_right=96.80 highprec_agree=99.20: the golden pass at the first layer's step
+21 planted, 21 caught, 0 missed
+
+== The checker as it was on 2026-10-14, and a byte changed in each file of that bundle
+the checker as written: exit 0
+  caught (AssertionError): a hidden layer's rescale floored
+  caught (AssertionError): a hidden layer's output not held at 127
+  caught (AssertionError: fc2_relu_int8.bin): FC2's second rescale a bit coarser
+  caught (AssertionError: fc1_relu_int8.bin): a hidden layer without its bias
+  caught (AssertionError): FC3's activation code truncated
+  caught (AssertionError): FC3's activation code not held at 31
+  caught (AssertionError): the converter rounding half down
+  caught (AssertionError): the converter a step too coarse
+  caught (AssertionError): the converter not held
+  caught (AssertionError): the converter's held flag never set
+  caught (AssertionError): the class the last of the largest
+  caught (AssertionError): the class without its bias
+  caught (AssertionError): the class at half the step
+  caught (AssertionError): FC3's weights read unsigned
+  caught (AssertionError): the inputs from the pixels rounded down
+  caught (AssertionError: inputs_int8.bin): an input corpus digest changed
+  caught (AssertionError): the calibration ids one image on
+  caught (AssertionError: 0.1699380650466793): the double-precision pass on pixels over 256
+  caught (AssertionError: 47.70079448381254): the double-precision pass with a ReLU on its logits
+  caught (AssertionError: 2.1316282072803006e-14): the double-precision pass adding the bias last
+  caught (AssertionError: 3.552713678800501e-14): the double-precision pass in single precision's order reversed
+  caught (AssertionError): the accuracy figures from the double-precision classes swapped
+  caught (AssertionError): the freeze date read a day late
+checker plants: 23 planted, 23 caught, 0 missed
+
+  SHA256SUMS: byte 1008 changed: in full caught (AssertionError); its own arithmetic not (no message)
+  cal_fc3_codes_int8.bin: byte 8000 changed: in full caught (AssertionError: cal_fc3_codes_int8.bin); its own arithmetic caught (AssertionError: cal_fc3_codes_int8.bin)
+  cal_ids.txt: byte 9000 changed: in full caught (AssertionError: cal_ids.txt); its own arithmetic caught (AssertionError)
+  cal_inputs_int8.bin: byte 32000 changed: in full caught (AssertionError: cal_inputs_int8.bin); its own arithmetic caught (AssertionError: cal_inputs_int8.bin)
+  cal_labels_u8.bin: byte 500 changed: in full caught (AssertionError: cal_labels_u8.bin); its own arithmetic caught (AssertionError: cal_labels_u8.bin)
+  canary_seed1.net: byte 18748 changed: in full caught (AssertionError: canary_seed1.net); its own arithmetic caught (AssertionError: 4.175032763953368e-08)
+  class_ids_u8.bin: byte 500 changed: in full caught (AssertionError: class_ids_u8.bin); its own arithmetic caught (AssertionError: class_ids_u8.bin)
+  fc1_bias_int32.bin: byte 128 changed: in full caught (AssertionError: fc1_bias_int32.bin); its own arithmetic caught (AssertionError: fc1_relu_int8.bin)
+  fc1_relu_int8.bin: byte 32000 changed: in full caught (AssertionError: fc1_relu_int8.bin); its own arithmetic caught (AssertionError: fc1_relu_int8.bin)
+  fc1_weights_int8.bin: byte 2048 changed: in full caught (AssertionError: fc1_weights_int8.bin); its own arithmetic caught (AssertionError: fc1_relu_int8.bin)
+  fc2_bias_int32.bin: byte 128 changed: in full caught (AssertionError: fc2_bias_int32.bin); its own arithmetic caught (AssertionError: fc2_relu_int8.bin)
+  fc2_relu_int8.bin: byte 32000 changed: in full caught (AssertionError: fc2_relu_int8.bin); its own arithmetic caught (AssertionError: fc2_relu_int8.bin)
+  fc2_weights_int8.bin: byte 2048 changed: in full caught (AssertionError: fc2_weights_int8.bin); its own arithmetic caught (AssertionError: fc2_relu_int8.bin)
+  fc3_act_codes_u8.bin: byte 32000 changed: in full caught (AssertionError: fc3_act_codes_u8.bin); its own arithmetic caught (AssertionError: fc3_act_codes_u8.bin)
+  fc3_bias_int32.bin: byte 32 changed: in full caught (AssertionError: fc3_bias_int32.bin); its own arithmetic not (no message)
+  fc3_codes_int8.bin: byte 8000 changed: in full caught (AssertionError: fc3_codes_int8.bin); its own arithmetic caught (AssertionError: fc3_codes_int8.bin)
+  fc3_sums_int32.bin: byte 32000 changed: in full caught (AssertionError: fc3_sums_int32.bin); its own arithmetic caught (AssertionError: fc3_sums_int32.bin)
+  fc3_weights_int8.bin: byte 512 changed: in full caught (AssertionError: fc3_weights_int8.bin); its own arithmetic caught (AssertionError: fc3_sums_int32.bin)
+  highprec_logits_f64.bin: byte 64000 changed: in full caught (AssertionError: highprec_logits_f64.bin); its own arithmetic caught (AssertionError: 1.7763568394002505e-15)
+  ids.txt: byte 8500 changed: in full caught (AssertionError: ids.txt); its own arithmetic caught (AssertionError: ids.txt)
+  inputs_int8.bin: byte 32000 changed: in full caught (AssertionError: inputs_int8.bin); its own arithmetic caught (AssertionError: inputs_int8.bin)
+  labels_u8.bin: byte 500 changed: in full caught (AssertionError: labels_u8.bin); its own arithmetic caught (AssertionError: labels_u8.bin)
+  manifest.json: byte 7077 changed: in full caught (json.decoder.JSONDecodeError: Expecting property name enclos); its own arithmetic caught (json.decoder.JSONDecodeError: Expecting property name enclos)
+  pixels_u8.bin: byte 32000 changed: in full caught (AssertionError: pixels_u8.bin); its own arithmetic caught (AssertionError: pixels_u8.bin)
+  start_seed1_8bit.net: byte 18746 changed: in full caught (AssertionError: start_seed1_8bit.net); its own arithmetic not (no message)
+bundle plants: 25 files, 25 caught in full; 22 caught by the arithmetic alone; held by their digests alone: SHA256SUMS, fc3_bias_int32.bin, start_seed1_8bit.net
+
+== The checker as the freeze package has it, the package spoiled, and the freeze check, 2026-10-15
+the checker as written, on the folder: exit 0
+  caught (AssertionError): a hidden layer's rescale floored
+  caught (AssertionError): FC3's activation code truncated
+  caught (AssertionError): the converter rounding half down
+  caught (AssertionError): the class the last of the largest
+  caught (AssertionError: 0.1699380650466793): the double-precision pass on pixels over 256
+  caught (AssertionError: inputs_int8.bin): an input corpus digest changed
+  caught (AssertionError: files the manifest does not name): the package's files looked for in the top folder alone
+  caught (AssertionError: pta_mnist.sh): a harness source held to another file's digest
+  caught (AssertionError): the lock held to the manifest's harness digest
+  caught (AssertionError): the freeze's date read a day late
+  caught (AssertionError): SHA256SUMS split at its first space
+checker plants: 11 planted, 11 caught, 0 missed
+  caught (AssertionError: CONTRACT.md): a byte changed in CONTRACT.md
+  caught (AssertionError): a byte changed in SHA256SUMS
+  caught (AssertionError: cal_fc3_codes_int8.bin): a byte changed in cal_fc3_codes_int8.bin
+  caught (AssertionError: cal_ids.txt): a byte changed in cal_ids.txt
+  caught (AssertionError: cal_inputs_int8.bin): a byte changed in cal_inputs_int8.bin
+  caught (AssertionError: cal_labels_u8.bin): a byte changed in cal_labels_u8.bin
+  caught (AssertionError: canary_seed1.net): a byte changed in canary_seed1.net
+  caught (AssertionError: class_ids_u8.bin): a byte changed in class_ids_u8.bin
+  caught (AssertionError: environment.lock): a byte changed in environment.lock
+  caught (AssertionError: fc1_bias_int32.bin): a byte changed in fc1_bias_int32.bin
+  caught (AssertionError: fc1_relu_int8.bin): a byte changed in fc1_relu_int8.bin
+  caught (AssertionError: fc1_weights_int8.bin): a byte changed in fc1_weights_int8.bin
+  caught (AssertionError: fc2_bias_int32.bin): a byte changed in fc2_bias_int32.bin
+  caught (AssertionError: fc2_relu_int8.bin): a byte changed in fc2_relu_int8.bin
+  caught (AssertionError: fc2_weights_int8.bin): a byte changed in fc2_weights_int8.bin
+  caught (AssertionError: fc3_act_codes_u8.bin): a byte changed in fc3_act_codes_u8.bin
+  caught (AssertionError: fc3_bias_int32.bin): a byte changed in fc3_bias_int32.bin
+  caught (AssertionError: fc3_codes_int8.bin): a byte changed in fc3_codes_int8.bin
+  caught (AssertionError: fc3_sums_int32.bin): a byte changed in fc3_sums_int32.bin
+  caught (AssertionError: fc3_weights_int8.bin): a byte changed in fc3_weights_int8.bin
+  caught (AssertionError: harness/pta_mnist.c): a byte changed in harness/pta_mnist.c
+  caught (AssertionError: harness/pta_mnist.sh): a byte changed in harness/pta_mnist.sh
+  caught (AssertionError: harness/pta_tile_model.c): a byte changed in harness/pta_tile_model.c
+  caught (AssertionError: harness/pta_tile_model.h): a byte changed in harness/pta_tile_model.h
+  caught (AssertionError: highprec_logits_f64.bin): a byte changed in highprec_logits_f64.bin
+  caught (AssertionError: ids.txt): a byte changed in ids.txt
+  caught (AssertionError: inputs_int8.bin): a byte changed in inputs_int8.bin
+  caught (AssertionError: labels_u8.bin): a byte changed in labels_u8.bin
+  caught (json.decoder.JSONDecodeError: Expecting ',' delimiter: line ): a byte changed in manifest.json
+  caught (AssertionError: pixels_u8.bin): a byte changed in pixels_u8.bin
+  caught (AssertionError: regenerate.sh): a byte changed in regenerate.sh
+  caught (AssertionError: reports/ablation.txt): a byte changed in reports/ablation.txt
+  caught (AssertionError: reports/band.txt): a byte changed in reports/band.txt
+  caught (AssertionError: reports/check.txt): a byte changed in reports/check.txt
+  caught (AssertionError: reports/corpus.txt): a byte changed in reports/corpus.txt
+  caught (AssertionError: reports/generation.txt): a byte changed in reports/generation.txt
+  caught (AssertionError: reports/regeneration.txt): a byte changed in reports/regeneration.txt
+  caught (AssertionError: start_seed1_8bit.net): a byte changed in start_seed1_8bit.net
+  caught (AssertionError: files the manifest does not name): a report the manifest does not name
+  caught (AssertionError: files the manifest does not name): a report gone
+  caught (AssertionError: pta_mnist.sh): a harness source changed, its manifest entry and SHA256SUMS made to match
+the folder spoiled: 41 ways, 41 caught, 0 missed
+--freeze on a copy made ready: exit 0 (Ready to freeze: no field empty or pending, no blocker, and )
+  refused: freeze_approval pending
+  refused: no freeze date
+  refused: a blocker
+  refused: the manifest not frozen
+  refused: no approver
+  refused: no approval time
+  refused: no independent reviewer
+  refused: the approval not frozen
+  refused: a field deep in the contract empty
+  refused: a band left pending
+  refused: an empty field in an artifact's entry
+the freeze with one thing open: 11 ways, 11 refused, 0 missed
+
+== --gateref codes and --lightseed, grx930's harness, 2026-10-15
+as written: the self-test passes, the mode says yes, every refusal refuses
+  caught by the self-test: the reference floored, not rounded
+  caught by the self-test: the reference not held at the top
+  caught by the self-test: the reference not held at the bottom
+  caught by the self-test: the reference left in codes, not at its step
+  caught by the self-test: the tail a whole code late
+  caught by the self-test: the probe held to the sum
+  caught by the self-test: the probe's tail counted a code on
+  caught by the self-test: the scale's sums against the sum
+  caught by the self-test: the scale's tail not counted
+  caught by the self-test: the scale's largest error not kept
+  caught by the mode (band: not the run its place says: format only, seed 1, draw 0): eval: the reference a step under the tile's
+  caught by the mode (band: not the run its place says: format only, seed 1, draw 0): eval: the reference held to half the codes
+  caught by the mode (band: not the run its place says: as budgeted, seed 1, draw 0): eval: the tail printed back to front
+  caught by the mode (band: not the run its place says: as budgeted, seed 1, draw 0): eval: the largest error printed in pairs of codes
+  caught by the mode (band: not the run its place says: as budgeted, seed 2, draw 1): eval: the scaled tail the best scale's
+  caught by the mode (band: not the run its place says: as budgeted, seed 1, draw 0): eval: the scaled largest error the unscaled one
+  caught by a refusal (--impair quant --abits 6 --adcbits 8 --gateref codes --gatefit 1: exit 2, pta_mnist: --gatefit fitted the range to a reference the pro): eval: codes taken with a fitted range
+  caught by a refusal (--impair thermal --thermal 1 --adcbits 8 --gateref codes: exit 0, ): eval: codes taken without the format
+  caught by a refusal (--impair quant --abits 6 --adcbits 8 --lightseed 5: exit 0, ): eval: a light's seed taken with no light
+  caught by a refusal (--impair quant --abits 6 --adcbits 8 --gateref bits: exit 0, ): eval: a reference neither sum nor codes taken
+  caught by the self-test: the levels drawn from the shots' seed
+  caught by the self-test: the shots drawn from the levels' seed
+  caught by the mode (band: not the run its place says: as budgeted, lit, ten sources, seed 1, draw 10): eval: the levels' seed not passed
+23 planted, 23 caught, 0 missed
+
+== The band mode: doctored lines, its script and its tables, 2026-10-15
+as written, check only: exit 0, 106 lines of tables
+as written, whole: exit 0, tables the same: True
+  lines  caught: the format alone a hair off its reference
+  lines  caught: the canary's reference right less often than the golden line's
+  lines  caught: a run on another draw's seed
+  lines  caught: a run's reference at another step
+  lines  caught: a lit run's lines further off than its row's
+  lines  caught: a 0.6 run with the budget's crosstalk
+  lines  caught: a 0.6 run with the budget's photons
+  lines  caught: a ten-sources run on another source's seed
+  lines  caught: a ten-sources run whose levels are not its source's
+  lines  caught: a ten-sources run on its own draw not the lit run
+  lines  caught: a tail that rises
+  lines  caught: a largest error the tail says is too small
+  lines  caught: a scale fixed on fewer images
+  lines  caught: a run with no source refused for a dark line
+  lines  caught: a refusal with more on its line
+  lines  caught: a run that has no place
+  lines  caught: a run gone
+  lines  caught: a network that says none of it is the host's
+  lines  caught: a lit run's lines read and applied at the operands' width
+  lines  caught: a 1.4 run whose reading found lines half as far off
+  lines  caught: a scale a few hundredths from the one the run would fit
+  lines  caught: the format alone with an output a code off
+  script caught: the receiver's noise not at the factor's
+  script caught: the photons over the factor, not its square
+  script caught: the programming error the budget's at every factor
+  script caught: the lines' levels the budget's at every factor
+  script caught: the lines read and applied at the operands' width
+  script caught: the lit budget row not lit
+  script caught: the scale fixed on 900 images
+  script caught: the reference the sum again
+  script caught: every draw on the next draw's seed
+  script caught: five sources, not ten
+  script caught: the other networks run on every row
+  script caught: the format alone on two draws
+  script caught: seed 2 the canary
+  script caught: a tile 32 columns wide
+  script caught: a row at 0.5, not 0.6
+  tables caught: a percentile the floor of its rank
+  tables caught: a standard deviation over n
+  tables caught: the rms with the scale in fractions
+  tables caught: the table without the scale with it
+  tables caught: the class without the scale
+  tables caught: the tail's columns a code on
+  tables caught: the tail's mean over one run more
+  tables caught: the five networks' rms over every draw
+  tables caught: the five networks' least class their most
+  tables caught: the repeats' spread over all the runs
+  tables caught: five sources, by the draw's last digit over five
+  tables caught: the canary named on seed 2
+  tables caught: the budget rows' runs counted with five others
+lines: 22 planted, 22 caught, 0 missed
+script: 15 planted, 15 caught, 0 missed
+tables: 13 planted, 13 caught, 0 missed
+all: 50 planted, 0 missed
+
+== The band model, 2026-10-15
+as written: exit 0
+  caught (AssertionError: the tables are not the harness's): a percentile the floor of its rank
+  caught (AssertionError: the tables are not the harness's): a standard deviation over n
+  caught (AssertionError: the tables are not the harness's): the rms read in tenths of its units
+  caught (AssertionError: the tables are not the harness's): the runs in the order of their draws, not their files
+  caught (AssertionError: the rule does not give what the owner ruled): the upper edge rounded down
+  caught (AssertionError: the rule does not give what the owner ruled): the lower edge from the 0.4 row
+  MISSED: the class rounded up
+  caught (AssertionError: the rule does not give what the owner ruled): the tail at under 16, not at most
+  caught (AssertionError: {'as budgeted': 100.0, 'as budgeted, lit': 100.0, 'lit): a refused run counted as passing
+  caught (AssertionError): the repeats' spread over all the runs
+  caught (KeyError: 5): five sources, not ten
+  caught (AssertionError: the tables are not the harness's): the refusals counted on the wrong row
+  caught (AssertionError): a prediction's range moved
+  caught (AssertionError): the rows counted from nought in the file
+  caught (AssertionError: the tables are not the harness's): the tail padded at the front
+  caught (AssertionError: the tables are not the harness's): a figure in the printed tables changed
+  caught (AssertionError: the runs are not the file this model holds): the runs' digest changed
+  caught (AssertionError: the rule does not give what the owner ruled): the owner's ruling said otherwise
+  caught (AssertionError): the other networks against no tail
+19 planted, 18 caught, 1 missed

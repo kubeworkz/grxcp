@@ -1,23 +1,41 @@
 {
  "manifest_schema_version": "1.0",
- "manifest_revision": "0.2-candidate",
+ "manifest_revision": "0.3-candidate",
+ "manifest_status": "candidate_not_frozen",
  "change_record": [
   "0.1-candidate, 2026-10-14: the canary's golden tensors, FC3's declared reference the converter's codes (GRXCP B21)",
-  "0.2-candidate, 2026-10-15: Gate F's band, tail rule and class threshold, ruled by the freeze's owner from the canary's model run (GRXCP B22); no artifact changed"
+  "0.2-candidate, 2026-10-15: Gate F's band, tail rule and class threshold, ruled by the freeze's owner from the canary's model run (GRXCP B22); no artifact changed",
+  "0.3-candidate, 2026-10-15: the freeze package (CONTRACT.md, environment.lock, regenerate.sh, harness/, reports/), every field of grxgpu's template, and the owner's rulings on what the freeze needs; no artifact changed"
  ],
- "manifest_status": "candidate_not_frozen",
  "workload_id": "GRXGPU-FIRST-BOARD-3ENGINE-CANARY",
  "workload_name": "Three-Engine Inference Chain",
+ "decision_record": "GRXCP docs/designs/board_program_plan.md, decisions B19 to B22; grxgpu docs/proposals/first_board_reconciliation.md section 10",
+ "golden_generation_plan": "grxgpu's grxgpu_first_board_canary_golden_plan.md (draft of 2026-10-14)",
  "produced_by": "GRXCP, with grx930's harness (pta_mnist golden)",
  "freeze_authority": "Gridworkz",
  "freeze_approval": "pending",
- "calendar_freeze_date_utc": "2026-11-25",
+ "freeze_date_utc": null,
+ "qualification_authorized": false,
+ "status_vocabulary": {
+  "frozen": "all identity, artifact, numerical-contract, and approval fields are complete; every artifact digest has been verified",
+  "missing": "required artifact is not materialized; path, byte length, and digest must remain null",
+  "pending": "decision, review, or measurement has not happened",
+  "candidate_only": "proposed value retained for analysis; not an acceptance threshold"
+ },
+ "freeze_blockers": [
+  "the numerical contract and the reference implementation reviewed by the grxgpu team, and the reviewer named in approval.independent_reviewer",
+  "the freeze approved by Gridworkz, on or before 2026-11-25"
+ ],
+ "after_the_freeze": [
+  "FC1 on the GRX930 NPU and FC2 on the G100 reproduce fc1_relu_int8 and fc2_relu_declared_format exactly, tested in integration against the frozen references"
+ ],
  "rulings": [
   "B20, 2026-10-14: MNIST pooled to 8 x 8; FC1 and FC2 the host's at 8 bits, trained with no tile noise; FC3 trained for the tile at 6 bits; all three in one run of grx930's harness; FC2 to FC3 by min((x + 2) >> 2, 31)",
   "seed rule, 2026-10-14T21:39:28Z, before any canary network was trained: seed 1's network is the canary, seeds 2 to 5 reported beside it",
   "2026-10-14T23:37:11Z: FC3's declared reference is the 8-bit converter's codes",
   "2026-10-14T23:37:11Z: one output scale for FC3, fixed once at calibration on the calibration set and never on the acceptance vectors; Gate F reported with it and without, the band set on the figure with it",
-  "2026-10-15T15:01:44Z: Gate F's band 2.5% to 7.3% on the rms error over the reference's rms with the scale; the class with the scale the reference's on at least 98.5% of the vectors; at most 16 of a run's 16,000 outputs 17 or more codes off with the scale; a band set per board an open question, to revisit with a board's measured source"
+  "2026-10-15T15:01:44Z: Gate F's band 2.5% to 7.3% on the rms error over the reference's rms with the scale; the class with the scale the reference's on at least 98.5% of the vectors; at most 16 of a run's 16,000 outputs 17 or more codes off with the scale; a band set per board an open question, to revisit with a board's measured source",
+  "2026-10-15T16:24:56Z: the engines' runs against their stage references are tested in integration after the freeze, not before it; the independent reviewer is the grxgpu team; the stand-in's implementation path, owner and schedule is not part of the canary's freeze"
  ],
  "workload": {
   "kind": "fixed-weight three-layer classifier",
@@ -27,7 +45,8 @@
   "acceptance_job_partition": {
    "full_jobs": 62,
    "vectors_per_full_job": 16,
-   "final_partial_job_vectors": 8
+   "final_partial_job_vectors": 8,
+   "remainder_policy": "explicitly test the final eight-vector job; do not pad silently: the board's to test, the reference rows 992..999 are here"
   },
   "input_features": 64,
   "output_logits": 16,
@@ -45,29 +64,78 @@
    "retrieval_date_utc": "2026-10-14",
    "split_name": "acceptance: test file, images 0 to 999; calibration: training file, images 54,000 to 54,999",
    "sample_id_source": "mnist-t10k-NNNNN and mnist-train-NNNNN, the image's index in its file",
-   "preprocessing": "the middle 24 x 24 of each 28 x 28 image in 3 x 3 blocks, each block's mean (2s + 9) div 18; then (127p + 127) div 255"
+   "preprocessing": "the middle 24 x 24 of each 28 x 28 image in 3 x 3 blocks, each block's mean (2s + 9) div 18; then (127p + 127) div 255",
+   "version_or_snapshot": "MNIST's four original archives, by their contents' SHA-256 below",
+   "split_digest_sha256": {
+    "acceptance_inputs": "d968e50d76c4c3bfe3b0d0020db73fc0a1bade8f794cba389216f0777f0f23c4",
+    "calibration_inputs": "c23d0a98df1376ce6dd6a43fa94926d1a0f37978945274f2674c9a5586b34f1c",
+    "training_inputs": "abc217d5f5286233af688d334bd1e1f5cfc9a6d0179804cc2f9b8505ad337c66",
+    "held_out_inputs": "ba2faf719d813f20ad2779bb1512d64232d82114760fdc0eee75b928e6c802a0"
+   },
+   "preprocessing_revision": "B20, as harness/pta_mnist.c pools; worked out apart in reports/corpus.txt",
+   "status": "selected_and_materialized"
   }
  },
  "graph": [
   {
    "id": "FC1",
+   "operation": "dense affine 64-to-64, bias, ReLU, rescale",
    "engine": "GRX930 NPU",
+   "logical_shape": {
+    "input_features": 64,
+    "output_features": 64
+   },
    "format": "int8 weights and operands, int32 sums; bias added; ReLU; (v + 2^8) >> 9, held at 127",
-   "shift": 9
+   "shift": 9,
+   "weights_layout": "[output_feature, input_feature]",
+   "bias_layout": "[output_feature]",
+   "reference_stage_output_artifact": "fc1_relu_int8"
   },
   {
    "id": "FC2",
+   "operation": "dense affine 64-to-64, bias, ReLU, rescale",
    "engine": "G100",
+   "logical_shape": {
+    "input_features": 64,
+    "output_features": 64
+   },
    "format": "the same as FC1",
-   "shift": 9
+   "shift": 9,
+   "weights_layout": "[output_feature, input_feature]",
+   "bias_layout": "[output_feature]",
+   "reference_stage_output_artifact": "fc2_relu_declared_format"
   },
   {
    "id": "FC3",
+   "operation": "dense affine 64-to-16, its codes the declared reference; the bias is the class's, on the CPU",
    "engine": "PTA, 128 x 64 tile, one shot a vector",
-   "activation_conversion": "min((x + 2) >> 2, 31) of FC2's output x",
+   "logical_shape": {
+    "input_features": 64,
+    "output_features": 16
+   },
+   "approved_integration_assumptions": {
+    "tile_geometry": "128x64",
+    "activation_bits": 6,
+    "weight_bits": 6,
+    "weights_trained_for_tile": true,
+    "output_adc_bits": 8,
+    "shot_accounting": "one vector is one shot"
+   },
+   "activation_conversion": {
+    "source": "FC2 output after ReLU, 0..127",
+    "method": "top-six-bit quantizer, rounded half up and held",
+    "exact_integer_mapping_scale_saturation_and_rounding": "min((x + 2) >> 2, 31) of FC2's output x",
+    "status": "pinned"
+   },
+   "weights": {
+    "training_recipe_id": "B20: FC3 at 6 bits with noise of 0.1 of its sums' rms, from the 8-bit network, 8 epochs",
+    "artifact_id": "fc3_weights_6bit",
+    "prohibited_substitute": "int8 weights truncated to six bits"
+   },
    "format": "6-bit activation codes 0..31, 6-bit weight codes -32..31, exact sum s; the 8-bit converter's code floor(s / 32 + 1/2), held to -128..127, a held code a range fault",
    "converter_step_in_sum_units": 32,
-   "class": "the largest of code x 512 + bias, the lowest index on a tie"
+   "class": "the largest of code x 512 + bias, the lowest index on a tie",
+   "reference_stage_output_artifact": "fc3_declared_format_reference"
   }
  ],
  "training": {
@@ -83,11 +151,26 @@
   "canary_network": "pta_mnist train --din 8 --wbits 6 --host 2 --seed 1 --hidden 2 --from h2_d8_b8_s1.net --sumnoise 0.1 --epochs 8: din=8 wbits=6 seed=1 from=8 from_epochs=6 epochs=8 held_out=97.52 digital=96.84 hidden=2 host=2 sumnoise=0.1 got=0.0000,0.0000,0.0999 fixed_epochs=8",
   "seeds": "the network's seed, 1; the training's shuffles and noise are drawn from it by the harness",
   "checkpoint_selection_rule": "the seed rule above; the training runs a fixed eight epochs",
-  "determinism": "trained twice, byte for byte the same network; written twice, byte for byte the same tensors"
+  "determinism": "trained twice, byte for byte the same network; written twice, byte for byte the same tensors",
+  "model_source_revision": "grx930 a98656d (harness/ here): the network's shape and file, -DN_SIDE=8 -DN_HID=64 -DN_OUT=16",
+  "training_code_revision": "grx930 a98656d (harness/ here), which trains the canary byte for byte as first trained at grx930 97e8631",
+  "container_or_environment_digest": "no container: the environment is environment.lock's, whose SHA-256 is 425dc449539a4ef773c4c1b02b2469fcab4c45122731e6a8c407efd7ca45513e",
+  "dependency_lock_digest_sha256": "425dc449539a4ef773c4c1b02b2469fcab4c45122731e6a8c407efd7ca45513e",
+  "training_command": "SHAPE=chain PIXELS=as-is sim/pta_mnist.sh MNIST_GZ WORK canary: pta_mnist train --din 8 --wbits 8 --seed 1 --hidden 2; then pta_mnist train --din 8 --wbits 6 --host 2 --seed 1 --hidden 2 --from h2_d8_b8_s1.net --sumnoise 0.1 --epochs 8",
+  "training_seed": 1,
+  "all_random_seeds_and_rng_algorithms": "the harness's splitmix64, three streams from --seed and --wbits: the initial weights, each epoch's shuffle, and the training noise; nothing else is random",
+  "optimizer_hyperparameters_and_epochs": "Adam as Keras has it, lr 1e-3, beta1 0.9, beta2 0.999, epsilon 1e-7, weights held to -1..1; batches of 32; softmax with cross entropy; the 8-bit network until held-out accuracy stops rising, the canary 8 epochs",
+  "training_data_split_and_digest": "the first 54,000 training images, as FC1 takes them: SHA-256 abc217d5f5286233af688d334bd1e1f5cfc9a6d0179804cc2f9b8505ad337c66",
+  "validation_split_and_digest": "the last 6,000 training images, as FC1 takes them: SHA-256 ba2faf719d813f20ad2779bb1512d64232d82114760fdc0eee75b928e6c802a0; its first 1,000 are the calibration set",
+  "test_acceptance_split_and_digest": "the first 1,000 test images: inputs SHA-256 d968e50d76c4c3bfe3b0d0020db73fc0a1bade8f794cba389216f0777f0f23c4",
+  "quantization_aware_training_or_calibration_method": "weights rounded in the forward pass, FC1 and FC2 at 8 bits with no noise, FC3 at 6 bits with Gaussian noise of 0.1 of its sums' rms",
+  "tile_noise_model_revision_and_parameters": "in training, --sumnoise 0.1 on FC3's sums; at Gate F, grx930's tile model (harness/pta_tile_model.c) with version 2's budget (B14) and B16's source",
+  "status": "pinned; trains again byte for byte (reports/regeneration.txt)"
  },
  "generation": {
   "command": "SHAPE=chain sim/pta_mnist.sh MNIST_GZ WORK canary; then SHAPE=chain sim/pta_mnist.sh MNIST_GZ WORK golden",
-  "harness_line": "golden: net_seed=1 net_wbits=6 net_host=2 images=1000 cal=1000 cal_first=54000 abits=6 adcbits=8 tile=128x64 sh=9,9 S=9 code_shift=5 clipped=0 tile_differ=0 of 32000 act_differ=0 of 256000 declared_right=96.60 highprec_right=96.80 highprec_agree=99.20"
+  "harness_line": "golden: net_seed=1 net_wbits=6 net_host=2 images=1000 cal=1000 cal_first=54000 abits=6 adcbits=8 tile=128x64 sh=9,9 S=9 code_shift=5 clipped=0 tile_differ=0 of 32000 act_differ=0 of 256000 declared_right=96.60 highprec_right=96.80 highprec_agree=99.20",
+  "regenerated": "2026-10-15, by regenerate.sh in an empty directory: every tensor, network and id list byte for byte (reports/regeneration.txt)"
  },
  "artifacts": [
   {
@@ -353,7 +436,130 @@
    "sha256": "cf76707136c336ab3e9e45fb941568dc87a4e085dfcba8ccf51622aaa8feb9e6"
   }
  ],
+ "package": [
+  {
+   "path": "CONTRACT.md",
+   "role": "numerical_contract",
+   "about": "the numerical contract: every step of the chain, its rounding, saturation and order, and Gate F",
+   "byte_length": 5388,
+   "sha256": "686ea3a77bb1ddd0241cc04af6fd1060c4e95d548e1c58096bf52a42e0e7445d"
+  },
+  {
+   "path": "environment.lock",
+   "role": "dependency_lock",
+   "about": "the environment the tensors were made and made again in: OS, kernel, compiler, C library, Python, and every package's version as dpkg has it",
+   "byte_length": 1529,
+   "sha256": "425dc449539a4ef773c4c1b02b2469fcab4c45122731e6a8c407efd7ca45513e"
+  },
+  {
+   "path": "regenerate.sh",
+   "role": "generation_script",
+   "about": "makes the canary again from harness/ and MNIST's four archives, and holds every tensor, network and id list here to this folder's own",
+   "byte_length": 3863,
+   "sha256": "27f858fe338c8cdaef8969ff0c1d7e32b79584b23b69fba0fcf290dd588fedef"
+  },
+  {
+   "path": "harness/pta_mnist.c",
+   "role": "generation_source",
+   "about": "grx930 c930/sim/pta_mnist.c at a98656d: training, the golden pass and the PTA's model",
+   "byte_length": 326096,
+   "sha256": "495e370989f7275ba05fc276e8b9a894b03fa5b463274923b7ef2b564b3a728d"
+  },
+  {
+   "path": "harness/pta_mnist.sh",
+   "role": "generation_source",
+   "about": "grx930 c930/sim/pta_mnist.sh at a98656d: the canary and golden modes",
+   "byte_length": 519831,
+   "sha256": "66d50632de0b6f66a3fa2191f933aa59b4f46bae57ca966fd60e34ae58682a03"
+  },
+  {
+   "path": "harness/pta_tile_model.c",
+   "role": "generation_source",
+   "about": "grx930 c930/sim/pta_tile_model.c at a98656d: the tile's C reference",
+   "byte_length": 17776,
+   "sha256": "a9d008d8ee6ed367a364c22cb2f7a978dbe566b3a0fa625e563ed536add385bd"
+  },
+  {
+   "path": "harness/pta_tile_model.h",
+   "role": "generation_source",
+   "about": "grx930 c930/sim/pta_tile_model.h at a98656d",
+   "byte_length": 9502,
+   "sha256": "dd5255ccf8f6fa02f67f9f621d8efe065cfcf32b953f14aa24b288a8cb70b186"
+  },
+  {
+   "path": "reports/corpus.txt",
+   "role": "validation_report",
+   "about": "the corpus worked out apart from the harness from MNIST's archives: pooling, splits and their digests, leakage",
+   "byte_length": 2675,
+   "sha256": "6ce9e4709978bf28d3faa949bdd3ade21df077cc8c50064e165692cc61e54706"
+  },
+  {
+   "path": "reports/generation.txt",
+   "role": "validation_report",
+   "about": "how the tensors were made: the networks' training lines, the golden line, written twice the same",
+   "byte_length": 1616,
+   "sha256": "4eb653f83e5f5c482064f292cc139b5b1aa5a3c6b2973a10f3a626f4514c00bd"
+  },
+  {
+   "path": "reports/check.txt",
+   "role": "validation_report",
+   "about": "GRXCP's checker, written apart from the harness: every tensor worked out again, byte for byte",
+   "byte_length": 961,
+   "sha256": "e955e51e196d2dbc38591a0183ee22774daf013ad1050c4b9d36f1a67806ee3f"
+  },
+  {
+   "path": "reports/regeneration.txt",
+   "role": "validation_report",
+   "about": "regenerate.sh run from a copy of this folder in an empty directory: every tensor, network and id list the same",
+   "byte_length": 963,
+   "sha256": "68c1160b1a3dc84a90bd62627398eb22706b544b8d54469bd47a33a6b4fea3a3"
+  },
+  {
+   "path": "reports/band.txt",
+   "role": "validation_report",
+   "about": "GRXCP's band model on the canary's 8,805 model runs: the band, class and tail, and how often each factor of the budget passes",
+   "byte_length": 2263,
+   "sha256": "5b000c1543a80f3c776fd360c066432867684d9623ca8969f906fcb878a2783a"
+  },
+  {
+   "path": "reports/ablation.txt",
+   "role": "validation_report",
+   "about": "errors planted in the harness, its modes and both checkers, and how many each check caught",
+   "byte_length": 20272,
+   "sha256": "219fea7fa32d8df05e45271de108c1ffd473b78d66883206a4b2ebd179c11c53"
+  }
+ ],
+ "reference_contract": {
+  "implementation_path": "harness/pta_mnist.c golden_image() here; written apart and agreeing byte for byte, GRXCP docs/designs/pta_board_canary_golden.py",
+  "contract_document": "CONTRACT.md",
+  "source_revision": "grx930 a98656d",
+  "source_sha256": {
+   "pta_mnist.c": "495e370989f7275ba05fc276e8b9a894b03fa5b463274923b7ef2b564b3a728d",
+   "pta_mnist.sh": "66d50632de0b6f66a3fa2191f933aa59b4f46bae57ca966fd60e34ae58682a03",
+   "pta_tile_model.c": "a9d008d8ee6ed367a364c22cb2f7a978dbe566b3a0fa625e563ed536add385bd",
+   "pta_tile_model.h": "dd5255ccf8f6fa02f67f9f621d8efe065cfcf32b953f14aa24b288a8cb70b186"
+  },
+  "runtime_and_tool_versions": "os: Ubuntu 24.04.3 LTS (ubuntu 24.04); kernel: 6.18.33.2-microsoft-standard-WSL2; machine: x86_64; cc: gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0; cc_flags: -O2 -std=c99 -Wall -Wextra -pedantic -DN_SIDE=8 -DN_HID=64 -DN_OUT=16, linked with -lm; ld: GNU ld (GNU Binutils for Ubuntu) 2.42; libc: ldd (Ubuntu GLIBC 2.39-0ubuntu8.9) 2.39; python3: Python 3.12.3",
+  "operation_order": "FC1: sum of input x weight, plus bias, ReLU, rescale, hold; FC2 the same; the CPU's conversion to 6-bit codes; FC3: sum of code x weight code, the converter's code; the CPU's class: code x 512 plus bias, the largest",
+  "integer_rounding_and_tie_rules": "every rounding half up: the rescale (v + 256) >> 9; the conversion (x + 2) >> 2; the converter floor(s / 32 + 1/2); the pooling (2s + 9) div 18; the input (127p + 127) div 255",
+  "saturation_and_overflow_rules": "FC1 and FC2 held at 0 by the ReLU and at 127 after the rescale; the conversion held at 31; the converter held to -128..127, a held code a range fault, none in either set; every sum in int32 with room, none can overflow",
+  "per_layer_scales_zero_points_and_shifts": "zero points 0 throughout; FC1 and FC2 shift 9; FC3's activation and weight codes are the operands over 4; the converter's step is 32 of FC3's code sums, 2^9 of its operand sums",
+  "bias_units_and_application_order": "FC1 and FC2: int32 in their sums' units, added before the ReLU; FC3: int32 in units of 2^-9 of a code, added to code x 512 for the class only, never to the reference",
+  "argmax_tie_break_rule": "the lowest output index of those equal; none of the acceptance or calibration vectors ties",
+  "status": "executable: two implementations agree byte for byte; independent review pending"
+ },
  "gate_f": {
+  "pta_shot_rule": "one ordered vector per shot; do not average output values over repeats",
+  "denominator_validity": "sum(reference^2) over the full acceptance tensor must be positive; otherwise NRMS is undefined and the acceptance calculation halts for review without substituting a different denominator",
+  "repeat_reporting": "report each run and repeat-to-repeat variation separately, including fixed-between-calibration error",
+  "range_rule": "manifest range covers reference minimum and maximum; any clipping is a range fault",
+  "maximum_error_reporting": "report per-run maximum absolute error",
+  "tail_reporting": "report count and fraction beyond the ruled threshold",
+  "physical_rms_band_status": "ruled 2026-10-15 (GRXCP B22)",
+  "physical_tail_status": "ruled 2026-10-15 (GRXCP B22)",
+  "class_agreement_threshold_status": "ruled 2026-10-15 (GRXCP B22)",
+  "draft_one_percent_rms_ceiling_approved": false,
+  "draft_two_percent_pointwise_maximum_approved": false,
   "reference": "fc3_declared_format_reference, the converter's codes",
   "per_run_normalized_rms_percent": "100 * sqrt(sum((output - reference)^2) / sum(reference^2)) over 1,000 vectors x 16 outputs, in codes",
   "output_scale": "one scale for FC3, the least-squares slope through the origin of calibration_fc3_reference on the PTA's codes over the calibration set, the PTA's codes times it; fixed once a calibration, never on the acceptance vectors",
@@ -385,10 +591,34 @@
    }
   }
  },
+ "stand_in": {
+  "source": "grxgpu's manifest draft of 2026-10-14, as it stands; GRXCP's proposal section 6 asks the owner to rule on it",
+  "approved_for_integration_and_reliability_if_contract_conditions_are_met": true,
+  "must_be_separately_addressable_and_use_real_module_link": true,
+  "must_report_model_status_register": "PTA_CAPS2[31]",
+  "comparison": "exact equality to seeded declared-format reference; zero differing outputs",
+  "counts_as_photonic_device_evidence": false,
+  "can_establish_pta_product_value_latency_or_energy": false,
+  "implementation_path_owner_schedule": "not part of the canary's freeze, as the owner ruled on 2026-10-15: it belongs to the stand-in's own plan (GRXCP's proposal section 6, ruling 1)"
+ },
  "serialization": {
   "hash_algorithm": "SHA-256",
   "byte_order": "little-endian",
   "tensor_file_format": "headerless raw bytes; shape, type and encoding as above",
-  "json_digest": "SHA-256 of this file's canonical form: keys sorted, no whitespace, UTF-8; with no number but integers and no character past ASCII in it, that is RFC 8785's form (JCS)"
+  "json_digest": "SHA-256 of this file's canonical form: keys sorted, no whitespace, UTF-8; with no number but integers and no character past ASCII in it, that is RFC 8785's form (JCS)",
+  "json_encoding": "UTF-8",
+  "json_canonicalization_for_digest": "RFC 8785 JSON Canonicalization Scheme; detached manifest digest to avoid self-hash recursion",
+  "float_policy": "No NaN or Infinity; no binary floating point in any declared-format value or in this file",
+  "manifest_sha256": "detached: never in this file; SHA256SUMS holds this file's digest and the change record's pull request its canonical one",
+  "manifest_digest_status": "computed at each revision; the frozen revision's is the one the approval names"
+ },
+ "approval": {
+  "workload_freeze_dri": "Gridworkz",
+  "calendar_freeze_date_utc": "2026-11-25",
+  "approved_by": null,
+  "approval_timestamp_utc": null,
+  "independent_reviewer": null,
+  "independent_reviewer_assigned": "the grxgpu team, as the owner ruled on 2026-10-15",
+  "status": "not_frozen"
  }
 }

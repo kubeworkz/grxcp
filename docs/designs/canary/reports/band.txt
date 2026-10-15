@@ -1,0 +1,34 @@
+# GRXCP's band model, docs/designs/pta_board_band.py, on the canary's 8,805 model runs
+# (docs/designs/pta_board_band_runs.csv.gz): the band, class and tail the owner ruled (B22).
+
+The first board's canary: Gate F's band, as the rule gives it and the owner ruled it (B22).
+  8805 runs; every table the mode printed, worked out again from them
+  the band, by the rule written before the sweep, on the rms error over the reference's rms
+  with the scale: 2.5% to 7.3%
+  the class with the scale the reference's on at least 98.5% of the 1,000 vectors
+  the tail: at most 16 of the 16,000 outputs 17 or more codes off
+  from repeat to repeat, one source: 0.043 points; from source to source: 0.497
+
+  the canary's draws              draws  refused    band   class    tail     all
+  as budgeted                      1000        0   100.0   100.0   100.0   100.0
+  as budgeted, lit                 1000        0   100.0   100.0   100.0   100.0
+  lit, 0.4 of the budget           1000        0     5.2   100.0   100.0     5.2
+  lit, 0.6 of the budget           1000        0   100.0   100.0   100.0   100.0
+  lit, 0.8 of the budget           1000        0   100.0   100.0   100.0   100.0
+  lit, 1.2 of the budget           1000        0    92.0    98.6    99.5    91.6
+  lit, 1.4 of the budget           1000       20    46.0    88.2    95.5    44.3
+  as budgeted, lit, ten sources    1000        0   100.0   100.0   100.0   100.0
+  the four others lit at the budget, passing all three: seed 2 99%, seed 3 100%, seed 4 100%, seed 5 100%
+
+  predictions written with the rule:
+    right: format alone exact on every network; the canary's reference 96.60%
+    WRONG: lit at the budget: mean 4.5 to 4.9, sd 0.05 to 0.25, largest at most 5.5
+    right: as budgeted, no source: mean 3.1 to 3.5
+    right: the lit rows rise with the factor; the 0.6 row's mean 2.4 to 3.3
+    WRONG: the 1.2 row's mean 5.3 to 6.0, under a tenth of it at or under the budget row's largest
+    right: class lit at the budget: mean 99.1 to 99.6, least at least 98.5
+    WRONG: eight or more codes off, lit at the budget: mean 2 to 20, most at most 60
+    right: seeds 2 to 5 lit at the budget: each within 0.6 of the canary
+    WRONG: the mode's check says yes on its first sweep
+
+All checks pass.
