@@ -336,7 +336,8 @@ def main():
             for it in items:
                 print("  " + it)
             sys.exit(1)
-        print("Ready to freeze: no field empty or pending, no blocker, and approved.")
+        print(("Frozen" if manifest["manifest_status"] == "frozen" else "Ready to freeze")
+              + ": no field empty or pending, no blocker, and approved.")
         return
     print()
     print("All checks pass.")

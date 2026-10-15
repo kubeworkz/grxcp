@@ -312,6 +312,9 @@ script that makes them again, and the reports. The manifest is on every field
 of grxgpu's template, as revision 0.3-candidate. Run from an empty directory,
 the script made all 23 artifacts again, byte for byte. The checker's `--freeze`
 fails closed, and names only grxgpu's review and the owner's approval.
+*And frozen, the same day* (§4.2, B23). The grxgpu team reviewed the package,
+and every check passed with no finding. The owner approved the freeze at 21:16
+UTC. The manifest is revision 1.0, frozen, and `--freeze` passes.
 X2 has made its predictions (§3.3), X1 its budget (§4.3), and P0, X3 and X4
 are drafted as [`board_icd.md`](board_icd.md),
 [`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) and
@@ -1307,6 +1310,9 @@ layer mis-sized, and the NPU's read-ahead dropped.
 - *And §10.16 of it, the same day*
   ([kubeworkz/grxgpu#23](https://github.com/kubeworkz/grxgpu/pull/23)): the
   canary's freeze package, and the review the owner asked of grxgpu.
+- *And §10.17 of it, the same day*
+  ([kubeworkz/grxgpu#24](https://github.com/kubeworkz/grxgpu/pull/24)): the
+  canary frozen.
 
 **The demonstration's last layer, on a stand-in (2026-10-13).**
 [`pta_board_chain.py`](pta_board_chain.py) holds what grx930's harness ran (its
@@ -2055,6 +2061,24 @@ What it is not. Everything the blocks before say of themselves. **The freeze**,
 which is the owner's on or before 2026-11-25, after grxgpu's review. **The
 engines' own runs**: FC1 on the NPU and FC2 on the G100 against their stage
 references are tested in integration, after the freeze (B23). It records B23.
+
+**Frozen (2026-10-15).** The grxgpu team reviewed the freeze package, the
+independent review B23 asked of it, and every check passed with no finding. The
+owner reported the review the same day and approved the freeze at 21:16 UTC.
+[`canary/manifest.json`](canary/manifest.json) is revision 1.0, frozen: the
+review and the approval recorded, no blocker left, and no artifact or package
+file changed from 0.3-candidate. Its canonical SHA-256 is
+`07aec98cbf06d3f54942f00419ec96caadfd443615df890f3b279623a89ecf7e`. There is no
+written review in grxgpu's repository; the owner's report is the record, and
+grxgpu's own words would go in the change record.
+
+**What the freeze fixes.** The canary's network, its vectors, every reference
+tensor, the numerical contract, and Gate F's band, class and tail (B22). A
+change to any of them is a new revision, with its reason and the owner's
+approval. What follows it: the engines' runs against their stage references in
+integration (B23); and qualification, which needs its own authorization. Still
+open apart from the canary: the stand-in, and a band set per board (§8,
+question 11).
 
 ### 4.3 To the PTA chiplet: EIC requirements
 
@@ -5737,6 +5761,10 @@ each a new revision, and nothing else before 2026-11-25.
 **What it does not settle.** The review's findings, and the approval. The
 stand-in. A band set per board (question 11). B5 and B10 to B22 stand. *Needed
 by:* the freeze on 2026-11-25.
+
+*Reviewed, approved and frozen, 2026-10-15* (§4.2, "Frozen"). The grxgpu team's
+review found nothing. The owner approved at 21:16 UTC: the freeze B19 set for
+2026-11-25 at the latest was made on 2026-10-15. The manifest is revision 1.0.
 
 ---
 
