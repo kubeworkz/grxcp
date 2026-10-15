@@ -1,0 +1,40 @@
+# The canary's build and run environment, captured 2026-10-15T15:42:52Z
+os: Ubuntu 24.04.3 LTS (ubuntu 24.04)
+kernel: 6.18.33.2-microsoft-standard-WSL2
+machine: x86_64
+cpu: 13th Gen Intel(R) Core(TM) i5-1335U
+cc: gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0
+cc_target: x86_64-linux-gnu
+cc_flags: -O2 -std=c99 -Wall -Wextra -pedantic -DN_SIDE=8 -DN_HID=64 -DN_OUT=16, linked with -lm
+ld: GNU ld (GNU Binutils for Ubuntu) 2.42
+libc: ldd (Ubuntu GLIBC 2.39-0ubuntu8.9) 2.39
+bash: GNU bash, version 5.2.21(1)-release (x86_64-pc-linux-gnu)
+awk: /usr/bin/gawk
+python3: Python 3.12.3
+# packages, as dpkg has them installed: name version architecture
+bash 5.2.21-2ubuntu4 amd64
+binutils 2.42-4ubuntu2.10 amd64
+binutils-x86-64-linux-gnu 2.42-4ubuntu2.10 amd64
+coreutils 9.4-3ubuntu6.3 amd64
+cpp-13 13.3.0-6ubuntu2~24.04.1 amd64
+diffutils 1:3.10-1ubuntu0.1 amd64
+findutils 4.9.0-5build1 amd64
+gawk 1:5.2.1-2ubuntu0.1 amd64
+gcc 4:13.2.0-7ubuntu1 amd64
+gcc-13 13.3.0-6ubuntu2~24.04.1 amd64
+gcc-13-base 13.3.0-6ubuntu2~24.04.1 amd64
+grep 3.11-4build1 amd64
+gzip 1.12-1ubuntu3.2 amd64
+libbinutils 2.42-4ubuntu2.10 amd64
+libc-dev-bin 2.39-0ubuntu8.9 amd64
+libc6 2.39-0ubuntu8.9 amd64
+libc6-dev 2.39-0ubuntu8.9 amd64
+libgcc-13-dev 13.3.0-6ubuntu2~24.04.1 amd64
+libpython3.12-stdlib 3.12.3-1ubuntu0.17 amd64
+linux-libc-dev 6.8.0-147.147 amd64
+mawk 1.3.4.20240123-1build1 amd64
+python3 3.12.3-0ubuntu2.1 amd64
+python3-minimal 3.12.3-0ubuntu2.1 amd64
+python3.12 3.12.3-1ubuntu0.17 amd64
+sed 4.9-2ubuntu0.24.04.1 amd64
+tar 1.35+dfsg-3ubuntu0.4 amd64

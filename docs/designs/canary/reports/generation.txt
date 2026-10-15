@@ -1,0 +1,20 @@
+# How the canary's tensors were made, on 2026-10-14, by grx930's harness at commit 807ac68, whose
+# pta_mnist.c had SHA-256 32a67d46f3ec475775b057572e558f35764a97953630c2516eab5e327962d977. The
+# harness kept in harness/ (grx930 a98656d) makes every one of them again, byte for byte: in the
+# band step's guard of 2026-10-15, and from nothing in reports/regeneration.txt.
+
+The 8-bit network of seed 1, as `pta_mnist train --din 8 --wbits 8 --seed 1 --hidden 2` wrote it:
+  din=8 wbits=8 seed=1 from=0 from_epochs=0 epochs=6 held_out=96.93 digital=96.08 hidden=2
+
+The canary, as `pta_mnist train --din 8 --wbits 6 --host 2 --seed 1 --hidden 2 --from h2_d8_b8_s1.net
+--sumnoise 0.1 --epochs 8` wrote it:
+  din=8 wbits=6 seed=1 from=8 from_epochs=6 epochs=8 held_out=97.52 digital=96.84 hidden=2 host=2 sumnoise=0.1 got=0.0000,0.0000,0.0999 fixed_epochs=8
+
+The golden mode wrote the tensors twice, into folders of their own, and the two were the same, byte
+for byte. Its line:
+  golden: net_seed=1 net_wbits=6 net_host=2 images=1000 cal=1000 cal_first=54000 abits=6 adcbits=8 tile=128x64 sh=9,9 S=9 code_shift=5 clipped=0 tile_differ=0 of 32000 act_differ=0 of 256000 declared_right=96.60 highprec_right=96.80 highprec_agree=99.20
+
+clipped=0: no code of either set is held at the converter's range. tile_differ=0: the tile's C
+reference with its format alone gives every code. act_differ=0: the host gives every hidden
+operand. declared_right: how often the declared reference's class is the label; highprec_right and
+highprec_agree: the trained network in double precision, and how often its class is the reference's.
