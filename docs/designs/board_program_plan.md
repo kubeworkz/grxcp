@@ -325,6 +325,9 @@ waited on it, and can be written.
 reaches the module as the host path's descriptor in a ring in host memory, and
 at x16 the link carries the canary at up to 93% of the PTA's working rate,
 before headers.
+*And the stand-in and the map ruled, the same day* (B25): a stand-in for
+integration only, the map the discovery contract on both boards, and two of the
+transport's rules.
 X2 has made its predictions (§3.3), X1 its budget (§4.3), and P0, X3 and X4
 are drafted as [`board_icd.md`](board_icd.md),
 [`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) and
@@ -1341,6 +1344,9 @@ layer mis-sized, and the NPU's read-ahead dropped.
   ([kubeworkz/grxgpu#26](https://github.com/kubeworkz/grxgpu/pull/26)): the
   first board's interfaces and the PTA's transport, which keep the host path's
   descriptor.
+- *And §10.20 of it, the same day*
+  ([kubeworkz/grxgpu#26](https://github.com/kubeworkz/grxgpu/pull/26)): the
+  stand-in and the map, as the owner ruled its first two questions.
 
 **The demonstration's last layer, on a stand-in (2026-10-13).**
 [`pta_board_chain.py`](pta_board_chain.py) holds what grx930's harness ran (its
@@ -5848,6 +5854,39 @@ bytes each, 64 GB/s out and not 16, so both directions bind at once. After PCIe
 direction, 0.927 GS/s on the canary's shape: 93% of the working rate, before
 headers. The conclusion stands. And the PTA reads its operands coherently, but
 as the transport has it caches none of them, so no snoop finds a line on it.
+
+**B25 — The stand-in, the discovery contract, and two rules of the queue.**
+*Settled 2026-10-15.*
+
+B18 put two questions to grxgpu that stayed open after B24: what may stand in
+for the PTA, and whether its map is its discovery contract. With the transport
+written (B24, at its end), the owner ruled both at 23:52 UTC, and two choices
+the transport had made:
+
+| | Ruled |
+|---|---|
+| The stand-in (the proposal's first question) | **Yes, for integration only.** An FPGA module with an emulated 128 × 64 tile may take the PTA's place in the first board's integration and reliability runs. It is reached over the module's real CXL link, the ICD's F1, and reports `PTA_CAPS2[31]`. Its outputs are checked exactly against the seeded reference, and nothing it shows is claimed for a photonic PTA |
+| The register map (the proposal's second question, and X4) | **Yes, on both boards.** The PTA's map, version 1, is its discovery contract: page 0 of the module's BAR on the first board, beside the queue's `PTQ_ID` on page 1, and the GPU's window on rev A. Subject to verification on a module |
+| A lost GEMM's results ([`pta_board_transport.md`](pta_board_transport.md) §5) | **Undefined.** The host may reuse the buffer once the slot has ended |
+| Configuration between queued GEMMs (the transport's C11) | **Only with the queue drained, for now** |
+
+The stand-in is the proposal's own category, with all its limits: the
+integration items of Gate F and the reliability package, raw outputs checked
+exactly, latency and energy reported as a stand-in's, the product-value targets
+not evaluable on it, and the bit in every run manifest.
+
+**What follows.** The first board's integration has something it may run on
+before there is a photonic module, once someone builds it. X5's twin, held to
+the error model bit for bit, is what such a module's outputs would be checked
+against, and the twin behind the transport is the way to bring the driver up
+first. The map stays X4's, version 1, and a change to it is a new version on
+both boards. The transport's §5 and its §10, items 5, 8 and 10, are ruled where
+they were proposed.
+
+**What it does not settle.** Who builds the stand-in, on which FPGA, and by
+when: no RTL exists at 128 × 64, the gap the proposal's §3.5 states. Register
+writes in the queue, should a network's layers need settings that differ. B5
+and B10 to B24 stand. *Needed by:* the stand-in's build, and S4's transport.
 
 ---
 

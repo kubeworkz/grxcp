@@ -558,8 +558,10 @@ seed. Nothing counts the bytes moved: that is the host path's §7, question 8.
 6. **Part selection** for the DDR, the controller, the connectors and the clock
    sources, and the currents on every rail of §9.3.
 7. **The reference clock's arrangement** for F1.
-8. **Whether the PTA module is photonic or a stand-in.** The reconciliation
-   proposal's question 1 to grxgpu, open.
+8. **Whether the PTA module is photonic or a stand-in.** *A stand-in is allowed
+   for integration since 2026-10-15* (the board plan's B25), reached over F1
+   and reporting `PTA_CAPS2[31]`. Who builds one is not named, and no RTL
+   exists at 128 × 64.
 9. **The module's vendor and device IDs**, and the rest of what the transport's
    §10 lists.
 

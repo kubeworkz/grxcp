@@ -250,7 +250,8 @@ would need the module to hold a whole GEMM's results: 64 kB for the canary's
 thousand vectors, a megabyte for X2's 4096-square layer at a batch of 64. So a
 lost GEMM's results are undefined, and the host may reuse the buffer once the
 slot has ended. S4's driver says "C untouched" of every failure today. On this
-transport it would say so of every failure but a lost one (§9).
+transport it would say so of every failure but a lost one (§9). *Ruled so on
+2026-10-15* (the board plan's B25).
 
 **The index comes from the record.** S4's property needs a GEMM's index to say
 what the GEMM ran on. With a queue, a read of `PTA_GEMM_CT` before a GEMM no
@@ -278,7 +279,7 @@ C11 is the map's rule that configuration takes effect at the next GEMM start,
 made safe for a queue. A register write over CXL.io does not wait for the ring,
 so the driver writes `PTA_IMPAIR`, `PTA_BITS`, `PTA_SEED` and the rest only
 with the queue drained. A network whose layers need different settings pays a
-drain between them (§10, item 5).
+drain between them (§10, item 5). *Ruled so for now, 2026-10-15* (B25).
 
 ---
 
@@ -471,6 +472,8 @@ and its ticks are not nanoseconds.
    shift for one, drains between them. The alternative is a second kind of
    ring entry that writes a register in order, as the host path's command list
    carries DCR writes.
+   *Drained only, for now: ruled 2026-10-15 (B25).* The second kind of entry
+   stays open.
 6. **Results as codes.** A format that returns the converter's 8-bit codes,
    one byte each, would double a full tile's rate over this link. The canary's
    shape is bound by its inputs either way. The canary's declared reference is
@@ -478,14 +481,15 @@ and its ticks are not nanoseconds.
    bytes.
 7. **Resident weights**, bit 19 of `target`, and the module's cache with them
    (§3).
-8. **Lost: undefined, or buffered** (§5). Undefined is proposed here.
+8. ~~**Lost: undefined, or buffered**~~ (§5). *Ruled 2026-10-15 (B25):
+   undefined.*
 9. **What a crossing, a doorbell and an interrupt cost in time.** Nothing here
    says, and the board measures it.
-10. **The stand-in, and the map as the discovery contract**: the questions 1
-    and 2 put to grxgpu in the reconciliation proposal's §6, both open.
-    grxgpu's draft decision of 2026-10-14 would take both as GRXCP
-    recommended. It is untracked and unratified, and the owner has not ruled
-    either.
+10. ~~**The stand-in, and the map as the discovery contract**~~: the questions
+    1 and 2 put to grxgpu in the reconciliation proposal's §6. *Ruled
+    2026-10-15 (B25):* a stand-in for integration only, over F1 and reporting
+    `PTA_CAPS2[31]`, and the map the discovery contract on both boards. Who
+    builds a stand-in is still open, and no RTL exists at 128 × 64.
 11. **The PTA's parent and its buffers in grxcp** (§3). What `parentDevice`
     reports on the first board, and how `grxMallocHost` or `grxHostRegister`
     gives the physically contiguous memory a descriptor's one address needs.

@@ -107,6 +107,13 @@ model when it is built with the reference error model behind it (the PTA plan's
 S2): the model on its own, its arithmetic with no tile's timing. No RTL build
 reports 3. The board plan's X5 twin is the same kind of object.
 
+*The discovery contract on both boards, ruled 2026-10-15* (the board plan's
+B25). This map, version 1, is how a driver finds and identifies the PTA: in the
+GPU's window on rev A, and on page 0 of the PTA module's own BAR on the first
+board, where the transport's queue page adds `PTQ_ID` beside it. A change to
+any field here is a new version of the map on both boards. It is subject to
+verification on a module.
+
 ---
 
 ## 3. Interrupts, new
