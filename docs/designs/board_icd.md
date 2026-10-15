@@ -1,4 +1,4 @@
-# GRX development board: interfaces, rev A
+# GRX development boards: interfaces, rev A and the first board
 
 **Companions:** [`board_program_plan.md`](board_program_plan.md),
 [`chip_vs_board_strategy.md`](chip_vs_board_strategy.md),
@@ -14,11 +14,11 @@ sourced it says so rather than inventing one — §7 collects those.
 *Since 2026-10-11 this is not the first board* (the board plan's B18). The
 first development board is the GRXGPU charter's modular carrier, with the
 G100 and the PTA as modules on a GRX930 host, and this document describes the
-board after it. No link below is the first board's. A section for the first
-board is owed here, and waits on which bus reaches the PTA module from the
-host, which has been asked of the grxgpu team.
+board after it. No link in §1 to §8 is the first board's. *Its section is §9,
+since 2026-10-15,* written once the owner ruled the PTA module's link (the
+board plan's B24): CXL 2.0 from the GRX930, the module a Type-1 device.
 
-**How to read the source column.** `B1`–`B7` are the board plan's decisions,
+**How to read the source column.** `B1`–`B24` are the board plan's decisions,
 `X1` and `X2` its chiplet work, `C1` grx930's error-model gate. A standard
 named without a clause number means the number is the standard's to give and
 has not been read out of it here. *Open* means nobody has sourced it yet.
@@ -364,6 +364,10 @@ board plan's §8 holds the ones that are questions rather than gaps.
    chiplet team together, and the twin waits on it for a data path that is more
    than a function call. What the GPU is asked to carry has been proposed (§2,
    link 2's last note); the framing has not.
+   *Answered for the first board, 2026-10-15* (§9.2, F1, and
+   [`pta_board_transport.md`](pta_board_transport.md)): a GEMM is the host
+   path's descriptor in a ring in host memory, the ring is its flow control,
+   and a record says how it ended. For rev A, link 2's framing is still owed.
 
 ---
 
@@ -383,3 +387,190 @@ What this document cannot close is §7. P1 and part selection close most of it;
 the chiplet's topology closes the rest, because it decides what link 4
 carries. Its geometry and its shot rate were the other two of those, and are
 working ones since the board plan's B10 and B11.
+
+---
+
+## 9. The first board
+
+*Added 2026-10-15.* The first board is the GRXGPU charter's modular carrier
+(the board plan's B18): the GRX930 SoC as host, with the G100 and the PTA as
+modules that attach, test and replace on their own. Its PTA link was ruled the
+same day (B24): CXL 2.0 on the PCIe 5.0 PHY from the GRX930, the PTA module a
+Type-1 device, with CXL.io and CXL.cache and no CXL.mem. This section is that
+board's §1 to §8 in one. It fixes nothing the plan has not settled. Its links
+are numbered F1 to F8, so that none is taken for rev A's 1 to 9, and how the
+host's driver uses F1 is [`pta_board_transport.md`](pta_board_transport.md).
+
+### 9.1 The board
+
+```
++--------------------+  F1: CXL 2.0, .io+.cache     +----------------------+
+| GRX930 SoC: host   |<---------------------------->| PTA module           |
+| RV64 cores, NPU    |  PCIe 5.0 PHY, x16           | the map and a queue  |
+| CXL root port      |                              | EIC + PIC, or an     |
+| F6: DDR, the       |  F2: not chosen              | FPGA stand-in        |
+| host's memory      |<------------+                +----------+-----------+
+|                    |             |                           ^ F4: fiber
++---------+----------+             |                           |
+          | F5: SMBus    +---------+----------+     +----------+-----------+
+          | or I3C       | G100 module        |     | laser, or a lab      |
+          |              | its own memory     |     | instrument           |
++---------+----------+   +--------------------+     +----------+-----------+
+| board controller   |-----------------------------------------+
++--------------------+
+```
+
+| Party | Owns on the first board |
+|---|---|
+| grx930 team | The GRX930 and its platform: firmware, the DDR, the CXL root port and home agent, the console |
+| grxgpu team | The G100 module and its memory |
+| PTA module owner | The module: its CXL device, the map and the queue, and behind them the EIC and the PIC or an FPGA stand-in. **Not yet named** |
+| Board team | The carrier: the PCB, power, clocks, the controller, the connectors, and the laser or the instrument. **Not yet named** |
+| grxcp | The runtime, the PTA's driver and its transport, and this document |
+
+Gridworkz owns the program and rules between the parties: B18 to B24 are the
+owner's rulings. The two unnamed rows are roles, as rev A's are (§7, item 1),
+and grxgpu's draft request for a stand-in leaves the same owners to be named.
+
+### 9.2 Links
+
+| # | Link | Carries | Width and rate | Owner, A end | Owner, B end | Source |
+|---|---|---|---|---|---|---|
+| F1 | GRX930 ↔ PTA module | CXL 2.0 on the PCIe 5.0 PHY: CXL.io and CXL.cache, the module a Type-1 device. The map and the queue over CXL.io; operands and results over CXL.cache | x16 at 32 GT/s, as sized and not ruled: 64 GB/s a direction raw, at most 59.31 GB/s of lines before any header. The canary's FC3 at up to 0.927 GS/s, 93% of the tile's working rate | grx930: root port, home agent, an L2 that answers snoops | PTA module owner: the device | B24; rates from [`pta_board_transport.py`](pta_board_transport.py) |
+| F2 | GRX930 ↔ G100 module | **Not chosen.** The charter chooses it from measured traffic, and assumes no PCIe generation | Open | grx930 team | grxgpu team | B18; the charter's §3 |
+| F3 | On the PTA module: EIC ↔ PIC | As link 3 | As link 3 | PTA module owner | PTA module owner | B4, B5, B14 |
+| F4 | Laser → PIC | As link 4. The charter allows an external laser or a lab instrument in early prototypes | As link 4 | Board team | PTA module owner | B5, B12, B16 |
+| F5 | Board controller ↔ host and modules | SMBus or I3C: rails, temperatures, each module's presence, and the laser and its interlock | Open, with the controller | Board team | Each module's management pins | B7; the charter's §3 |
+| F6 | GRX930 ↔ DDR | The DDR the SoC or its FPGA supports. It is host memory, and the PTA's ring, operands and results are in it | Open, with the part | grx930 team | Board team | B2, as B18 reads it |
+| F7 | Debug | JTAG for the host and each module, and a UART console | Chain order **open** | Board team | grx930 team, grxgpu team, PTA module owner | The charter's §3 |
+| F8 | Board I/O | Boot and recovery flash, the console, a network and telemetry. The GRX930 boots itself | Open | Board team | grx930 team | The charter's §3 |
+
+A stand-in has no F3 and no F4.
+
+**F1.** CXL is asymmetric, and the roles are B24's. The GRX930 holds the root
+port and the home agent, and its L2 answers snoops from outside the chip. The
+module has no memory to expose, so the host needs no HDM decoder for it. It
+reads host memory with RdCurr and writes whole lines with ItoMWr, so it holds
+none of the host's lines, and no snoop finds one on it. Its BAR's page 0 is
+the map, [`pta_chiplet_regmap.md`](pta_chiplet_regmap.md), unchanged, and
+page 1 is a queue. A GEMM is the host path's descriptor in a ring in host
+memory. The ring is the flow control, and each command ends with a record of
+how: done, refused, lost, not issued or not run. That answers for the first
+board what §7, item 7, asks of link 2: a command's framing, its flow control,
+and how a refusal and a result come back. Item 7 stands for rev A.
+
+*What it carries,* in format 0: the canary's FC3 sends a line each way a shot,
+64 one-byte activations in and 16 four-byte results out. At x8 the canary runs
+at 46% of the PTA's working rate, and at x16 at 93%, before headers and the
+link's measured efficiency. A full 128 × 64 tile sends 64 sums of four bytes a
+shot and is held to 23% at x16, or 46% with one-byte codes out.
+
+**F2.** The charter's: "a replaceable FPGA/accelerator module path", whose
+connector and protocol are chosen after the traffic, the transceivers, the
+latency and the signal integrity are measured. Nothing here assumes one. Rev
+A's link 1 does not carry over.
+
+**F4.** As link 4, with what B16 settled for the comb. A lab instrument in its
+place is the charter's allowance. Its interlock reaches the controller all the
+same, because B5's order holds: no light before the PIC's bias is set.
+
+### 9.3 Power, at block level
+
+| Rail group | On | Owner | Notes |
+|---|---|---|---|
+| GRX930 core, memory and PHY | Baseboard | grx930 team | As §3's CPU rails; the SerDes is PCIe 5.0-class, for F1, and quiet by requirement |
+| PTA module, its CXL device | PTA module | PTA module owner | Digital |
+| PTA module, EIC analog | PTA module | PTA module owner | **Must not share a regulator with any digital rail**, as §3 has it for B14's receiver noise |
+| PTA module, PIC bias | PTA module | PTA module owner | Pockels bias, held by DACs (B5) |
+| G100 module | G100 module | grxgpu team | |
+| Laser or instrument | Board or bench | Board team | |
+| Controller, clocks, fans | Board | Board team | Up first, down last |
+
+The charter asks for the baseboard and each module to be instrumented on their
+own: rails, current limits, sequencing, cooling, sensors and a safe shutdown,
+before an optical source or a high-power module is connected. The currents are
+open, with the parts.
+
+Sequencing is a dependency list: the controller first; the host's rails; each
+module's rails behind its presence; the laser only after the PIC's bias is set
+and the interlock is satisfied (B5); and F1 trains only once the host and the
+module are both out of reset.
+
+### 9.4 Clocks
+
+| Clock | Feeds | Source |
+|---|---|---|
+| 100 MHz reference | F1's PHYs, at both ends | PCIe. Shared, or separate with spread spectrum, is **open**, as for rev A's link 1 |
+| Memory clock | F6 | The host's PLL; the frequency **open**, with the part |
+| Shot clock | The tile, and so its converters | The PTA module: 1 GHz on a photonic module (B11). A stand-in has its own, and reports it in `PTA_CAPS2[15:0]` |
+| Comb drive | F4's lines | As §4: locked to the shot clock. Who distributes their reference is **open** |
+| The G100 module's | The module | The grxgpu team's |
+| Controller | The controller | Its own oscillator |
+
+### 9.5 Resets and bring-up order
+
+1. The controller's rails, then the controller.
+2. The host's rails, then each module's behind its presence.
+3. The host's reset released. The GRX930 boots, and its firmware describes
+   the root complex in the device tree (the plan's L4).
+4. F1 trains: PERST# released to the PTA module, the PCIe link up, then CXL's
+   protocols negotiated. The module is enumerated as a PCIe function, and
+   CXL.cache is enabled on it once the root port has it.
+5. The driver reads page 0: the magic, the map's version, the tile, and
+   `PTA_CAPS2[31]`, which says whether this is a model or a stand-in before
+   any work is sent. Then it programs and enables the queue on page 1.
+6. On a photonic module, the laser is enabled only after the PIC's bias is
+   set and the interlock is satisfied. A stand-in has no laser.
+7. The PTA is calibrated before its first GEMM, as §5 has it for rev A.
+8. The G100 module comes up on its own link, by itself. The charter asks that
+   each module pass its own suite before any test runs them together.
+
+A teardown or a reset of the queue, and what the host does after one, are the
+transport's §6.
+
+### 9.6 Debug and telemetry
+
+| What | Where it comes out | Owner |
+|---|---|---|
+| Host debug | JTAG, and the console's UART | grx930 team |
+| F1's link state | Configuration space, and the CXL component registers, RAS among them | grx930 team and the PTA module owner |
+| The queue | `PTQ_HEAD`, `PTQ_TAIL`, `PTQ_STATUS` and `PTQ_FAULT_AT`, over CXL.io | PTA module owner, read by grxcp |
+| The PTA's counters | As §6, from page 0 | PTA module owner, read by grxcp |
+| A GEMM | Its record: status, index and saturations, and clips | grxcp |
+| Rails, temperatures, presence, the laser | The controller, over F5 | Board team |
+
+The charter asks for command and event IDs, queue occupancy, DMA bytes and
+busy time in one trace. Here a slot's index is the command's ID, `PTQ_TAIL`
+less `PTQ_HEAD` is the occupancy, and the record's index ties a result to its
+seed. Nothing counts the bytes moved: that is the host path's §7, question 8.
+
+### 9.7 Not yet sourced, on the first board
+
+1. **The PTA module's owner and the board team are not named.** Gridworkz
+   names them.
+2. **F1's lane count**: sized at x16, not ruled (B24).
+3. **F2**, the G100 module's link: the charter's to choose by measurement.
+4. **The host's part**: which platform carries the GRX930 with PCIe 5.0-class
+   transceivers and a CXL root port. Today's FPGA targets stop at PCIe Gen2
+   (B24), and the root port may be new RTL (B6).
+5. **F1's connector and the module's form factor**: the charter asks for a
+   replaceable module, and nothing is chosen.
+6. **Part selection** for the DDR, the controller, the connectors and the clock
+   sources, and the currents on every rail of §9.3.
+7. **The reference clock's arrangement** for F1.
+8. **Whether the PTA module is photonic or a stand-in.** The reconciliation
+   proposal's question 1 to grxgpu, open.
+9. **The module's vendor and device IDs**, and the rest of what the transport's
+   §10 lists.
+
+### 9.8 Against P0's gate
+
+- Every link has an owner at each end, though the PTA module's and the
+  board's are roles (§9.7, item 1). F2 has its owners and no protocol yet.
+- Every rate in §9.2 carries a source, and what has none is marked open.
+- Power, clocks, resets and debug are here at block level, as §3 to §6 have
+  them for rev A.
+
+What this section cannot close is §9.7, and most of it waits on parts and
+names. F1's protocol is settled, its use is the transport's, and its lane count
+is sized.

@@ -319,6 +319,12 @@ UTC. The manifest is revision 1.0, frozen, and `--freeze` passes.
 host, the PTA module a Type-1 device, and rev A unchanged. The interface
 document's first-board section and the host's transport for the PTA's driver
 waited on it, and can be written.
+*And both written, the same day*: the ICD's first-board section
+([`board_icd.md`](board_icd.md) §9) and the PTA's transport
+([`pta_board_transport.md`](pta_board_transport.md), with a model). A GEMM
+reaches the module as the host path's descriptor in a ring in host memory, and
+at x16 the link carries the canary at up to 93% of the PTA's working rate,
+before headers.
 X2 has made its predictions (§3.3), X1 its budget (§4.3), and P0, X3 and X4
 are drafted as [`board_icd.md`](board_icd.md),
 [`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) and
@@ -1003,6 +1009,17 @@ And a way to configure the tile from grxcp, which is `cuda_mapping.md` 7.40 for
 the chiplet as it was for the c930: the gate programs the registers behind the
 runtime's back.
 
+*On the first board, designed 2026-10-15*
+([`pta_board_transport.md`](pta_board_transport.md)). B24 gives the hooks a
+transport. `read32` and `write32` are MMIO on page 0 of the PTA module's BAR
+over CXL.io, the map unchanged. `submit` is a ring of the host path's
+descriptors in host memory, with a doorbell on page 1, and the operands and
+results cross CXL.cache. S1, on that board, is the module's own function found
+in configuration space. Built, it would change three things here: a lost GEMM's
+C is undefined, a GEMM's index comes from its record, and the device's operands
+are host buffers, physically contiguous, with no parent GPU. None of it is code
+yet.
+
 **S3, predicted 2026-10-04.** [`pta_dispatch.py`](pta_dispatch.py) is the model:
 the CPU document's §2.1 for the NPU, X2's link and
 [`pta_shot_rate.py`](pta_shot_rate.py) §5's weight path for the chiplet, a GEMM
@@ -1320,6 +1337,10 @@ layer mis-sized, and the NPU's read-ahead dropped.
 - *And §10.18 of it, the same day*
   ([kubeworkz/grxgpu#25](https://github.com/kubeworkz/grxgpu/pull/25)): the PTA
   module's link, CXL, as the owner ruled its fifth question.
+- *And §10.19 of it, the same day*
+  ([kubeworkz/grxgpu#26](https://github.com/kubeworkz/grxgpu/pull/26)): the
+  first board's interfaces and the PTA's transport, which keep the host path's
+  descriptor.
 
 **The demonstration's last layer, on a stand-in (2026-10-13).**
 [`pta_board_chain.py`](pta_board_chain.py) holds what grx930's harness ran (its
@@ -5818,6 +5839,15 @@ has the CXL-capable platform open), or the lane count. The stand-in, and
 whether the register map is the PTA's discovery contract: the proposal's first
 and second questions. The G100's link on the first board. Rev A, where B3, B4,
 B7 and B9 stand. B5 and B10 to B23 stand. *Needed by:* L1, S1, S4 and the ICD.
+
+*Written, 2026-10-15*: the ICD's §9 and
+[`pta_board_transport.md`](pta_board_transport.md). One figure above is
+corrected there. In the descriptor's format 0 the canary's results are four
+bytes each, 64 GB/s out and not 16, so both directions bind at once. After PCIe
+5.0's coding and the flit's framing at most 59.31 GB/s of lines is left a
+direction, 0.927 GS/s on the canary's shape: 93% of the working rate, before
+headers. The conclusion stands. And the PTA reads its operands coherently, but
+as the transport has it caches none of them, so no snoop finds a line on it.
 
 ---
 
