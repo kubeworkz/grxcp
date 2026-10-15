@@ -291,6 +291,13 @@ stand-in's networks of the same seeds is clear in any row. The canary is 5.09%
 of the reference's rms off lit and fitted on the gate's thousand, and gives its
 declared reference's class on 99.42% of it. The recipe gives up a tenth of a
 point of accuracy on 10,000 images. The golden tensors are next.
+*And its golden tensors, the same day* (§4.2, B21). The owner ruled FC3's
+declared reference the converter's codes, and allowed one output scale fixed at
+calibration on a set of its own. grx930's harness wrote the canary's tensors.
+They are in [`canary/`](canary/) with a candidate manifest, and
+[`pta_board_canary_golden.py`](pta_board_canary_golden.py) works every one out
+again apart from the harness. The canary's run against them, and the band from
+it, are next.
 X2 has made its predictions (§3.3), X1 its budget (§4.3), and P0, X3 and X4
 are drafted as [`board_icd.md`](board_icd.md),
 [`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) and
@@ -1275,6 +1282,10 @@ layer mis-sized, and the NPU's read-ahead dropped.
 - *And §10.13 of it, the same day*
   ([kubeworkz/grxgpu#20](https://github.com/kubeworkz/grxgpu/pull/20)): the
   canary trained, and run through the model.
+- *And §10.14 of it, the same day*
+  ([kubeworkz/grxgpu#21](https://github.com/kubeworkz/grxgpu/pull/21)): the
+  canary's golden tensors, and the owner's rulings on FC3's declared reference
+  and the output scale.
 
 **The demonstration's last layer, on a stand-in (2026-10-13).**
 [`pta_board_chain.py`](pta_board_chain.py) holds what grx930's harness ran (its
@@ -1851,6 +1862,73 @@ output**: the first two layers run on the host, exactly, at eight bits. And all
 ten predictions written before any canary network was trained were right; they
 were put beside the stand-in's figures, and the canary is the stand-in at the
 gate. No decision of this plan is changed by it.
+
+**The canary's golden tensors (2026-10-14).** [`canary/`](canary/) holds what
+grx930's harness wrote for the canary (its design note §5, "The first board's
+canary, its golden tensors"), with FC3's declared reference the 8-bit
+converter's codes, as the owner ruled (B21).
+[`canary/manifest.json`](canary/manifest.json) is this plan's candidate
+manifest for it, revision 0.1-candidate, written to the fields of grxgpu's
+template. The stages are named as grxgpu's golden-generation plan names them:
+
+| The plan's name | File | Shape and type | What it is | SHA-256 |
+|---|---|---|---|---|
+| `ordered_inputs_int8` | `inputs_int8.bin` | [1000, 64] int8, 0 to 127 | The acceptance vectors, as FC1 takes them | `d968e50d76c4c3bf…` |
+| `fc1_relu_int8` | `fc1_relu_int8.bin` | [1000, 64] int8, 0 to 127 | FC1's output: bias, ReLU, rescale | `783a3c1fda87b90d…` |
+| `fc2_relu_declared_format` | `fc2_relu_int8.bin` | [1000, 64] int8, 0 to 127 | FC2's output, the same way | `b6011ac171d74f06…` |
+| `pta_activation_inputs_6bit` | `fc3_act_codes_u8.bin` | [1000, 64] uint8, 0 to 31 | FC3's activation codes, min((x + 2) >> 2, 31) | `97ac9af24a121a58…` |
+| `fc3_exact_sums` | `fc3_sums_int32.bin` | [1000, 16] int32 | FC3's exact sums, in its codes' units | `96ea597da2f06fb8…` |
+| `fc3_declared_format_reference` | `fc3_codes_int8.bin` | [1000, 16] int8 | The 8-bit converter's codes: Gate F's reference | `b86134167b678210…` |
+| `declared_reference_class_ids` | `class_ids_u8.bin` | [1000] uint8 | The largest of code × 512 + bias, the first on a tie | `657f175602ed7a0c…` |
+| `high_precision_logits` | `highprec_logits_f64.bin` | [1000, 16] float64 | The trained network in double precision | `1e4370308cd0e9c2…` |
+| `calibration_fc3_reference` | `cal_fc3_codes_int8.bin` | [1000, 16] int8 | The same codes on the calibration set, for the scale | `e2c6c346d4978d79…` |
+
+Beside them are the three layers' integer weights and biases; the pixels,
+labels and ordered ids of both sets; and the canary's network file with the
+8-bit one it was trained from. That makes 23 artifacts of 730,780 bytes, each
+with its length and SHA-256 in the manifest and in `SHA256SUMS`. The manifest's
+canonical SHA-256 is
+`b5dd1bebaee44eea1f766f83b76f23352187e580153c7d564bec52a41b5c9e63`: the keys
+sorted with no whitespace, which with only integers and ASCII in it is RFC
+8785's form.
+
+**How it was checked.**
+[`pta_board_canary_golden.py`](pta_board_canary_golden.py) is written apart
+from the harness, in the standard library. It holds every file to the
+manifest's length and digest, and the pixels, inputs, labels and ids of both
+sets to the corpus B20 worked out from MNIST's own files. Then it works every
+integer tensor out again from the inputs and the integer weights, with
+arithmetic of its own held first to cases worked by hand at each rounding,
+saturation and tie; and it works out the double-precision logits from the
+network's file. All are the bundle's, byte for byte and to the last bit. The
+harness wrote the tensors twice, the same, and again after a change to its
+self-test, the same. The tile with its format alone gives every code: 0 of
+32,000 differ.
+
+**What the checks catch.** 21 errors planted in the harness's new code, 23 in
+the checker, and a byte changed in each of the bundle's 25 files, the manifest
+and `SHA256SUMS` among them: all are caught. With the manifest's digests set
+aside, the checker's own arithmetic still catches 22 of the 25 changed files.
+Three are held by their digests alone: `SHA256SUMS`; the 8-bit network the
+canary was trained from, which nothing works out again; and FC3's biases, which
+enter only the class, where a bias one off moves no class of the 2,000 vectors.
+Neither thousand has a tie for the largest output, so the tie rule is held by
+cases built for it, in the harness's self-test and here.
+
+**What the bundle says of the canary.** FC3's codes run from −96 to 67 on the
+acceptance vectors and from −100 to 67 on the calibration set, none near the
+converter's −128 to 127. With the declared format the canary is right on 96.60%
+of the thousand, the trained network in double precision on 96.80%, and the two
+give the same class on 99.20%.
+
+What it is not. Everything the blocks before say of themselves. **The frozen
+canary**: the manifest is a candidate, its approval is pending, and the freeze
+is the owner's on 2026-11-25. **What grxgpu's plan asks that it does not yet
+have**: a lockfile, beyond the compiler, C library and source digests the
+manifest records; validation reports inside the bundle, which are this plan's
+checker and its output; the NPU's and the G100's own stage outputs; and the
+canary's run through the model against these codes, from which the band is
+proposed. It records B21 and changes no other decision of this plan.
 
 ### 4.3 To the PTA chiplet: EIC requirements
 
@@ -5313,7 +5391,7 @@ before 2026-11-25.
 
 - **The gain fitted against the declared format and taken out** (§8, question
   10). It is the next run, and the ruling on an output scale waits on it. *Run
-  on 2026-10-14; the ruling is the owner's (below).*
+  on 2026-10-14, and ruled the same day (B21).*
 
 - **What moves from repeat to repeat, reported apart.** The model's draws have
   it and no table does.
@@ -5339,6 +5417,9 @@ A gain common to every output is what a calibration is for, and it does not
 move a class; lit it buys 0.34, 0.18 and 0.13 of a point, so it does not decide
 whether the board passes. The ruling is the owner's, and §4.2's proposal
 (§10.11) puts it to the demonstration's side the same way.
+
+*Ruled, 2026-10-14* (B21): as recommended, with the calibration set the first
+1,000 of the 6,000 held-out training images.
 
 **B20 — The first board's canary: its data set and its first two layers.**
 *Settled 2026-10-14.*
@@ -5405,6 +5486,48 @@ budgeted and 5.09% lit and fitted; at the gate the five are the stand-in's to
 within chance. What is left before the freeze: the golden tensors, with FC3's
 declared reference settled; the band from the frozen canary's run; and the
 output scale, the owner's (B19).
+
+*And its golden tensors, the same day* (B21, §4.2). FC3's declared reference is
+ruled the converter's codes, and the canary's tensors are in
+[`canary/`](canary/). What is left before the freeze: the band from the
+canary's run, and the freeze's approval.
+
+**B21 — The first board's canary: its golden tensors.**
+*Settled 2026-10-14.*
+
+B20 left FC3's declared reference to the canary's golden generation, and B19
+left the output scale with the owner. With the canary trained (§4.2), both went
+to the owner with this plan's recommendation, together with where the golden
+tensors are kept. All three were ruled as recommended, recorded at 23:37 UTC,
+before any golden tensor was written.
+
+*Recommended, and settled as recommended:*
+
+| | Ruled |
+|---|---|
+| FC3's declared reference | The 8-bit converter's codes of FC3's exact sum: floor(s / 32 + 1/2) in its codes' units, rounded half up at the layer's step and held to −128 … 127. A tile with its format alone is then its reference exactly, and the converter's own rounding, 0.74% of the reference's rms on the stand-in's thousand, is no part of what Gate F reads |
+| An output scale for FC3 | One, for all sixteen outputs, fixed once at calibration on the first 1,000 of the 6,000 held-out training images, 54,000 to 54,999, and never on the gate's thousand. Gate F is reported with it and without it, and the band is set on the figure with it |
+| Where the golden tensors are kept | In this repository, [`canary/`](canary/), beside this plan's models |
+
+**Why these.** The codes are what the board's converter gives, and what
+grxgpu's manifest draft words as "exact integer accumulator/ADC behavior".
+Against them a PTA that adds nothing to the format is exact, so what Gate F
+reads is what the PTA adds. The scale is B19's recommendation, on the
+calibration set B20 set aside for it.
+
+**What follows from them.** The canary's golden tensors, written by grx930's
+harness and checked here apart from it (§4.2). Their manifest is a candidate,
+revision 0.1-candidate: its approval is pending, and the band, the tail rule
+and the class threshold are left empty for the owner.
+
+**What it costs here.** The canary through the model against these codes, with
+the scale and without it, and the band proposed from that run. What moves from
+repeat to repeat, reported apart (B19).
+
+**What it does not settle.** The band, the tail rule, the demonstration's 2.0%
+on the largest error and its 99.5% on the class. The freeze's approval. B18's
+other two: what stands in for a photonic module, and calibration counted in a
+cold start. B5 and B10 to B20 stand. *Needed by:* the freeze on 2026-11-25.
 
 ---
 
@@ -6260,19 +6383,24 @@ output scale, the owner's (B19).
    the receiver's linear range, from the interface chip. Until it is answered
    B14 stands at 8 bits.
 
-10. **Is the last layer's gain calibrated, and against what?** *Opened
-    2026-10-13* (§4.2, [`pta_board_budget.py`](pta_board_budget.py)). On the
-    first board's last layer, in a model, most of the crosstalk's error is a
-    gain on every output, +0.0220 to +0.0281, and B16's source takes 0.0052 to
-    0.0232 off. A class sees neither, and this plan's budget is in points of
-    accuracy. The demonstration's bounds on a raw output see both. One constant
-    would take a gain out: on the weights as they are written, on the
-    converter's codes, or in the scale the declared reference is given. None
-    was run, and the gain here was fitted against the host's network and not
-    against the declared format. *Needs:* from the demonstration, whether its
-    reference may carry an output scale (§4.2's proposal, §10.8); from grx930,
-    a run with the gain fitted against the declared format and taken out. Until
-    it is answered nothing is calibrated for gain, and B15 is what it was.
+10. **Is the last layer's gain calibrated, and against what?** *Settled on
+    2026-10-14: by one output scale on FC3's outputs, fixed at calibration
+    against the declared reference on a set of its own (B21, §7). What follows
+    is how the question was put, and reads as it was written.*
+
+    *Opened 2026-10-13* (§4.2, [`pta_board_budget.py`](pta_board_budget.py)).
+    On the first board's last layer, in a model, most of the crosstalk's error
+    is a gain on every output, +0.0220 to +0.0281, and B16's source takes
+    0.0052 to 0.0232 off. A class sees neither, and this plan's budget is in
+    points of accuracy. The demonstration's bounds on a raw output see both.
+    One constant would take a gain out: on the weights as they are written, on
+    the converter's codes, or in the scale the declared reference is given.
+    None was run, and the gain here was fitted against the host's network and
+    not against the declared format. *Needs:* from the demonstration, whether
+    its reference may carry an output scale (§4.2's proposal, §10.8); from
+    grx930, a run with the gain fitted against the declared format and taken
+    out. Until it is answered nothing is calibrated for gain, and B15 is what
+    it was.
 
     *The demonstration's reply of 2026-10-13 does not answer it (§4.2's
     proposal, §10.9). The freeze's owner ruled the same day that it waits on

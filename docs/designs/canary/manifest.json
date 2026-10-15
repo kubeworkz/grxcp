@@ -1,0 +1,366 @@
+{
+ "manifest_schema_version": "1.0",
+ "manifest_revision": "0.1-candidate",
+ "manifest_status": "candidate_not_frozen",
+ "workload_id": "GRXGPU-FIRST-BOARD-3ENGINE-CANARY",
+ "workload_name": "Three-Engine Inference Chain",
+ "produced_by": "GRXCP, with grx930's harness (pta_mnist golden)",
+ "freeze_authority": "Gridworkz",
+ "freeze_approval": "pending",
+ "calendar_freeze_date_utc": "2026-11-25",
+ "rulings": [
+  "B20, 2026-10-14: MNIST pooled to 8 x 8; FC1 and FC2 the host's at 8 bits, trained with no tile noise; FC3 trained for the tile at 6 bits; all three in one run of grx930's harness; FC2 to FC3 by min((x + 2) >> 2, 31)",
+  "seed rule, 2026-10-14T21:39:28Z, before any canary network was trained: seed 1's network is the canary, seeds 2 to 5 reported beside it",
+  "2026-10-14T23:37:11Z: FC3's declared reference is the 8-bit converter's codes",
+  "2026-10-14T23:37:11Z: one output scale for FC3, fixed once at calibration on the calibration set and never on the acceptance vectors; Gate F reported with it and without, the band set on the figure with it"
+ ],
+ "workload": {
+  "kind": "fixed-weight three-layer classifier",
+  "acceptance_vector_count": 1000,
+  "acceptance_order": "file order: the first 1,000 images of MNIST's test file",
+  "vectors_per_job": 16,
+  "acceptance_job_partition": {
+   "full_jobs": 62,
+   "vectors_per_full_job": 16,
+   "final_partial_job_vectors": 8
+  },
+  "input_features": 64,
+  "output_logits": 16,
+  "intended_classes": "the digits 0 to 9 on outputs 0 to 9; outputs 10 to 15 trained toward no class",
+  "dataset": {
+   "name": "MNIST, each image pooled to 8 x 8",
+   "source_uri_or_archive": "https://ossci-datasets.s3.amazonaws.com/mnist/ (PyTorch's mirror); archive MD5s are torchvision's",
+   "content_sha256": {
+    "train-images-idx3-ubyte": "ba891046e6505d7aadcbbe25680a0738ad16aec93bde7f9b65e87a2fc25776db",
+    "train-labels-idx1-ubyte": "65a50cbbf4e906d70832878ad85ccda5333a97f0f4c3dd2ef09a8a9eef7101c5",
+    "t10k-images-idx3-ubyte": "0fa7898d509279e482958e8ce81c8e77db3f2f8254e26661ceb7762c4d494ce7",
+    "t10k-labels-idx1-ubyte": "ff7bcfd416de33731a308c3f266cc351222c34898ecbeaf847f06e48f7ec33f2"
+   },
+   "license_and_usage_terms": "CC BY-SA 3.0, copyright Yann LeCun and Corinna Cortes, as Keras's documentation states them",
+   "retrieval_date_utc": "2026-10-14",
+   "split_name": "acceptance: test file, images 0 to 999; calibration: training file, images 54,000 to 54,999",
+   "sample_id_source": "mnist-t10k-NNNNN and mnist-train-NNNNN, the image's index in its file",
+   "preprocessing": "the middle 24 x 24 of each 28 x 28 image in 3 x 3 blocks, each block's mean (2s + 9) div 18; then (127p + 127) div 255"
+  }
+ },
+ "graph": [
+  {
+   "id": "FC1",
+   "engine": "GRX930 NPU",
+   "format": "int8 weights and operands, int32 sums; bias added; ReLU; (v + 2^8) >> 9, held at 127",
+   "shift": 9
+  },
+  {
+   "id": "FC2",
+   "engine": "G100",
+   "format": "the same as FC1",
+   "shift": 9
+  },
+  {
+   "id": "FC3",
+   "engine": "PTA, 128 x 64 tile, one shot a vector",
+   "activation_conversion": "min((x + 2) >> 2, 31) of FC2's output x",
+   "format": "6-bit activation codes 0..31, 6-bit weight codes -32..31, exact sum s; the 8-bit converter's code floor(s / 32 + 1/2), held to -128..127, a held code a range fault",
+   "converter_step_in_sum_units": 32,
+   "class": "the largest of code x 512 + bias, the lowest index on a tie"
+  }
+ ],
+ "training": {
+  "harness": "grx930 c930/sim/pta_mnist.c, pta_tile_model.c and .h, pta_mnist.sh, built with -DN_SIDE=8 -DN_HID=64 -DN_OUT=16",
+  "harness_source_sha256": {
+   "pta_mnist.c": "32a67d46f3ec475775b057572e558f35764a97953630c2516eab5e327962d977",
+   "pta_tile_model.c": "a9d008d8ee6ed367a364c22cb2f7a978dbe566b3a0fa625e563ed536add385bd",
+   "pta_tile_model.h": "dd5255ccf8f6fa02f67f9f621d8efe065cfcf32b953f14aa24b288a8cb70b186",
+   "pta_mnist.sh": "8962f6299cb40ca88dc45758384cb1a939adab78ef0990c04edc71a3e17a307b"
+  },
+  "build": "gcc -O2 -std=c99 -Wall -Wextra -pedantic, gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0, glibc 2.39, on Ubuntu 24.04 under WSL2 (kernel 6.18.33.2-microsoft-standard-WSL2); the harness's arithmetic is integer, but for the double-precision logits, which are summed in a fixed order",
+  "start_network": "pta_mnist train --din 8 --wbits 8 --seed 1 --hidden 2: din=8 wbits=8 seed=1 from=0 from_epochs=0 epochs=6 held_out=96.93 digital=96.08 hidden=2",
+  "canary_network": "pta_mnist train --din 8 --wbits 6 --host 2 --seed 1 --hidden 2 --from h2_d8_b8_s1.net --sumnoise 0.1 --epochs 8: din=8 wbits=6 seed=1 from=8 from_epochs=6 epochs=8 held_out=97.52 digital=96.84 hidden=2 host=2 sumnoise=0.1 got=0.0000,0.0000,0.0999 fixed_epochs=8",
+  "seeds": "the network's seed, 1; the training's shuffles and noise are drawn from it by the harness",
+  "checkpoint_selection_rule": "the seed rule above; the training runs a fixed eight epochs",
+  "determinism": "trained twice, byte for byte the same network; written twice, byte for byte the same tensors"
+ },
+ "generation": {
+  "command": "SHAPE=chain sim/pta_mnist.sh MNIST_GZ WORK canary; then SHAPE=chain sim/pta_mnist.sh MNIST_GZ WORK golden",
+  "harness_line": "golden: net_seed=1 net_wbits=6 net_host=2 images=1000 cal=1000 cal_first=54000 abits=6 adcbits=8 tile=128x64 sh=9,9 S=9 code_shift=5 clipped=0 tile_differ=0 of 32000 act_differ=0 of 256000 declared_right=96.60 highprec_right=96.80 highprec_agree=99.20"
+ },
+ "artifacts": [
+  {
+   "id": "ordered_pixels_u8",
+   "path": "pixels_u8.bin",
+   "role": "the acceptance images pooled to 8 x 8, the network's training input over 255",
+   "shape": [
+    1000,
+    64
+   ],
+   "dtype_encoding": "uint8, 0..255, row-major [vector, feature]",
+   "byte_length": 64000,
+   "sha256": "49008ed471ac4de4f40e3779615eab182248422ead8bf269ad840424b48da444"
+  },
+  {
+   "id": "ordered_inputs_int8",
+   "path": "inputs_int8.bin",
+   "role": "the acceptance vectors as FC1 takes them: (127p + 127) div 255",
+   "shape": [
+    1000,
+    64
+   ],
+   "dtype_encoding": "int8, 0..127, row-major [vector, feature]",
+   "byte_length": 64000,
+   "sha256": "d968e50d76c4c3bfe3b0d0020db73fc0a1bade8f794cba389216f0777f0f23c4"
+  },
+  {
+   "id": "ordered_labels",
+   "path": "labels_u8.bin",
+   "role": "the acceptance images' digits; for task quality, not the declared reference",
+   "shape": [
+    1000
+   ],
+   "dtype_encoding": "uint8, 0..9",
+   "byte_length": 1000,
+   "sha256": "d14ba0a1a3818edefa35518ed001ece84b7ac0eabe9394551c73928493175d3f"
+  },
+  {
+   "id": "ordered_ids",
+   "path": "ids.txt",
+   "role": "the acceptance vectors' ids, in order",
+   "shape": [
+    1000
+   ],
+   "dtype_encoding": "UTF-8 text, one 'mnist-t10k-NNNNN' and LF a line",
+   "byte_length": 17000,
+   "sha256": "81e4e1694930066d6e678be2ac3b828a0677756e8dc0632048e605541c754711"
+  },
+  {
+   "id": "fc1_weights",
+   "path": "fc1_weights_int8.bin",
+   "role": "FC1's weights",
+   "shape": [
+    64,
+    64
+   ],
+   "dtype_encoding": "int8, -128..127, [output, input]",
+   "byte_length": 4096,
+   "sha256": "282563ef7be928ae83dac993b02d2b7da7ba31f1506c56228ab692a59ffab36d"
+  },
+  {
+   "id": "fc1_bias",
+   "path": "fc1_bias_int32.bin",
+   "role": "FC1's biases, in its sums' units, added before the ReLU",
+   "shape": [
+    64
+   ],
+   "dtype_encoding": "int32 little-endian",
+   "byte_length": 256,
+   "sha256": "26d5af4c742a0bcbdeed3fae12e1d7226bdd2d76ca3ff7eda57640b9626b8274"
+  },
+  {
+   "id": "fc2_weights",
+   "path": "fc2_weights_int8.bin",
+   "role": "FC2's weights",
+   "shape": [
+    64,
+    64
+   ],
+   "dtype_encoding": "int8, -128..127, [output, input]",
+   "byte_length": 4096,
+   "sha256": "ec52fafaadf284c6800866b1db705107f40aa6d6d5a82e31943d505a6fcfbeb9"
+  },
+  {
+   "id": "fc2_bias",
+   "path": "fc2_bias_int32.bin",
+   "role": "FC2's biases, in its sums' units, added before the ReLU",
+   "shape": [
+    64
+   ],
+   "dtype_encoding": "int32 little-endian",
+   "byte_length": 256,
+   "sha256": "6c06e15698a033e6671ac94b6d012d208861c593199279ffcada63cb5af2c92f"
+  },
+  {
+   "id": "fc3_weights_6bit",
+   "path": "fc3_weights_int8.bin",
+   "role": "FC3's weights trained for the tile, as 6-bit codes",
+   "shape": [
+    16,
+    64
+   ],
+   "dtype_encoding": "int8 holding -32..31, [output, input]",
+   "byte_length": 1024,
+   "sha256": "75acfab163182d572e8b266bc2eb11dc0b22135025cbec8c025ec183e3d1c3d2"
+  },
+  {
+   "id": "fc3_bias",
+   "path": "fc3_bias_int32.bin",
+   "role": "FC3's biases, applied by the CPU to each code at its step, 2^9 of FC2-operand times weight-operand units",
+   "shape": [
+    16
+   ],
+   "dtype_encoding": "int32 little-endian",
+   "byte_length": 64,
+   "sha256": "747f872c5285a8397a20a7c1b7572fa5e21866782ee3eaf3602038f281c88f85"
+  },
+  {
+   "id": "fc1_relu_int8",
+   "path": "fc1_relu_int8.bin",
+   "role": "FC1's outputs after bias, ReLU, rescale and saturation",
+   "shape": [
+    1000,
+    64
+   ],
+   "dtype_encoding": "int8, 0..127",
+   "byte_length": 64000,
+   "sha256": "783a3c1fda87b90dbac2e9b101834afe48fefb306e794056a3818afa39be59ea"
+  },
+  {
+   "id": "fc2_relu_declared_format",
+   "path": "fc2_relu_int8.bin",
+   "role": "FC2's outputs, the same",
+   "shape": [
+    1000,
+    64
+   ],
+   "dtype_encoding": "int8, 0..127",
+   "byte_length": 64000,
+   "sha256": "b6011ac171d74f06928dbf04f322f8fbaa47d8f3c391ea8b722d8195ec6299e6"
+  },
+  {
+   "id": "pta_activation_inputs_6bit",
+   "path": "fc3_act_codes_u8.bin",
+   "role": "FC3's activation codes: min((x + 2) >> 2, 31) of FC2's outputs",
+   "shape": [
+    1000,
+    64
+   ],
+   "dtype_encoding": "uint8, 0..31",
+   "byte_length": 64000,
+   "sha256": "97ac9af24a121a58246d1a8b2d6237ff41dc6a2460ee5b9e65c5bb3d5f488520"
+  },
+  {
+   "id": "fc3_exact_sums",
+   "path": "fc3_sums_int32.bin",
+   "role": "FC3's exact sums of activation code times weight code, before the converter",
+   "shape": [
+    1000,
+    16
+   ],
+   "dtype_encoding": "int32 little-endian",
+   "byte_length": 64000,
+   "sha256": "96ea597da2f06fb819d129a7d4b386e806f8e3017bf180b628df2785b1c718fb"
+  },
+  {
+   "id": "fc3_declared_format_reference",
+   "path": "fc3_codes_int8.bin",
+   "role": "FC3's declared reference: the 8-bit converter's code of each sum",
+   "shape": [
+    1000,
+    16
+   ],
+   "dtype_encoding": "int8, -128..127: floor(sum / 32 + 1/2), held, step 2^5 of the sums",
+   "byte_length": 16000,
+   "sha256": "b86134167b6782103e93fa4cfbb3a921b24087502eba114af95bb31386282062"
+  },
+  {
+   "id": "declared_reference_class_ids",
+   "path": "class_ids_u8.bin",
+   "role": "the class: the largest of code x 2^9 + bias, the lowest index on a tie",
+   "shape": [
+    1000
+   ],
+   "dtype_encoding": "uint8, 0..15",
+   "byte_length": 1000,
+   "sha256": "657f175602ed7a0c92873f0d4726a75b68835874f54925bf4fd4e4f7a2d9d9dd"
+  },
+  {
+   "id": "high_precision_logits",
+   "path": "highprec_logits_f64.bin",
+   "role": "the network as trained, in double precision on the pixels over 255, no quantiser",
+   "shape": [
+    1000,
+    16
+   ],
+   "dtype_encoding": "IEEE-754 binary64 little-endian",
+   "byte_length": 128000,
+   "sha256": "1e4370308cd0e9c2851beef86c97ae4fd8e4baf59f68cf84fb889344014e6f25"
+  },
+  {
+   "id": "calibration_inputs_int8",
+   "path": "cal_inputs_int8.bin",
+   "role": "the calibration set: the first 1,000 of the 6,000 held-out training images, as FC1 takes them",
+   "shape": [
+    1000,
+    64
+   ],
+   "dtype_encoding": "int8, 0..127",
+   "byte_length": 64000,
+   "sha256": "c23d0a98df1376ce6dd6a43fa94926d1a0f37978945274f2674c9a5586b34f1c"
+  },
+  {
+   "id": "calibration_labels",
+   "path": "cal_labels_u8.bin",
+   "role": "their digits",
+   "shape": [
+    1000
+   ],
+   "dtype_encoding": "uint8, 0..9",
+   "byte_length": 1000,
+   "sha256": "e9b9c3471c38b1ac45a646a16235eb657be54efdb54e30974f4f839d24a7c7a2"
+  },
+  {
+   "id": "calibration_ids",
+   "path": "cal_ids.txt",
+   "role": "their ids, in order",
+   "shape": [
+    1000
+   ],
+   "dtype_encoding": "UTF-8 text, one 'mnist-train-NNNNN' and LF a line",
+   "byte_length": 18000,
+   "sha256": "dc3a5d2ebd776c0d887aea75c0cfc2d4e6347e7a767d4cfc06bcc20e50a40332"
+  },
+  {
+   "id": "calibration_fc3_reference",
+   "path": "cal_fc3_codes_int8.bin",
+   "role": "FC3's declared reference on them, against which one output scale is fixed",
+   "shape": [
+    1000,
+    16
+   ],
+   "dtype_encoding": "int8, as fc3_declared_format_reference",
+   "byte_length": 16000,
+   "sha256": "e2c6c346d4978d79c7fc9903596e3a628a6f56e0dce785496a741ade68f7093b"
+  },
+  {
+   "id": "canary_network",
+   "path": "canary_seed1.net",
+   "role": "the canary, seed 1, as grx930's harness wrote it (PTAMLP4)",
+   "shape": [],
+   "dtype_encoding": "the harness's network file, little-endian",
+   "byte_length": 37496,
+   "sha256": "b6320b380dff3e3c84d4035fd54554207a29c64a067082b4d9ec5a1612f603ea"
+  },
+  {
+   "id": "canary_start_network",
+   "path": "start_seed1_8bit.net",
+   "role": "the 8-bit network of seed 1 the canary was trained from",
+   "shape": [],
+   "dtype_encoding": "the harness's network file, little-endian",
+   "byte_length": 37492,
+   "sha256": "cf76707136c336ab3e9e45fb941568dc87a4e085dfcba8ccf51622aaa8feb9e6"
+  }
+ ],
+ "gate_f": {
+  "reference": "fc3_declared_format_reference, the converter's codes",
+  "per_run_normalized_rms_percent": "100 * sqrt(sum((output - reference)^2) / sum(reference^2)) over 1,000 vectors x 16 outputs, in codes",
+  "output_scale": "one scale for FC3, the least-squares slope through the origin of calibration_fc3_reference on the PTA's codes over the calibration set, the PTA's codes times it; fixed once a calibration, never on the acceptance vectors",
+  "physical_rms_band_percent": null,
+  "physical_tail_threshold_and_allowed_count": null,
+  "class_agreement_threshold_percent": null,
+  "status": "the band, the tail rule and the class threshold are proposed from the frozen canary's model run and ruled by the freeze's owner"
+ },
+ "serialization": {
+  "hash_algorithm": "SHA-256",
+  "byte_order": "little-endian",
+  "tensor_file_format": "headerless raw bytes; shape, type and encoding as above",
+  "json_digest": "SHA-256 of this file's canonical form: keys sorted, no whitespace, UTF-8; with no number but integers and no character past ASCII in it, that is RFC 8785's form (JCS)"
+ }
+}
