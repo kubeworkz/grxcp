@@ -16,6 +16,11 @@ the GEMM ended. It is a design and a model. No module, no root port and no
 driver code exists for it. §9 says what it asks of whom, and §10 what it
 leaves open.
 
+*Built in a model, 2026-10-15* (§11). The module's half is a model in front of
+the chiplet's twin, the host's half is grxcp's driver, and a gate holds the one
+to this design and the other to the twin's own call, bit for bit. There is
+still no module and no root port.
+
 **How to read it.** A standard named without a clause number means the term is
 the standard's and has not been read out of its text here: CXL 2.0's opcodes
 and registers below are named as this document understands them, and L1's
@@ -292,7 +297,10 @@ reaches `PTQ_IRQ_AT` and `PTQ_CTRL.IRQ_EN` is set. Vector 1 is the map's §3,
 nothing orders against CXL.cache's writes, so the module raises vector 0 only
 after the record is ordered (C6). Polling stays valid and costs the link
 nothing: the host spins on the slot's `status` in its own cache, and the line
-moves only when the record lands.
+moves only when the record lands. *As built (§11),* the driver also reads
+`PTQ_STATUS` on each pass while the slot is pending, which is how it tells a
+halted queue from a slow one. On a board it would spin on its cache between
+such reads.
 
 **Timeouts.** The driver bounds every wait. It can work out a GEMM's own time
 from its shots, the shot rate `PTA_CAPS2` reports and a calibration's longest
@@ -451,7 +459,7 @@ and its ticks are not nanoseconds.
 | grx930 | A CXL 2.0 root port with CXL.cache: the home agent, an L2 that answers snoops (none will find a line here, but a Type-1 host has to ask), and RdCurr and ItoMWr served. MSI-X delivered to the harts, which is the plan's ask for AIA's message-signalled interrupts. PCIe 5.0-class transceivers (B24) | L1 |
 | grx930's firmware | The root complex in the device tree; CXL.cache enabled on the root port | L4 |
 | The PTA module, a stand-in or photonic | One function as §2 has it; the map on page 0 and the queue on page 1; §4's order and §5's rules; two MSI-X vectors | The module's owner |
-| grxcp | The transport behind S4's hooks: `read32` and `write32` as MMIO, `submit` as this queue; a lost GEMM's results undefined; the index from the record. The PTA device taking its operands from host memory, in buffers that are physically contiguous. And the twin behind a ring in host memory, so that S4's gate runs through this queue before any module exists | S4 |
+| grxcp | The transport behind S4's hooks: `read32` and `write32` as MMIO, `submit` as this queue; a lost GEMM's results undefined; the index from the record. The PTA device taking its operands from host memory, in buffers that are physically contiguous. And the twin behind a ring in host memory, so that S4's gate runs through this queue before any module exists. *Built, 2026-10-15 (§11), but for the device and its buffers* | S4 |
 | grxgpu | Nothing new. The descriptor is kept field for field, so the host path stays one command on both boards | — |
 
 ---
@@ -493,3 +501,71 @@ and its ticks are not nanoseconds.
 11. **The PTA's parent and its buffers in grxcp** (§3). What `parentDevice`
     reports on the first board, and how `grxMallocHost` or `grxHostRegister`
     gives the physically contiguous memory a descriptor's one address needs.
+
+---
+
+## 11. Built, in a model (2026-10-15)
+
+Both halves of §4 to §6 exist as code, and neither is hardware.
+
+- **The module**, `src/backends/pta_chiplet/pta_chiplet_module.c`: the queue's
+  page in front of the twin, which it calls through the twin's own interface.
+  Host memory is two calls, a whole line read (RdCurr) and a whole line written
+  (ItoMWr), and a call that has returned is ordered. One command at a time; NOT
+  ISSUED and NOT RUN decided before the tile sees a command; a done GEMM's
+  results and then its record; a teardown that drops what is running and writes
+  nothing of it; halts on a doorbell that makes no sense and on memory that
+  fails; MSI-X vectors 0 and 1 as calls.
+
+- **The host's half**, in the driver,
+  `src/backends/pta_chiplet/pta_chiplet.cpp`: `pta_chiplet_attach_queue` checks
+  `PTQ_ID` and `PTQ_CAPS`, takes a ring from a pair of hooks that hand out
+  memory the module can reach, and enables it. With the queue attached a GEMM
+  is staged into that memory as int8, published, fenced and rung. The driver
+  polls the record, and a halt or a wait that runs out is a teardown that ends
+  the GEMM lost. A module that never says it has stopped leaves the queue dead.
+  The index comes from the record.
+
+- **The runtime** attaches the queue when its test seam is given host memory,
+  and then every GEMM on the PTA device goes through the ring.
+
+**What holds it.** `test_pta_chiplet_queue.cc`, 110 checks, 55 on each of the
+two tiles. It holds the module to this design with descriptors written by hand:
+each way a command ends, a record that keeps the host's fields, results over
+five lines and every line before the record, a ring that wraps, both
+interrupts, both halts, a teardown with the GEMM caught running, the slot
+behind it held until the tile is free, and a reset. And it holds the driver's
+transport through the module to the twin's own call, bit for bit, with the
+index each record reports. Five modules built wrong on purpose each fail it: a
+record before its results, a refusal with an index, bit 16 ignored, a dropped
+command written after all, and a doorbell taken whatever it says. Nine errors
+planted in the driver's queue code, one at a time in a copy and not in CI, each
+fail it as well: results not sign-extended, a descriptor written after the
+doorbell, a ring mask a slot short, the index read from the wrong field, a
+teardown that does not end its slots or does not wait for the module to stop,
+an operand of 128 let through, a refusal reported as not accepted, and a halt
+not looked for. And grxBLAS's PTA gate, 4,164 results a tile held bit for bit
+to the model built from the device property alone, passes through the queue as
+it does through the call, with no link installed: 17 commands through the ring
+on each tile.
+
+**Where it departs from §4 to §6, and why.**
+
+1. The operands are copied, into memory the driver owns. The driver's interface
+   takes the twin's int32 integers, and a caller's own buffers cannot yet be
+   handed to the module (§10, item 11). So a lost GEMM leaves the caller's C
+   untouched after all: only the driver's copy is undefined.
+
+2. `PTQ_STATUS.ENABLED` reads 0 the moment the queue is told to stop. In a
+   model a write call returns ordered, so nothing is ever in flight.
+
+3. The driver reads `PTQ_STATUS` on each pass of its poll (§6). It is also
+   where a model's time passes, as a read of `PTA_STATUS` is for the twin.
+
+**What is not built.** Version 2 descriptors and the activation stage through
+the queue: `PTQ_CAPS` says version 1 only, and a version 2 descriptor ends NOT
+ISSUED. The interrupts, which the module raises and no driver waits on. Reading
+ahead. The PTA device with no parent GPU, whose operands are the host's: the
+runtime's device is still S4's, behind a GPU, and grxBLAS still copies its
+operands out of the parent's memory. And anything CXL: there is no root port,
+no flit and no snoop, only what the design's rules say happens at the line.

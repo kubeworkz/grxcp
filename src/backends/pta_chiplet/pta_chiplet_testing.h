@@ -40,6 +40,16 @@ int grxcp_pta_attach_model_for_testing(pta_chiplet_read_fn read32,
 // and a GEMM on it is refused. Same rule: before enumeration, or it returns 0.
 int grxcp_pta_attach_link_for_testing(pta_chiplet_submit_fn submit, void* ctx);
 
+// Give the model host memory, and with it the first board's transport. With
+// this attached the runtime looks for the queue on page 1 of the window
+// (pta_chiplet_attach_queue) and, when one answers, sends every GEMM through
+// it and not through the link. A model given memory and no queue keeps
+// whatever link it has, and says so. Same rule: before enumeration, or it
+// returns 0. Passing null for both clears it.
+int grxcp_pta_attach_memory_for_testing(pta_chiplet_dma_alloc_fn alloc,
+                                        pta_chiplet_dma_free_fn free_fn,
+                                        void* ctx);
+
 // Which GPU the chiplet is in the package of: the device whose memory its
 // operands live in. Device 0 unless this says otherwise. It has to be a GPU
 // that enumeration finds, or the chiplet is not enumerated at all -- a tile

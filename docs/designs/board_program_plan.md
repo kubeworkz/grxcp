@@ -1023,6 +1023,16 @@ C is undefined, a GEMM's index comes from its record, and the device's operands
 are host buffers, physically contiguous, with no parent GPU. None of it is code
 yet.
 
+*And its queue built in a model, 2026-10-15*
+([`pta_board_transport.md`](pta_board_transport.md) §11). The module's half is
+`src/backends/pta_chiplet/pta_chiplet_module.c`, the queue in front of the
+twin; the host's half is the driver's `pta_chiplet_attach_queue` and a GEMM
+through the ring. `test_pta_chiplet_queue.cc` holds the first to the design and
+the second to the twin's own call, bit for bit, on both tiles, and five modules
+wrong on purpose each fail it. grxBLAS's 4,164 results a tile hold through the
+queue as they do through the call. Not built: the device with no parent GPU, a
+caller's buffers handed to the module in place, and version 2 descriptors.
+
 **S3, predicted 2026-10-04.** [`pta_dispatch.py`](pta_dispatch.py) is the model:
 the CPU document's §2.1 for the NPU, X2's link and
 [`pta_shot_rate.py`](pta_shot_rate.py) §5's weight path for the chiplet, a GEMM

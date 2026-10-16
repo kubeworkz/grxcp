@@ -5,6 +5,13 @@
 // CXL.io, and docs/designs/pta_chiplet_regmap.md is the map. Its work arrives
 // over a die-to-die link from the GPU's copy engine.
 //
+// On the first board the PTA is a module of its own on the GRX930 host, and its
+// work goes through a queue: a ring of descriptors in host memory and a
+// doorbell on the second page of its BAR (docs/designs/pta_board_transport.md;
+// the board plan's B24 and B25). That is the transport below, attached with
+// pta_chiplet_attach_queue. It needs the window and host memory the module can
+// reach, and nothing else.
+//
 // THERE IS NO CHIPLET, AND NO WAY TO REACH ONE FROM HERE. Two things a host
 // needs do not exist yet, and this driver says so rather than standing
 // something in for them:
@@ -27,6 +34,7 @@
 #ifndef PTA_CHIPLET_H
 #define PTA_CHIPLET_H
 
+#include <cstddef>
 #include <cstdint>
 
 #ifdef __cplusplus
@@ -81,6 +89,52 @@ typedef int (*pta_chiplet_submit_fn)(void* ctx, int bank, int M, int N, int K,
                                      const int32_t* A, const int32_t* B,
                                      int64_t* C, int* status);
 
+// ---- The queue: the first board's transport --------------------------------
+//
+// Page 1 of the BAR the map is page 0 of, so its registers go through the same
+// two window hooks. The descriptor is the host path's version 1
+// (grxgpu/docs/proposals/pta_chiplet_host_path.md section 4), field for field:
+// int8 operands and int32 results, which is format 0.
+#define PTA_CHIPLET_PTQ_ID        0x1000u   // R:  [31:8] "PTQ", [7:0] the page's version
+#define PTA_CHIPLET_PTQ_CAPS      0x1004u   // R:  [4:0] log2 of the most slots [8] v1 taken
+#define PTA_CHIPLET_PTQ_CTRL      0x1008u   // RW: [0] ENABLE [1] IRQ_EN
+#define PTA_CHIPLET_PTQ_STATUS    0x100Cu   // R:  [0] ENABLED [1] HALTED [15:8] why
+#define PTA_CHIPLET_PTQ_BASE_LO   0x1010u
+#define PTA_CHIPLET_PTQ_BASE_HI   0x1014u
+#define PTA_CHIPLET_PTQ_SIZE      0x1018u
+#define PTA_CHIPLET_PTQ_TAIL      0x1020u   // the doorbell
+#define PTA_CHIPLET_PTQ_HEAD      0x1024u
+
+#define PTA_CHIPLET_PTQ_MAGIC     0x50545100u   // "PTQ" in PTQ_ID[31:8]
+#define PTA_CHIPLET_PTQ_VERSION   1u
+#define PTA_CHIPLET_PTQ_CAPS_V1   0x100u
+#define PTA_CHIPLET_PTQ_ENABLE    0x1u
+#define PTA_CHIPLET_PTQ_ENABLED   0x1u
+#define PTA_CHIPLET_PTQ_HALTED    0x2u
+
+#define PTA_CHIPLET_SLOT          128u   // a slot: room for a version 2 descriptor
+#define PTA_CHIPLET_LINE          64u
+#define PTA_CHIPLET_D_STATUS      0x30u  // the record's fields, which the module writes
+#define PTA_CHIPLET_D_INDEX       0x34u
+#define PTA_CHIPLET_D_SATS        0x38u
+#define PTA_CHIPLET_REC_DONE        1
+#define PTA_CHIPLET_REC_REFUSED     2
+#define PTA_CHIPLET_REC_LOST        3    // written by this driver, in a teardown
+#define PTA_CHIPLET_REC_NOT_ISSUED  4
+#define PTA_CHIPLET_REC_NOT_RUN     5
+
+// Host memory the module can reach. On a board it is the platform's DMA
+// memory; in a test it is ordinary memory whose address is its pointer.
+typedef struct {
+    void*    cpu;     // where the host reads and writes it
+    uint64_t addr;    // where the module does: a host physical address
+    size_t   bytes;
+} pta_chiplet_dma_t;
+// `bytes` of it, physically contiguous and aligned to 4 KiB, or not 0 if there
+// is none to give.
+typedef int  (*pta_chiplet_dma_alloc_fn)(void* ctx, size_t bytes, pta_chiplet_dma_t* out);
+typedef void (*pta_chiplet_dma_free_fn)(void* ctx, pta_chiplet_dma_t* buf);
+
 // ---- Why a call failed ----
 #define PTA_CHIPLET_OK                0
 #define PTA_CHIPLET_ERR_NO_WINDOW     1   // no path to the register block
@@ -90,6 +144,7 @@ typedef int (*pta_chiplet_submit_fn)(void* ctx, int bank, int M, int N, int K,
 #define PTA_CHIPLET_ERR_REFUSED       5   // the tile refused it: see refused_impairments
 #define PTA_CHIPLET_ERR_WEDGED        6   // it never stopped being busy
 #define PTA_CHIPLET_ERR_LOST          7   // it ended with no result
+#define PTA_CHIPLET_ERR_FORMAT        8   // an operand does not fit the queue's format 0, int8
 
 typedef struct pta_chiplet_device {
     int      present;               // 1 once pta_chiplet_detect has identified a tile
@@ -104,6 +159,23 @@ typedef struct pta_chiplet_device {
     void*                 io_ctx;
     pta_chiplet_submit_fn submit;
     void*                 link_ctx;
+
+    // The queue, once pta_chiplet_attach_queue has found one. A GEMM then goes
+    // through it and not through `submit`.
+    int                      queue;        // 1: attached
+    int                      queue_dead;   // it would not stop when told to: nothing more is sent
+    uint32_t                 ring_log2;
+    uint32_t                 next;         // the index the next GEMM is published at
+    uint32_t                 ended;        // every index before it has ended
+    pta_chiplet_dma_t        ring;
+    pta_chiplet_dma_t        stage;        // the operands and results of the GEMM in flight
+    pta_chiplet_dma_alloc_fn dma_alloc;
+    pta_chiplet_dma_free_fn  dma_free;
+    void*                    dma_ctx;
+    // The index the last GEMM through the queue ran as, from its record, and -1
+    // after anything else. S4's property needs a GEMM's index; with a queue a
+    // read of PTA_GEMM_CT before the GEMM is a read of the wrong thing.
+    int64_t                  last_index;
 } pta_chiplet_device_t;
 
 // Point a device at a window. Zeroes the whole struct first, so call it BEFORE
@@ -155,9 +227,30 @@ int pta_chiplet_read_analog(pta_chiplet_device_t* dev, pta_chiplet_analog_t* out
 // CAL_BUSY. Returns 1 idle, 0 not, -1 with no window.
 int pta_chiplet_idle(pta_chiplet_device_t* dev);
 
-// One GEMM, start to end. Waits for the tile to be idle, hands the command to
-// the link, and waits for it to end. Returns 0 with C written, or -1 with C
-// untouched and dev->error saying why.
+// Find the queue on page 1 and start it: PTQ_ID's magic and version 1, version
+// 1 descriptors taken, and room for 2^ring_log2 slots. After
+// pta_chiplet_attach_window and pta_chiplet_detect, and before anything that
+// calls pta_chiplet_attach_window again, which would forget the ring's memory.
+// Allocates the ring through `alloc`, programs it and enables the queue.
+// Returns 1, or 0 with nothing allocated and dev->error saying why: no queue
+// there is PTA_CHIPLET_ERR_NO_LINK, which is every chiplet on rev A.
+int  pta_chiplet_attach_queue(pta_chiplet_device_t* dev, pta_chiplet_dma_alloc_fn alloc,
+                              pta_chiplet_dma_free_fn free_fn, void* ctx, int ring_log2);
+// Stop the queue and give its memory back.
+void pta_chiplet_detach_queue(pta_chiplet_device_t* dev);
+// The design's teardown: stop the queue, wait until it says it has stopped
+// writing, end every slot it did not end as lost, and start it again empty.
+// Returns 0, or -1 if it never said it had stopped: then the queue is dead, no
+// more is sent, and only a reset of the module brings it back.
+int  pta_chiplet_queue_teardown(pta_chiplet_device_t* dev);
+
+// One GEMM, start to end. Through the queue if one is attached, and through the
+// link otherwise: hand the command over, and wait for it to end. Returns 0 with
+// C written, or -1 with C untouched and dev->error saying why. Through the
+// queue the operands are copied into host memory the module can reach and the
+// results copied out, the low 32 bits of each sum sign-extended; an operand
+// outside int8 is PTA_CHIPLET_ERR_FORMAT and nothing is sent. The index the
+// GEMM ran as is then dev->last_index.
 int pta_chiplet_gemm(pta_chiplet_device_t* dev, int bank, int M, int N, int K,
                      const int32_t* A, const int32_t* B, int64_t* C);
 
