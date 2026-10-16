@@ -27,7 +27,9 @@ workload.
 | `pta_chiplet.h`, `pta_chiplet.cpp` | The host's driver: detection, the property's reader, the completion test, one GEMM start to end. In `libgrxrt` under `-DGRXCP_ENABLE_PTA=ON` |
 | `pta_chiplet_testing.h` | The seam that attaches a model as the chiplet the runtime enumerates |
 | `test_pta_chiplet_driver.cc` | The driver's gate, against the twin and against windows and links that misbehave |
-| `CMakeLists.txt` | `pta_chiplet_twin`, a static library, and the two gates as tests |
+| `pta_chiplet_module.h`, `pta_chiplet_module.c` | The first board's PTA module: the transport's queue on the second page of its BAR, in front of the twin on the first |
+| `test_pta_chiplet_queue.cc` | The queue's gate: the module against descriptors written by hand, and the driver's transport through it against the twin's own call |
+| `CMakeLists.txt` | `pta_chiplet_twin`, a static library with the module in it, and the three gates as tests |
 
 The tile's arithmetic is not in this directory. It is
 `third_party/grx930/pta_tile_model.c`, grx930's, vendored byte for byte and held
@@ -64,6 +66,60 @@ for bit to the model built from the device property alone.
 which tile: one run is one tile, because enumeration happens once in a process,
 so each of the two takes the tile as its argument and is run for 128 × 64 and
 for 256 × 64.
+
+## The first board's queue
+
+On the first board the PTA is a module of its own on the GRX930 host, a CXL
+Type-1 device, and no GPU stands between them (the board plan's B24 and B25).
+[`docs/designs/pta_board_transport.md`](../../../docs/designs/pta_board_transport.md)
+is the design: the map on page 0 of the module's BAR, a queue on page 1, and a
+GEMM as the host path's descriptor in a ring in host memory, which the module
+reads and writes back over CXL.cache. Two halves of it are built here, and
+neither is hardware.
+
+**The module's half** is `pta_chiplet_module.c`, a model of the module in front
+of the twin, which it calls through the twin's own interface. Host memory is
+two calls a caller supplies, a whole 64-byte line read and a whole line
+written, and a test decides what an address means. It takes one command at a
+time; ends what it cannot use NOT ISSUED and what asked to follow a failure NOT
+RUN; hands the rest to the twin, which may yet refuse it; writes a done GEMM's
+results and then its record; and drops what is running when the queue is torn
+down, writing nothing of it. Only version 1 descriptors: the activation stage's
+version 2 ends NOT ISSUED here.
+
+**The host's half** is in the driver. `pta_chiplet_attach_queue` finds the
+queue on page 1 and gives it a ring, from a pair of hooks that hand out memory
+the module can reach. On a board that is the platform's DMA memory; in a test
+it is this process's, and an address is a pointer. With the queue attached,
+`pta_chiplet_gemm` copies the operands into that memory as int8, publishes a
+descriptor, fences, rings the doorbell, and polls the record, reading
+`PTQ_STATUS` while it waits so that a halted queue is told from a slow one. A
+halt or a wait that runs out tears the queue down and ends the GEMM lost. A
+module that will not stop leaves the queue dead and nothing more is sent. The
+index a GEMM ran as comes from its record, `dev->last_index`. The copy is what
+the driver's int32 interface makes necessary: until a caller's own buffers can
+be handed to the module (the design's open item 11), the operands go through
+memory the driver owns.
+
+**The runtime** attaches the queue when the seam is given host memory,
+`grxcp_pta_attach_memory_for_testing`. Its device is still S4's, a chiplet
+behind a GPU parent, so grxBLAS still copies its operands out of the parent's
+memory: what changes is how the driver reaches the tile. The device with no
+parent GPU, whose operands are the host's, is a later step.
+
+The gate is `test_pta_chiplet_queue.cc`, on 128 × 64 and on 256 × 64, and
+`tests/libs/test_grxblas_pta_chiplet.cpp` runs a second time on each tile with
+`queue` as its second argument: the twin behind the module and no link, so
+every GEMM goes through the ring or does not run. Five switches build a module
+that is wrong in one way, and the queue's gate has to fail against each:
+
+| Switch | The module it builds | What catches it |
+|---|---|---|
+| `PTA_MODULE_ABLATE_RECORD_FIRST` | The record goes out before the results | The order of the module's own writes |
+| `PTA_MODULE_ABLATE_REFUSED_INDEX` | A refusal reports an index | "REFUSED by the tile, no index" |
+| `PTA_MODULE_ABLATE_AFTER_SUCCESS` | Bit 16 of `target` is not honoured | "bit 16 after the refusal: NOT RUN" |
+| `PTA_MODULE_ABLATE_ORPHAN` | A dropped command's results and record are written when the tile ends it | "the module wrote nothing of it" |
+| `PTA_MODULE_ABLATE_DOORBELL` | A doorbell is taken whatever it says | The two halts on a doorbell |
 
 ## Using it
 

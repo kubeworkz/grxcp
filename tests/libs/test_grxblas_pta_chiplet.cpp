@@ -311,14 +311,19 @@ int main(int argc, char** argv) {
   return 77;
 #else
   pta_twin_build build;
-  if (!grxtest::pta_twin_build_from_args(argc, argv, &build)) return 2;
+  grxtest::PtaTransport how;
+  if (!grxtest::pta_twin_args(argc, argv, &build, &how)) return 2;
   const std::vector<Case> cases = cases_for(build);
   const int num_cases = (int)cases.size();
 
   // BEFORE THE FIRST grx CALL. Enumeration runs once and the seam refuses after.
-  const bool installed = grxtest::pta_twin_install(build);
+  // Through the queue the twin is behind the first board's module, and there is
+  // no link: every GEMM below goes through the ring or does not run.
+  const bool queue = how == grxtest::PtaTransport::Queue;
+  const bool installed = queue ? grxtest::pta_twin_install_queue(build) : grxtest::pta_twin_install(build);
   section("the twin is behind the runtime's PTA device");
-  check(installed, "the twin's window and link are installed");
+  check(installed, queue ? "the twin is installed behind the module's queue, with no link"
+                         : "the twin's window and link are installed");
   if (!installed) return grxtest::report();
   pta_twin* twin = grxtest::pta_twin_installed();
 
@@ -546,6 +551,7 @@ int main(int argc, char** argv) {
   }
 
   check(grxblasDestroy(rig.h) == GRXBLAS_STATUS_SUCCESS, "grxblasDestroy");
+  grxtest::pta_transport_note(how);
   return grxtest::report();
 #endif
 }

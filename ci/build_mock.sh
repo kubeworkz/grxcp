@@ -486,6 +486,47 @@ else
   }
   echo "  ok    the driver, against the twin at 128 x 64 and at 256 x 64:" \
        "$(grep -E '^[0-9]+ checks, 0 failed$' "$BUILD/pta_chiplet_driver.log")"
+
+  # THE FIRST BOARD'S QUEUE (docs/designs/pta_board_transport.md). There the PTA
+  # is a module of its own on the GRX930 host, and its work goes through a ring
+  # of descriptors in host memory and a doorbell on its BAR's second page.
+  # pta_chiplet_module.c models the module: that queue, in front of the same
+  # twin. The gate holds it to the design with descriptors written by hand --
+  # every way a command ends, the order its lines go out in, a halt, a teardown
+  # and a reset -- and holds the driver's transport through it to the twin's
+  # own call, bit for bit, on both tiles.
+  #
+  # Then five modules that are each wrong in one way -- a record before its
+  # results, a refusal that reports an index, bit 16 ignored, a dropped command
+  # whose results are written after the host ended it, and a doorbell taken
+  # whatever it says -- and the gate has to fail against each.
+  queue_build() {   # $1: the output; then any -D for the module
+    local out="$1"; shift
+    $CC_BIN -std=c99 -Wall -Wextra -Wpedantic -O2 "$@" -I"$PTA_DIR" -I"$TWIN_DIR" \
+      -c "$TWIN_DIR/pta_chiplet_module.c" -o "$out.module.o"
+    $CXX -std=c++17 -Wall -Wextra -O1 -I"$TWIN_DIR" -I"$PTA_DIR" \
+      "$TWIN_DIR/test_pta_chiplet_queue.cc" "$TWIN_DIR/pta_chiplet.cpp" "$out.module.o" \
+      "$BUILD/test_pta_chiplet_twin.twin.o" "$BUILD/test_pta_chiplet_twin.model.o" -o "$out"
+  }
+  queue_build "$BUILD/test_pta_chiplet_queue"
+  "${RUN[@]}" "$BUILD/test_pta_chiplet_queue" > "$BUILD/pta_chiplet_queue.log" 2>&1 || {
+    echo "  FAIL  the first board's queue:"
+    grep -E "^  FAIL" "$BUILD/pta_chiplet_queue.log" | head -12 | sed 's/^/      /'
+    exit 1
+  }
+  echo "  ok    the queue, and the driver through it, at 128 x 64 and at 256 x 64:" \
+       "$(grep -E '^[0-9]+ checks, 0 failed$' "$BUILD/pta_chiplet_queue.log")"
+  for ablation in RECORD_FIRST REFUSED_INDEX AFTER_SUCCESS ORPHAN DOORBELL; do
+    queue_build "$BUILD/test_pta_chiplet_queue_$ablation" "-DPTA_MODULE_ABLATE_$ablation"
+    if "${RUN[@]}" "$BUILD/test_pta_chiplet_queue_$ablation" \
+         > "$BUILD/pta_chiplet_queue_$ablation.log" 2>&1; then
+      echo "  FAIL  a module built with PTA_MODULE_ABLATE_$ablation still passed."
+      echo "        The gate is not checking what that switch breaks."
+      exit 1
+    fi
+    echo "  ok    and a module built with PTA_MODULE_ABLATE_$ablation fails it:" \
+         "$(grep -cE '^  FAIL' "$BUILD/pta_chiplet_queue_$ablation.log") checks"
+  done
 fi
 
 echo
@@ -556,6 +597,9 @@ else
   echo "  ok    and so is the PTA chiplet twin's gate, which needs no flag"
   if [[ ! -x "$CMBUILD/src/backends/pta_chiplet/test_pta_chiplet_driver" ]]; then
     echo "  FAIL  cmake did not build the PTA chiplet driver's gate"; exit 1
+  fi
+  if [[ ! -x "$CMBUILD/src/backends/pta_chiplet/test_pta_chiplet_queue" ]]; then
+    echo "  FAIL  cmake did not build the first board's queue gate"; exit 1
   fi
 
   # The NPU flag, which is the thing the GRX930 team asked about. Both
@@ -720,23 +764,37 @@ else
   # the gate's argument. Which tile a run was ON is then read back out of its
   # log, from the line the gate prints off the device property: a gate that
   # ignored its argument would run one tile twice and be reported as both.
-  for gate in "unit:test_pta_chiplet_device" "libs:test_grxblas_pta_chiplet"; do
-    dir="${gate%%:*}"; name="${gate##*:}"
+  #
+  # AND THE GEMM AGAIN THROUGH THE FIRST BOARD'S QUEUE: the same grxBLAS gate,
+  # with the twin behind the module and no link, so that every GEMM goes
+  # through the ring or does not run. Which transport a run went through is
+  # read back out of its log as the tile is, from the line the gate prints off
+  # the module's own PTQ_HEAD: a run that ignored "queue" would put nothing
+  # through the ring.
+  for gate in "unit:test_pta_chiplet_device:link" "libs:test_grxblas_pta_chiplet:link" \
+              "libs:test_grxblas_pta_chiplet:queue"; do
+    dir="${gate%%:*}"; rest="${gate#*:}"; name="${rest%%:*}"; how="${rest##*:}"
     for tile in 128x64 256x64; do
-      echo "--- $name, on a $tile tile"
-      if ( cd "$ROOT/tests/$dir" && "$BUILD/cmake-pta/tests/$name" "$tile" ) \
-           > "$BUILD/$name.$tile.log" 2>&1; then rc=0; else rc=$?; fi
-      grep -E '^  (ok|FAIL|note) ' "$BUILD/$name.$tile.log" | sed 's/^/  /'
+      args=("$tile"); [[ "$how" == "queue" ]] && args+=(queue)
+      log="$BUILD/$name.$tile.$how.log"
+      echo "--- $name, on a $tile tile, through the $how"
+      if ( cd "$ROOT/tests/$dir" && "$BUILD/cmake-pta/tests/$name" "${args[@]}" ) \
+           > "$log" 2>&1; then rc=0; else rc=$?; fi
+      grep -E '^  (ok|FAIL|note) ' "$log" | sed 's/^/  /'
       if [[ $rc -ne 0 ]]; then
         [[ $rc -eq 77 ]] && echo "  FAIL  $name SKIPPED. A PTA build has the backend and the twin; it must run."
-        echo "FAILED: $name on a $tile tile (exit $rc)"
+        echo "FAILED: $name on a $tile tile, through the $how (exit $rc)"
         exit 1
       fi
-      if ! grep -qE "^  note  tile $tile, " "$BUILD/$name.$tile.log"; then
+      if ! grep -qE "^  note  tile $tile, " "$log"; then
         echo "  FAIL  $name was asked for a $tile tile, and its device does not report one."
         exit 1
       fi
-      tail -1 "$BUILD/$name.$tile.log"
+      if [[ "$how" == "queue" ]] && ! grep -qE "^  note  transport queue, [1-9][0-9]* commands" "$log"; then
+        echo "  FAIL  $name was asked for the queue, and nothing went through the ring."
+        exit 1
+      fi
+      tail -1 "$log"
     done
   done
 fi

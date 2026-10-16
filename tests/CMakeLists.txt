@@ -151,6 +151,15 @@ foreach(src ${LIB_TEST_SRC})
       set_tests_properties(${name}_256x64 PROPERTIES SKIP_RETURN_CODE 77
                            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/libs)
     endif()
+    # And through the first board's queue, on both tiles, for a gate that can
+    # put the twin behind one (docs/designs/pta_board_transport.md).
+    if(GRXCP_ENABLE_PTA AND _src_text MATCHES "pta_twin_install_queue")
+      foreach(_tile 128x64 256x64)
+        add_test(NAME ${name}_${_tile}_queue COMMAND ${name} ${_tile} queue)
+        set_tests_properties(${name}_${_tile}_queue PROPERTIES SKIP_RETURN_CODE 77
+                             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/libs)
+      endforeach()
+    endif()
   endif()
 endforeach()
 

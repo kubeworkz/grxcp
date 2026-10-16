@@ -28,12 +28,14 @@
 #include "pta_chiplet_testing.h"
 
 extern "C" {
+#include "pta_chiplet_module.h"
 #include "pta_chiplet_twin.h"
 #include "pta_tile_model.h"
 }
 
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 static_assert(PTA_CHIPLET_CMD_PENDING == PTA_TWIN_PENDING &&
@@ -124,6 +126,76 @@ static_assert(pta_twin_adc_shift(pta_twin_working_tile, 7) == 15 &&
               pta_twin_adc_shift(pta_twin_first_tile, 6) == 17,
               "7- and 6-bit ADCs: LSBs of 2^15 and 2^16 on 128 rows, 2^16 and 2^17 on 256");
 
+// THE QUEUE, the first board's transport. The same twin, behind the module of
+// pta_chiplet_module.h: the twin's map on page 0 of the window and the queue on
+// page 1, with this process's memory as the host memory the module reaches. A
+// line's address is its pointer. A read of PTA_STATUS or of PTQ_STATUS is a
+// poll, and that is where the module's time passes.
+inline pta_module*& pta_module_installed() {
+  static pta_module* m = nullptr;
+  return m;
+}
+
+inline uint32_t pta_module_read_hook(void* ctx, uint32_t off) {
+  pta_module* m = static_cast<pta_module*>(ctx);
+  if (off == PTA_CHIPLET_STATUS || off == PTA_CHIPLET_PTQ_STATUS)
+    pta_module_run(m, pta_twin_quantum());
+  return pta_module_read32(m, off);
+}
+
+inline void pta_module_write_hook(void* ctx, uint32_t off, uint32_t v) {
+  pta_module_write32(static_cast<pta_module*>(ctx), off, v);
+}
+
+inline int pta_host_read_line(void*, uint64_t addr, uint8_t line[64]) {
+  std::memcpy(line, reinterpret_cast<const void*>(static_cast<uintptr_t>(addr)), 64);
+  return 0;
+}
+
+inline int pta_host_write_line(void*, uint64_t addr, const uint8_t line[64]) {
+  std::memcpy(reinterpret_cast<void*>(static_cast<uintptr_t>(addr)), line, 64);
+  return 0;
+}
+
+inline int pta_host_alloc(void*, size_t bytes, pta_chiplet_dma_t* out) {
+  const size_t n = (bytes + 4095) / 4096 * 4096;
+  void* p = std::aligned_alloc(4096, n ? n : 4096);
+  if (!p) return -1;
+  out->cpu = p;
+  out->addr = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(p));
+  out->bytes = n ? n : 4096;
+  return 0;
+}
+
+inline void pta_host_free(void*, pta_chiplet_dma_t* buf) {
+  std::free(buf->cpu);
+  buf->cpu = nullptr;
+}
+
+// Which way a gate's GEMMs reach the twin: the link's function call, as on rev
+// A off a model, or the first board's queue. The tile is the command line's
+// first word and the transport its second, "link" if none is named.
+enum class PtaTransport { Link, Queue };
+
+inline bool pta_twin_args(int argc, char** argv, pta_twin_build* build, PtaTransport* how) {
+  *build = pta_twin_working_tile;
+  *how = PtaTransport::Link;
+  bool ok = argc <= 3;
+  if (ok && argc >= 2) {
+    if (std::strcmp(argv[1], "256x64") == 0) *build = pta_twin_first_tile;
+    else ok = std::strcmp(argv[1], "128x64") == 0;
+  }
+  if (ok && argc == 3) {
+    if (std::strcmp(argv[2], "queue") == 0) *how = PtaTransport::Queue;
+    else ok = std::strcmp(argv[2], "link") == 0;
+  }
+  if (!ok)
+    std::printf("usage: %s [128x64 | 256x64] [link | queue]\n"
+                "  the tile the twin is built with, 128x64 if none is named, and how its\n"
+                "  GEMMs reach it: the link's call, or the first board's queue\n", argv[0]);
+  return ok;
+}
+
 // Build a twin and install it as the chiplet in device `parent`'s package.
 // BEFORE the first grx call. `with_link` false installs the window alone: a
 // chiplet that can be read and cannot be given work. Returns false if the twin
@@ -138,6 +210,34 @@ inline bool pta_twin_install(const pta_twin_build& build, int parent = 0,
   if (with_link && grxcp_pta_attach_link_for_testing(pta_twin_submit_hook, t) != 1)
     return false;
   return grxcp_pta_set_parent_for_testing(parent) == 1;
+}
+
+// The same, behind the module's queue: the window is the module's BAR, there
+// is no link, and host memory is attached, so the only way a GEMM reaches the
+// tile is the ring. Returns false if anything could not be built or attached.
+inline bool pta_twin_install_queue(const pta_twin_build& build, int parent = 0) {
+  pta_twin* t = pta_twin_new(&build);
+  if (!t) return false;
+  pta_twin_installed() = t;
+  const pta_module_host host = {pta_host_read_line, pta_host_write_line, nullptr, nullptr};
+  pta_module* m = pta_module_new(t, &host);
+  if (!m) return false;
+  pta_module_installed() = m;
+  if (grxcp_pta_attach_model_for_testing(pta_module_read_hook, pta_module_write_hook, m) != 1)
+    return false;
+  if (grxcp_pta_attach_memory_for_testing(pta_host_alloc, pta_host_free, nullptr) != 1)
+    return false;
+  return grxcp_pta_set_parent_for_testing(parent) == 1;
+}
+
+// What the run went through, from the module's own count and not from the
+// command line: a gate that ignored "queue" would leave the ring untouched.
+inline void pta_transport_note(PtaTransport how) {
+  if (how == PtaTransport::Queue && pta_module_installed())
+    std::printf("  note  transport queue, %u commands through the ring\n",
+                pta_module_read32(pta_module_installed(), PTA_MODULE_PTQ_HEAD));
+  else
+    std::printf("  note  transport link, the twin's call\n");
 }
 
 }  // namespace grxtest

@@ -246,6 +246,20 @@ chiplet's working geometry, 128 × 64 (the board plan's B10, as revised on
 this gate ran until then, in 26. The driver's reader is held to this backend's
 own, field for field, on the same device.
 
+Then **the first board's queue**
+(`src/backends/pta_chiplet/test_pta_chiplet_queue.cc`;
+`docs/designs/pta_board_transport.md`). There the PTA is a module of its own on
+the GRX930 host, and its work goes through a ring of descriptors in host memory
+and a doorbell on its BAR's second page.
+`src/backends/pta_chiplet/pta_chiplet_module.c` models that module, the queue
+in front of the same twin, and the driver's `pta_chiplet_attach_queue` is the
+host's half. The gate holds the module to the design with descriptors written
+by hand — every way a command ends, the order its lines go out in, a halt, a
+teardown and a reset — and the driver's transport through it to the twin's own
+call, bit for bit. 110 checks, 55 on each of the two builds. Then five modules
+each wrong in one way, from `PTA_MODULE_ABLATE_RECORD_FIRST` to
+`PTA_MODULE_ABLATE_DOORBELL`, and the gate has to fail against each.
+
 The **PTA CHIPLET DEVICE GATE** is the board plan's S4, in a CMake configuration
 of its own: `-DGRXCP_ENABLE_PTA=ON` with the NPU flag off, so that neither
 backend is found to depend on the other. It checks three things. That a build

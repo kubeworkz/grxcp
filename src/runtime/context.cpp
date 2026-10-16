@@ -479,6 +479,9 @@ struct PendingPtaModel {
   void*                 ctx     = nullptr;
   pta_chiplet_submit_fn submit  = nullptr;
   void*                 link_ctx = nullptr;
+  pta_chiplet_dma_alloc_fn dma_alloc = nullptr;   // host memory: the first board's queue
+  pta_chiplet_dma_free_fn  dma_free  = nullptr;
+  void*                    dma_ctx   = nullptr;
   int                   parent  = 0;
 };
 static PendingPtaModel g_pta_model;
@@ -576,6 +579,18 @@ void probe_pta_device(std::vector<Device>& devices) {
     if (!pta_chiplet_detect(dev)) {
       delete dev;
       return;
+    }
+    // The first board's transport, when the model was given host memory: the
+    // queue on the window's second page, a ring of 16 slots. A GEMM then goes
+    // through the ring and not the link (docs/designs/pta_board_transport.md).
+    if (g_pta_model.dma_alloc) {
+      if (pta_chiplet_attach_queue(dev, g_pta_model.dma_alloc, g_pta_model.dma_free,
+                                   g_pta_model.dma_ctx, 4))
+        std::fprintf(stderr, "grxcp: PTA chiplet: its queue answers on page 1, and GEMMs"
+                     " go through it\n");
+      else
+        std::fprintf(stderr, "grxcp: PTA chiplet: given host memory, and no queue answers"
+                     " on page 1: %s\n", pta_chiplet_error_string(dev->error));
     }
     Device d;
     d.index   = (int)devices.size();
@@ -768,6 +783,16 @@ int grxcp_pta_attach_link_for_testing(pta_chiplet_submit_fn submit, void* ctx) {
   if (grxcp::g_pta_enumerated) return 0;
   grxcp::g_pta_model.submit   = submit;
   grxcp::g_pta_model.link_ctx = ctx;
+  return 1;
+}
+
+int grxcp_pta_attach_memory_for_testing(pta_chiplet_dma_alloc_fn alloc,
+                                        pta_chiplet_dma_free_fn free_fn, void* ctx) {
+  if (grxcp::g_pta_enumerated) return 0;
+  if ((alloc == nullptr) != (free_fn == nullptr)) return 0;   // both, or neither
+  grxcp::g_pta_model.dma_alloc = alloc;
+  grxcp::g_pta_model.dma_free  = free_fn;
+  grxcp::g_pta_model.dma_ctx   = ctx;
   return 1;
 }
 
