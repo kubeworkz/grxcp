@@ -37,6 +37,7 @@ extern "C" {
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <vector>
 
 static_assert(PTA_CHIPLET_CMD_PENDING == PTA_TWIN_PENDING &&
               PTA_CHIPLET_CMD_DONE == PTA_TWIN_DONE &&
@@ -147,12 +148,33 @@ inline void pta_module_write_hook(void* ctx, uint32_t off, uint32_t v) {
   pta_module_write32(static_cast<pta_module*>(ctx), off, v);
 }
 
+// Every line the module read or wrote, in order: how a gate sees where a GEMM's
+// operands were taken from and its results put. Cleared by whoever reads it.
+struct PtaLine {
+  uint64_t addr;
+  bool     write;
+};
+inline std::vector<PtaLine>& pta_host_lines() {
+  static std::vector<PtaLine> v;
+  return v;
+}
+
+// How many of those lines fell inside [p, p + n), read or written.
+inline size_t pta_host_lines_in(const void* p, size_t n, bool write) {
+  const uint64_t lo = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(p)), hi = lo + n;
+  size_t k = 0;
+  for (const PtaLine& l : pta_host_lines()) k += (l.write == write && l.addr >= lo && l.addr < hi);
+  return k;
+}
+
 inline int pta_host_read_line(void*, uint64_t addr, uint8_t line[64]) {
+  pta_host_lines().push_back(PtaLine{addr, false});
   std::memcpy(line, reinterpret_cast<const void*>(static_cast<uintptr_t>(addr)), 64);
   return 0;
 }
 
 inline int pta_host_write_line(void*, uint64_t addr, const uint8_t line[64]) {
+  pta_host_lines().push_back(PtaLine{addr, true});
   std::memcpy(reinterpret_cast<void*>(static_cast<uintptr_t>(addr)), line, 64);
   return 0;
 }
@@ -173,9 +195,11 @@ inline void pta_host_free(void*, pta_chiplet_dma_t* buf) {
 }
 
 // Which way a gate's GEMMs reach the twin: the link's function call, as on rev
-// A off a model, or the first board's queue. The tile is the command line's
-// first word and the transport its second, "link" if none is named.
-enum class PtaTransport { Link, Queue };
+// A off a model; the queue, with the chiplet still behind its GPU; or the first
+// board's module, on the host with no GPU behind it, whose operands are host
+// memory. The tile is the command line's first word and the transport its
+// second, "link" if none is named.
+enum class PtaTransport { Link, Queue, Module };
 
 inline bool pta_twin_args(int argc, char** argv, pta_twin_build* build, PtaTransport* how) {
   *build = pta_twin_working_tile;
@@ -187,12 +211,14 @@ inline bool pta_twin_args(int argc, char** argv, pta_twin_build* build, PtaTrans
   }
   if (ok && argc == 3) {
     if (std::strcmp(argv[2], "queue") == 0) *how = PtaTransport::Queue;
+    else if (std::strcmp(argv[2], "module") == 0) *how = PtaTransport::Module;
     else ok = std::strcmp(argv[2], "link") == 0;
   }
   if (!ok)
-    std::printf("usage: %s [128x64 | 256x64] [link | queue]\n"
+    std::printf("usage: %s [128x64 | 256x64] [link | queue | module]\n"
                 "  the tile the twin is built with, 128x64 if none is named, and how its\n"
-                "  GEMMs reach it: the link's call, or the first board's queue\n", argv[0]);
+                "  GEMMs reach it: the link's call, the queue behind a GPU, or the first\n"
+                "  board's module on the host\n", argv[0]);
   return ok;
 }
 
@@ -215,7 +241,8 @@ inline bool pta_twin_install(const pta_twin_build& build, int parent = 0,
 // The same, behind the module's queue: the window is the module's BAR, there
 // is no link, and host memory is attached, so the only way a GEMM reaches the
 // tile is the ring. Returns false if anything could not be built or attached.
-inline bool pta_twin_install_queue(const pta_twin_build& build, int parent = 0) {
+inline bool pta_twin_install_queue(const pta_twin_build& build, int parent = 0,
+                                   bool with_memory = true) {
   pta_twin* t = pta_twin_new(&build);
   if (!t) return false;
   pta_twin_installed() = t;
@@ -225,16 +252,24 @@ inline bool pta_twin_install_queue(const pta_twin_build& build, int parent = 0) 
   pta_module_installed() = m;
   if (grxcp_pta_attach_model_for_testing(pta_module_read_hook, pta_module_write_hook, m) != 1)
     return false;
-  if (grxcp_pta_attach_memory_for_testing(pta_host_alloc, pta_host_free, nullptr) != 1)
+  if (with_memory && grxcp_pta_attach_memory_for_testing(pta_host_alloc, pta_host_free, nullptr) != 1)
     return false;
   return grxcp_pta_set_parent_for_testing(parent) == 1;
+}
+
+// The first board's: the same module, on the host, with no GPU behind it. Its
+// operands are host memory, and grxMallocHost on it is memory its queue reaches.
+// `with_memory` false gives it none, which is no device at all.
+inline bool pta_twin_install_module(const pta_twin_build& build, bool with_memory = true) {
+  return pta_twin_install_queue(build, /*parent=*/-1, with_memory);
 }
 
 // What the run went through, from the module's own count and not from the
 // command line: a gate that ignored "queue" would leave the ring untouched.
 inline void pta_transport_note(PtaTransport how) {
-  if (how == PtaTransport::Queue && pta_module_installed())
-    std::printf("  note  transport queue, %u commands through the ring\n",
+  if (how != PtaTransport::Link && pta_module_installed())
+    std::printf("  note  transport %s, %u commands through the ring\n",
+                how == PtaTransport::Module ? "module" : "queue",
                 pta_module_read32(pta_module_installed(), PTA_MODULE_PTQ_HEAD));
   else
     std::printf("  note  transport link, the twin's call\n");
