@@ -51,6 +51,12 @@ first two bullets here change, and §5's ordering rule comes from the GPU's
 command ring instead of from CXL.io. Nothing here has been changed on the
 strength of a proposal.
 
+*On the first board, 2026-10-15* (the board plan's B24, and
+[`pta_board_transport.md`](pta_board_transport.md) §2). The window is page 0 of
+the PTA module's own BAR, reached from the GRX930 over CXL.io, and the module's
+queue is page 1. The offsets of §2 to §4 are unchanged, and so is this map's
+version.
+
 ---
 
 ## 2. Identity and capability, new
@@ -100,6 +106,13 @@ before it believes there is a tile to have a geometry.
 model when it is built with the reference error model behind it (the PTA plan's
 S2): the model on its own, its arithmetic with no tile's timing. No RTL build
 reports 3. The board plan's X5 twin is the same kind of object.
+
+*The discovery contract on both boards, ruled 2026-10-15* (the board plan's
+B25). This map, version 1, is how a driver finds and identifies the PTA: in the
+GPU's window on rev A, and on page 0 of the PTA module's own BAR on the first
+board, where the transport's queue page adds `PTQ_ID` beside it. A change to
+any field here is a new version of the map on both boards. It is subject to
+verification on a module.
 
 ---
 
@@ -408,8 +421,13 @@ other two where there were 44 and 48 on the one.
    has a `QUEUE_MAX` register for the same number. *The host-path proposal would
    remove the question:* the GPU's command ring would be the queue, and the
    chiplet would be handed one command at a time.
+   *On the first board, 2026-10-15*: the ring in host memory is the queue, and
+   its size is the host's (the transport's §4). How far ahead the module reads
+   is its own, and BUSY covers it.
 4. **How many MSI vectors** the function offers, and whether the PTA shares the
    GPU's or has its own.
+   *Proposed for the first board, 2026-10-15*: two vectors of the module's own
+   function, one for completions and one for §3's (the transport's §6).
 5. **The seed function** — written out in §4 now, and implemented by the twin
    as well as by the harness it came from. It becomes normative the moment
    silicon implements it, as this item has always said.
@@ -420,6 +438,9 @@ other two where there were 44 and 48 on the one.
    one command, a GEMM with its operands in the GPU's memory, which ends done,
    refused or lost and reports the index it took. How the link frames it is
    still nobody's.
+   *On the first board, 2026-10-15*: a command is the host path's descriptor in
+   a ring in host memory, and a record says how it ended (the transport's §4
+   and §5). On rev A, link 2's framing is still nobody's.
 7. **The affine past eight columns.** `PTA_GAIN[j]` and `PTA_OFFS[j]` have eight
    words each. An index register and a data register would reach any width; so
    would a second page.

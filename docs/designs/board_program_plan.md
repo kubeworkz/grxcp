@@ -319,6 +319,15 @@ UTC. The manifest is revision 1.0, frozen, and `--freeze` passes.
 host, the PTA module a Type-1 device, and rev A unchanged. The interface
 document's first-board section and the host's transport for the PTA's driver
 waited on it, and can be written.
+*And both written, the same day*: the ICD's first-board section
+([`board_icd.md`](board_icd.md) §9) and the PTA's transport
+([`pta_board_transport.md`](pta_board_transport.md), with a model). A GEMM
+reaches the module as the host path's descriptor in a ring in host memory, and
+at x16 the link carries the canary at up to 93% of the PTA's working rate,
+before headers.
+*And the stand-in and the map ruled, the same day* (B25): a stand-in for
+integration only, the map the discovery contract on both boards, and two of the
+transport's rules.
 X2 has made its predictions (§3.3), X1 its budget (§4.3), and P0, X3 and X4
 are drafted as [`board_icd.md`](board_icd.md),
 [`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) and
@@ -1003,6 +1012,17 @@ And a way to configure the tile from grxcp, which is `cuda_mapping.md` 7.40 for
 the chiplet as it was for the c930: the gate programs the registers behind the
 runtime's back.
 
+*On the first board, designed 2026-10-15*
+([`pta_board_transport.md`](pta_board_transport.md)). B24 gives the hooks a
+transport. `read32` and `write32` are MMIO on page 0 of the PTA module's BAR
+over CXL.io, the map unchanged. `submit` is a ring of the host path's
+descriptors in host memory, with a doorbell on page 1, and the operands and
+results cross CXL.cache. S1, on that board, is the module's own function found
+in configuration space. Built, it would change three things here: a lost GEMM's
+C is undefined, a GEMM's index comes from its record, and the device's operands
+are host buffers, physically contiguous, with no parent GPU. None of it is code
+yet.
+
 **S3, predicted 2026-10-04.** [`pta_dispatch.py`](pta_dispatch.py) is the model:
 the CPU document's §2.1 for the NPU, X2's link and
 [`pta_shot_rate.py`](pta_shot_rate.py) §5's weight path for the chiplet, a GEMM
@@ -1254,7 +1274,7 @@ layer mis-sized, and the NPU's read-ahead dropped.
   revises what the proposal asked of the 1.0%, asks that the 2.0% on the
   largest error be restated, and asks that the 99.5% be set after the frozen
   classifier has been through the model.
-- *And §10.5 of it, the same day*
+- *And `first_board_reconciliation.md` §10.5, the same day*
   ([kubeworkz/grxgpu#10](https://github.com/kubeworkz/grxgpu/pull/10)): the
   range that clips nothing, run. It withdraws what §10.3 first proposed for the
   1.0%, a bound in steps of the declared output format, since a bound in steps
@@ -1262,7 +1282,7 @@ layer mis-sized, and the NPU's read-ahead dropped.
   instead that the manifest fix the range by rule, as the smallest step that
   holds the reference and no wider, and that the bound then be stated against
   the reference.
-- *And §10.6 of it, the same day*
+- *And `first_board_reconciliation.md` §10.6, the same day*
   ([kubeworkz/grxgpu#11](https://github.com/kubeworkz/grxgpu/pull/11)): the
   converter with one more bit, run. It takes back two words of §10.5, "no
   wider": a larger step costs error and a wider range at the same step does
@@ -1274,52 +1294,59 @@ layer mis-sized, and the NPU's read-ahead dropped.
   had told the demonstration not to assume the ninth bit while it was undecided
   here. It is decided (B14, §7), and the proposal now says so: the figures to
   set Gate F against are the 8-bit ones with a fitted range.
-- *And §10.7 of it, the same day*
+- *And `first_board_reconciliation.md` §10.7, the same day*
   ([kubeworkz/grxgpu#13](https://github.com/kubeworkz/grxgpu/pull/13)): the
   same layer with the source lit. It replaces the figures §10.5 and §10.6 gave
   the demonstration to set Gate F against, which were a tile's with no source,
   and tells it that part of the PTA's error is fixed between calibrations and
   will not average away.
-- *And §10.8 of it, the same day*
+- *And `first_board_reconciliation.md` §10.8, the same day*
   ([kubeworkz/grxgpu#16](https://github.com/kubeworkz/grxgpu/pull/16)): what
   the PTA's error at that layer is made of. It tells the demonstration that a
   1.0% bound over the reference's rms is at an 8-bit converter's own rounding,
   that two of the PTA's errors partly cancel and a gate should not pass on
   that, and it asks whether the declared reference may carry one output scale
   for the PTA.
-- *And §10.9 and §10.10 of it, the same day*
+- *And `first_board_reconciliation.md` §10.9 and 10.10, the same day*
   ([kubeworkz/grxgpu#17](https://github.com/kubeworkz/grxgpu/pull/17)): the
   reply the demonstration's side gave to the note, the freeze's named owner,
   and what the owner then ruled (§7, B19). Of the proposal's five rulings the
   third and the fourth are made by it.
-- *And §10.11 of it, 2026-10-14*
+- *And `first_board_reconciliation.md` §10.11, 2026-10-14*
   ([kubeworkz/grxgpu#18](https://github.com/kubeworkz/grxgpu/pull/18)): what
   one output scale buys at Gate F, with this plan's recommendation for the
   ruling B19 left open.
-- *And §10.12 of it, the same day*
+- *And `first_board_reconciliation.md` §10.12, the same day*
   ([kubeworkz/grxgpu#19](https://github.com/kubeworkz/grxgpu/pull/19)): the
   canary's data set and its first two layers as the owner ruled them, with what
   fills the canary manifest's fields for them.
-- *And §10.13 of it, the same day*
+- *And `first_board_reconciliation.md` §10.13, the same day*
   ([kubeworkz/grxgpu#20](https://github.com/kubeworkz/grxgpu/pull/20)): the
   canary trained, and run through the model.
-- *And §10.14 of it, the same day*
+- *And `first_board_reconciliation.md` §10.14, the same day*
   ([kubeworkz/grxgpu#21](https://github.com/kubeworkz/grxgpu/pull/21)): the
   canary's golden tensors, and the owner's rulings on FC3's declared reference
   and the output scale.
-- *And §10.15 of it, 2026-10-15*
+- *And `first_board_reconciliation.md` §10.15, 2026-10-15*
   ([kubeworkz/grxgpu#22](https://github.com/kubeworkz/grxgpu/pull/22)): Gate
   F's band, its class threshold and its tail rule, as the owner ruled them from
   the canary's model run.
-- *And §10.16 of it, the same day*
+- *And `first_board_reconciliation.md` §10.16, the same day*
   ([kubeworkz/grxgpu#23](https://github.com/kubeworkz/grxgpu/pull/23)): the
   canary's freeze package, and the review the owner asked of grxgpu.
-- *And §10.17 of it, the same day*
+- *And `first_board_reconciliation.md` §10.17, the same day*
   ([kubeworkz/grxgpu#24](https://github.com/kubeworkz/grxgpu/pull/24)): the
   canary frozen.
-- *And §10.18 of it, the same day*
+- *And `first_board_reconciliation.md` §10.18, the same day*
   ([kubeworkz/grxgpu#25](https://github.com/kubeworkz/grxgpu/pull/25)): the PTA
   module's link, CXL, as the owner ruled its fifth question.
+- *And `first_board_reconciliation.md` §10.19, the same day*
+  ([kubeworkz/grxgpu#26](https://github.com/kubeworkz/grxgpu/pull/26)): the
+  first board's interfaces and the PTA's transport, which keep the host path's
+  descriptor.
+- *And `first_board_reconciliation.md` §10.20, the same day*
+  ([kubeworkz/grxgpu#26](https://github.com/kubeworkz/grxgpu/pull/26)): the
+  stand-in and the map, as the owner ruled its first two questions.
 
 **The demonstration's last layer, on a stand-in (2026-10-13).**
 [`pta_board_chain.py`](pta_board_chain.py) holds what grx930's harness ran (its
@@ -5497,16 +5524,17 @@ read over the reference's rms, is at the 8-bit converter's own rounding: 0.71,
 two large rows out. Read over the largest the reference is, the tile as
 budgeted is 1.57, 1.27 and 1.48%. Which it is has been asked of the
 demonstration, with whether its reference may carry one output scale for the
-PTA (§4.2's proposal, §10.8). It settles none of the three things above.
+PTA (`first_board_reconciliation.md` §10.8). It settles none of the three
+things above.
 
-*And the demonstration's side answered, the same day* (§4.2's proposal, §10.9).
-It recommends, and does not rule: the rms error over the reference's rms on the
-frozen thousand vectors, one shot a vector, and a last layer of 6-bit
-activations and 6-bit weights trained for the tile behind the 8-bit converter,
-which is the stand-in's own format. **Gridworkz is the named owner of the
-freeze**, of the demonstration's workload and of its thresholds: decided
-2026-10-13. What the reply left open went to the owner, who ruled the same day:
-B19.
+*And the demonstration's side answered, the same day*
+(`first_board_reconciliation.md` §10.9). It recommends, and does not rule: the
+rms error over the reference's rms on the frozen thousand vectors, one shot a
+vector, and a last layer of 6-bit activations and 6-bit weights trained for the
+tile behind the 8-bit converter, which is the stand-in's own format.
+**Gridworkz is the named owner of the freeze**, of the demonstration's workload
+and of its thresholds: decided 2026-10-13. What the reply left open went to the
+owner, who ruled the same day: B19.
 
 *And its PTA link, 2026-10-15* (B24): CXL 2.0, the PTA module a Type-1 device.
 S1's enumeration over CXL comes forward to the first board, and S4's transport
@@ -5577,7 +5605,8 @@ error both with it and without; and that the band be set on the figure with it.
 A gain common to every output is what a calibration is for, and it does not
 move a class; lit it buys 0.34, 0.18 and 0.13 of a point, so it does not decide
 whether the board passes. The ruling is the owner's, and §4.2's proposal
-(§10.11) puts it to the demonstration's side the same way.
+(`first_board_reconciliation.md` §10.11) puts it to the demonstration's side
+the same way.
 
 *Ruled, 2026-10-14* (B21): as recommended, with the calibration set the first
 1,000 of the 6,000 held-out training images.
@@ -5818,6 +5847,48 @@ has the CXL-capable platform open), or the lane count. The stand-in, and
 whether the register map is the PTA's discovery contract: the proposal's first
 and second questions. The G100's link on the first board. Rev A, where B3, B4,
 B7 and B9 stand. B5 and B10 to B23 stand. *Needed by:* L1, S1, S4 and the ICD.
+
+*Written, 2026-10-15*: the ICD's §9 and
+[`pta_board_transport.md`](pta_board_transport.md). One figure above is
+corrected there. In the descriptor's format 0 the canary's results are four
+bytes each, 64 GB/s out and not 16, so both directions bind at once. After PCIe
+5.0's coding and the flit's framing at most 59.31 GB/s of lines is left a
+direction, 0.927 GS/s on the canary's shape: 93% of the working rate, before
+headers. The conclusion stands. And the PTA reads its operands coherently, but
+as the transport has it caches none of them, so no snoop finds a line on it.
+
+**B25 — The stand-in, the discovery contract, and two rules of the queue.**
+*Settled 2026-10-15.*
+
+B18 put two questions to grxgpu that stayed open after B24: what may stand in
+for the PTA, and whether its map is its discovery contract. With the transport
+written (B24, at its end), the owner ruled both at 23:52 UTC, and two choices
+the transport had made:
+
+| | Ruled |
+|---|---|
+| The stand-in (the proposal's first question) | **Yes, for integration only.** An FPGA module with an emulated 128 × 64 tile may take the PTA's place in the first board's integration and reliability runs. It is reached over the module's real CXL link, the ICD's F1, and reports `PTA_CAPS2[31]`. Its outputs are checked exactly against the seeded reference, and nothing it shows is claimed for a photonic PTA |
+| The register map (the proposal's second question, and X4) | **Yes, on both boards.** The PTA's map, version 1, is its discovery contract: page 0 of the module's BAR on the first board, beside the queue's `PTQ_ID` on page 1, and the GPU's window on rev A. Subject to verification on a module |
+| A lost GEMM's results ([`pta_board_transport.md`](pta_board_transport.md) §5) | **Undefined.** The host may reuse the buffer once the slot has ended |
+| Configuration between queued GEMMs (the transport's C11) | **Only with the queue drained, for now** |
+
+The stand-in is the proposal's own category, with all its limits: the
+integration items of Gate F and the reliability package, raw outputs checked
+exactly, latency and energy reported as a stand-in's, the product-value targets
+not evaluable on it, and the bit in every run manifest.
+
+**What follows.** The first board's integration has something it may run on
+before there is a photonic module, once someone builds it. X5's twin, held to
+the error model bit for bit, is what such a module's outputs would be checked
+against, and the twin behind the transport is the way to bring the driver up
+first. The map stays X4's, version 1, and a change to it is a new version on
+both boards. The transport's §5 and its §10, items 5, 8 and 10, are ruled where
+they were proposed.
+
+**What it does not settle.** Who builds the stand-in, on which FPGA, and by
+when: no RTL exists at 128 × 64, the gap the proposal's §3.5 states. Register
+writes in the queue, should a network's layers need settings that differ. B5
+and B10 to B24 stand. *Needed by:* the stand-in's build, and S4's transport.
 
 ---
 
@@ -6687,14 +6758,15 @@ B7 and B9 stand. B5 and B10 to B23 stand. *Needed by:* L1, S1, S4 and the ICD.
     the converter's codes, or in the scale the declared reference is given.
     None was run, and the gain here was fitted against the host's network and
     not against the declared format. *Needs:* from the demonstration, whether
-    its reference may carry an output scale (§4.2's proposal, §10.8); from
-    grx930, a run with the gain fitted against the declared format and taken
-    out. Until it is answered nothing is calibrated for gain, and B15 is what
-    it was.
+    its reference may carry an output scale
+    (`first_board_reconciliation.md` §10.8); from grx930, a run with the gain
+    fitted against the declared format and taken out. Until it is answered
+    nothing is calibrated for gain, and B15 is what it was.
 
-    *The demonstration's reply of 2026-10-13 does not answer it (§4.2's
-    proposal, §10.9). The freeze's owner ruled the same day that it waits on
-    grx930's run (B19): until then the reference carries no output scale.*
+    *The demonstration's reply of 2026-10-13 does not answer it
+    (`first_board_reconciliation.md` §10.9). The freeze's owner ruled the same
+    day that it waits on grx930's run (B19): until then the reference carries
+    no output scale.*
 
     *Run on 2026-10-14* (§4.2, [`pta_board_scale.py`](pta_board_scale.py)): one
     scale, fitted against the declared format at calibration and taken out. It
