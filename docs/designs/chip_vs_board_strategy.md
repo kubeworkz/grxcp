@@ -39,7 +39,7 @@ If you sell bare chips, you're implicitly asking customers to write their own so
 
 Your RISC-V + NPU + GPU combination actually creates a unique software story: a unified open ISA foundation with specialized compute engines. But that story only reaches customers if you package it.
 
-### A Phased Approach for Your Startup
+### A Phased Approach for Our Startup
 
 **Phase 1: Developer Kits and Reference Boards.** Ship low-volume, high-touch evaluation boards with a complete SDK. Target AI researchers, edge computing developers, and system architects who need to test your NPU/GPU performance. DEEPX's strategy of engaging ~350 companies with proof-of-concept testing before mass production is a model worth emulating—it shortens the 9-18 month sales cycle.
 
@@ -71,7 +71,7 @@ You shouldn't expect to integrate PTA directly on the same silicon die as the GP
 - **Electrical Interface**: The PTA needs high-speed DACs/ADCs to convert data between the optical compute engine and the electronic GPU/NPU. Your board design must include these electronic interface chips and drivers.
 - **Optical I/O**: The board needs a way to get light in and out. This means integrating optical fibers, waveguides, or a detachable optical connector into the board-level module.
 
-### 🎯 Strategic Value for Your Board Business
+### 🎯 Strategic Value for Our Board Business
 
 Adding PTA to your board creates a unique value proposition that differentiates you from just selling a generic RISC-V/GPU board:
 
@@ -135,4 +135,112 @@ On your board, this translates to a **2.5D or 3D chiplet package** mounted on th
 - **Calibration Infrastructure**: The interconnect fabric must include a control path (likely a low-speed electrical I2C/SPI bus) from the CPU to the EIC/PTA for runtime calibration of the optical mesh.
 - **Software Stack**: Our SDK needs to abstract this complexity. The programmer shouldn't know if a tensor operation ran on the GPU or the PTA; the runtime should handle data marshalling over the hybrid interconnect.
 
-In short, the CPU-GPU interconnect is a solved problem you can build with UCIe. The novel part is the **electro-optical bridge** to the PTA, which requires careful co-design of the EIC and the packaging to feed data at rates fast enough to keep the photonic compute engine busy.
+In short, the CPU-GPU interconnect is a solved problem we can build with UCIe. The novel part is the **electro-optical bridge** to the PTA, which requires careful co-design of the EIC and the packaging to feed data at rates fast enough to keep the photonic compute engine busy.
+
+---
+
+## UCIe Integration
+
+To use UCIe, both your RISC-V CPU and GPU/PTA chiplets must implement a standardized, three-layer stack. The specification defines the requirements at each layer to ensure interoperability.
+
+Here is a detailed breakdown of the elements each chiplet requires.
+
+### 🔌 Physical Layer (PHY): The Electrical Foundation
+
+This is the analog front-end that handles the actual signaling between dies. Both chiplets need identical PHY implementations to communicate.
+
+- **Data Rates & Signaling**: The PHY must support the agreed-upon data rate per lane. UCIe 1.0 supports up to **32 GT/s**, while UCIe 3.0 extends this to **48 GT/s and 64 GT/s** for high-performance AI/HPC applications. The signaling is **single-ended, unidirectional, Non-Return-to-Zero (NRZ)**.
+- **Lane Configuration**: You must define the number of lanes. UCIe supports **16 to 64 lanes** for a module. A UCIe link can be composed of one, two, or four modules. For example, a x16 link uses 16 lanes.
+- **Clocking Architecture**: At higher speeds (e.g., 64 GT/s), the PHY requires analog I/O blocks to operate at **16 GHz** when using a quadrature clocking architecture for data sampling.
+- **Packaging & Channel**: The PHY design must account for the package type. UCIe defines two primary packaging options:
+  - **UCIe-S (Standard Package)**: Uses an organic substrate, supporting longer traces (up to **25 mm**) and wider bump pitch (100-130 µm).
+  - **UCIe-A (Advanced Package)**: Uses a silicon interposer or bridge, supporting much shorter traces (up to **2 mm**) and finer bump pitch (25-55 µm), enabling higher bandwidth density.
+- **Sideband Channel**: A separate, lower-speed sideband channel is required for control, initialization, status, and management information. It operates independently of the main high-speed data path.
+
+### 🔗 Die-to-Die (D2D) Adapter: The Link Layer
+
+This layer sits between the PHY and the protocol layer. It ensures reliable data transfer over the physical link.
+
+- **Flow Control Unit (FLIT) Management**: The adapter packages data into **FLITs** for transmission. UCIe defines multiple FLIT formats (e.g., 68B, 256B) that include payload, CRC, and header bytes.
+- **Error Handling (CRC & Retry)**: To guarantee reliable delivery, the adapter performs **Cyclic Redundancy Check (CRC)** on each FLIT. If an error is detected, a **link-level retry mechanism** retransmits the failed FLIT. This is required when the raw Bit Error Rate (BER) is above **1e-27**.
+- **Link State Management**: The adapter manages the link's state machine, including initialization, training, and parameter negotiation with the PHY layer.
+- **Protocol Arbitration**: It handles arbitration between different protocols that may be mapped onto the UCIe link, such as PCIe and CXL.
+
+### 📋 Protocol Layer: The Language of the Link
+
+This layer defines how the chiplet's internal applications communicate over the UCIe link. You must choose a protocol that both your CPU and GPU/PTA will use.
+
+- **Supported Protocols**: UCIe is protocol-agnostic but defines standard mappings for:
+  - **PCI Express (PCIe)**: For general I/O and configuration.
+  - **Compute Express Link (CXL)**: For cache-coherent memory access between the CPU and accelerator. This is critical for your CPU-GPU link to share memory efficiently.
+  - **Streaming Protocols**: For raw, low-latency data transfer without the overhead of a full protocol stack. This is ideal for the high-bandwidth data paths to your PTA.
+- **SoC Interface**: The protocol layer connects to your chiplet's internal **Network-on-Chip (NoC)**. It supports standard interfaces like **AXI, CXS, and CHI C2C** to link the UCIe controller to the SoC application.
+
+### ⚙️ Software, Manageability, and System-Level Requirements
+
+Beyond the hardware stack, UCIe defines a software model and system-level features for integration and management.
+
+- **Software Model**: UCIe builds on PCIe/CXL software constructs. The link can be managed by firmware (for pre-UCIe OS) or natively by a UCIe-aware operating system. The OS must be able to **discover and enumerate** the UCIe links.
+- **Manageability & DFx**: UCIe 2.0 introduced a standardized system architecture for **testability, manageability, and debug (DFx)** across multiple chiplets. This includes a management fabric within each chiplet for telemetry and debug functions.
+- **Initialization & Training**: The link initialization process involves a sequence of steps, starting with **sideband initialization (SBINIT)** to establish control communication, followed by **mainband initialization** for the high-speed data path.
+
+### 💡 Specific Considerations for Our PTA Chiplet
+
+Integrating your photonic tensor accelerator (PTA) introduces unique requirements:
+
+- **Electronic-Optical Interface**: The PTA chiplet will need a UCIe PHY, but its primary data path will be optical. The UCIe link would likely be used for **control, configuration, and calibration** of the PTA, while the bulk tensor data flows over the optical interconnect. You will need a dedicated **electronic interface chip (EIC)** to bridge the UCIe electrical domain to the PTA's optical domain.
+- **Protocol Selection**: For the PTA, the **Streaming Raw Mode** of UCIe is likely the best fit. This mode provides the lowest-latency path by logically connecting the PHY directly to the application layer, bypassing the FLIT formatting overhead of the D2D adapter.
+- **Thermal & Calibration Management**: The UCIe sideband channel can be used to carry the low-speed control signals needed for runtime calibration of the PTA's phase shifters and modulators to counteract thermal drift.
+
+In summary, both your CPU and GPU/PTA chiplets must implement a compatible UCIe PHY, D2D Adapter, and Protocol Layer. The CPU-GPU link would likely use **CXL over UCIe** for cache coherence, while the link to our PTA would use **Streaming Raw Mouide** for low-latency control and data transfer. This layered approach ensures your chiplets can interoperate as a cohesive system.
+
+---
+
+## GPU / PTA Responsibilites
+
+**Question: Will all our GPU matrix multplication work be transfered to the PTA?**
+
+No — not all of them. The PTA will **selectively offload a subset** of matrix multiplications, not replace the GPU’s tensor cores wholesale. Think of our board as a heterogeneous compute system: CPU, GPU, NPU, and PTA each handle what they do best, and the runtime decides where each matmul runs.
+
+### What the PTA can realistically take
+
+Assuming your PTA is an analog/hybrid photonic tensor accelerator, its sweet spot is:
+
+- **Dense, large GEMMs / batched GEMMs** in inference.
+- **Low-precision** workloads: INT8, INT4, FP8, or similar — not FP32/BF16 training.
+- **Weight-stationary** operations where weights can be preloaded into the photonic mesh and activations streamed through.
+- **High data reuse** matmuls where the electro-optical conversion overhead is amortized.
+- **Latency-sensitive, deterministic** inference kernels.
+
+Examples: the linear projections in a transformer (QKV, FFN), convolution lowering to GEMM, and some attention matmuls if precision allows.
+
+### What stays on the GPU / NPU
+
+The GPU’s tensor cores remain essential for:
+
+- **Training**: gradient matmuls, backpropagation, optimizer updates. These need high precision and dynamic weights.
+- **High-precision inference**: FP32, TF32, BF16, FP64.
+- **Sparse, irregular, or small matmuls** where PTA conversion overhead kills the benefit.
+- **Non-linear and control ops**: softmax, layernorm, activations, reductions, data movement.
+- **Fallback**: any shape or precision the PTA cannot handle correctly or profitably.
+
+Our NPU cores would handle other NN primitives — activation, pooling, quantization, some elementwise ops — depending on your design.
+
+### The key constraint: data movement and precision
+
+A matmul is only worth offloading if:
+
+```plaintext
+PTA speedup > electro-optical conversion + data marshalling + synchronization overhead
+```
+
+For small matrices, the DAC/ADC, optical modulation, photodetection, and digital correction can easily dominate. For high-precision training, the PTA simply cannot match the numerical fidelity of GPU tensor cores. So the compiler/runtime needs a **cost model** that dispatches each matmul to the right engine.
+
+### What this means for our architecture
+
+- **First board**: Keep the GPU’s tensor cores. The PTA is a co-processor, not a replacement.
+- **Software**: We need a unified compiler/runtime (e.g., MLIR-based) that recognizes matmul patterns and routes them to PTA, GPU, or NPU based on shape, precision, and data locality.
+- **Interconnect**: UCIe + CXL gives us coherent control and fallback; the optical path handles bulk PTA data. But the PTA still needs a digital fallback path for correctness and calibration.
+- **Later revisions**: If the PTA proves itself on inference workloads, we could reduce tensor-core area in a future GPU revision and lean harder on photonics. But that’s a second-generation decision, not a first-board one.
+
+So the correct framing is: **the PTA will absorb some matrix multiplications — primarily low-precision inference GEMMs — while the GPU retains the rest.** It’s an offload engine, not a wholesale transfer.
