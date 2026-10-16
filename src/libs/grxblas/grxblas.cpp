@@ -997,7 +997,8 @@ static grxblasStatus_t pta_gemm_path(
     const float* beta, void* C, int ldc) {
   pta_chiplet_device_t* dev = grxcp::pta_device_for(device);
   const int parent = grxcp::pta_parent_of(device);
-  if (!dev || parent < 0) return GRXBLAS_STATUS_NOT_SUPPORTED;
+  const bool on_host = grxcp::pta_on_host(device);
+  if (!dev || (parent < 0 && !on_host)) return GRXBLAS_STATUS_NOT_SUPPORTED;
 
   // The tile computes C = A . B and nothing else.
   if (*alpha != 1.0f || *beta != 0.0f) {
@@ -1021,6 +1022,63 @@ static grxblasStatus_t pta_gemm_path(
   const void*  bufs[3]  = {A, B, C};
   const size_t need[3]  = {a_bytes, b_bytes, c_count * sizeof(int32_t)};
   const char*  names[3] = {"A", "B", "C"};
+
+  auto failed = [&]() {
+    std::fprintf(stderr, "grxblas: PTA GEMM failed: %s", pta_chiplet_error_string(dev->error));
+    if (dev->error == PTA_CHIPLET_ERR_REFUSED && dev->refused_impairments)
+      std::fprintf(stderr, " (PTA_IMPAIR asks for 0x%02x, which this tile does"
+                   " not build)", dev->refused_impairments);
+    std::fprintf(stderr, ".\n");
+    return (dev->error == PTA_CHIPLET_ERR_NO_LINK) ? GRXBLAS_STATUS_NOT_SUPPORTED
+                                                   : GRXBLAS_STATUS_EXECUTION_FAILED;
+  };
+
+  // THE FIRST BOARD'S PTA, a module on the host (docs/designs/pta_board_transport.md).
+  // Its operands are host memory. Three buffers that grxMallocHost handed out
+  // on this device, each on a 64-byte line and C with room for its last line
+  // whole, are where its queue can reach them, and the GEMM runs IN PLACE: the
+  // descriptor names the caller's own bytes, the module reads A and B and
+  // writes C where they are, and nothing is copied. Other host memory is
+  // staged through the driver's, as the chiplet's operands are. A pointer that
+  // is a GPU's is refused by name. After a GEMM that ended lost, a C used in
+  // place is undefined (the board plan's B25); after anything else it is
+  // untouched.
+  if (on_host) {
+    uint64_t addr[3] = {0, 0, 0}, room[3] = {0, 0, 0};
+    bool in_place = true;
+    for (int i = 0; i < 3; ++i) {
+      if (grxcp::pta_host_lookup(device, bufs[i], &addr[i], &room[i])) {
+        in_place = in_place && room[i] >= need[i] && addr[i] % PTA_CHIPLET_LINE == 0;
+        continue;
+      }
+      in_place = false;
+      const int owner = grxcp::owner_device_of(bufs[i]);
+      if (owner >= 0) {
+        std::fprintf(stderr,
+                     "grxblas: PTA %s is device %d's pointer. The first board's PTA"
+                     " module has no GPU behind it: its operands are host memory.\n",
+                     names[i], owner);
+        return GRXBLAS_STATUS_INVALID_VALUE;
+      }
+    }
+    const uint64_t c_lines = (need[2] + PTA_CHIPLET_LINE - 1) / PTA_CHIPLET_LINE * PTA_CHIPLET_LINE;
+    if (in_place && room[2] >= c_lines) {
+      // The tile's identity, as below: B's bytes are its activations, A's its
+      // weights, and C^T row-major is C column-major.
+      if (pta_chiplet_gemm_at(dev, /*bank=*/0, n, m, k, addr[1], addr[0], addr[2]) != 0)
+        return failed();
+      return GRXBLAS_STATUS_SUCCESS;
+    }
+    std::vector<int32_t> act(b_bytes), wgt(a_bytes);
+    for (size_t i = 0; i < b_bytes; ++i) act[i] = static_cast<const int8_t*>(B)[i];
+    for (size_t i = 0; i < a_bytes; ++i) wgt[i] = static_cast<const int8_t*>(A)[i];
+    std::vector<int64_t> out(c_count);
+    if (pta_chiplet_gemm(dev, /*bank=*/0, n, m, k, act.data(), wgt.data(), out.data()) != 0)
+      return failed();
+    int32_t* c32 = static_cast<int32_t*>(C);
+    for (size_t i = 0; i < c_count; ++i) c32[i] = (int32_t)(uint32_t)(uint64_t)out[i];
+    return GRXBLAS_STATUS_SUCCESS;
+  }
   for (int i = 0; i < 3; ++i) {
     grxcp::Mapping map{};
     if (!grxcp::lookup_device_pointer_on(parent, bufs[i], &map)) {
@@ -1061,14 +1119,7 @@ static grxblasStatus_t pta_gemm_path(
     // C is untouched: nothing has been written back. The reason is printed
     // because "execution failed" alone reads as a fault in this library, and
     // the usual cause is a register somebody else wrote.
-    std::fprintf(stderr, "grxblas: PTA GEMM failed: %s",
-                 pta_chiplet_error_string(dev->error));
-    if (dev->error == PTA_CHIPLET_ERR_REFUSED && dev->refused_impairments)
-      std::fprintf(stderr, " (PTA_IMPAIR asks for 0x%02x, which this tile does"
-                   " not build)", dev->refused_impairments);
-    std::fprintf(stderr, ".\n");
-    return (dev->error == PTA_CHIPLET_ERR_NO_LINK) ? GRXBLAS_STATUS_NOT_SUPPORTED
-                                                   : GRXBLAS_STATUS_EXECUTION_FAILED;
+    return failed();
   }
 
   // The low 32 bits of each sum, which is what the c930's DMA writes too.

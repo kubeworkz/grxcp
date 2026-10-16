@@ -81,6 +81,11 @@ foreach(src ${UNIT_SRC})
     add_test(NAME ${name}_256x64 COMMAND ${name} 256x64)
     set_tests_properties(${name}_256x64 PROPERTIES SKIP_RETURN_CODE 77)
   endif()
+  # The first board's module given no host memory: it must not be a device.
+  if(GRXCP_ENABLE_PTA AND _src_text MATCHES "nomemory")
+    add_test(NAME ${name}_nomemory COMMAND ${name} 128x64 nomemory)
+    set_tests_properties(${name}_nomemory PROPERTIES SKIP_RETURN_CODE 77)
+  endif()
 endforeach()
 
 # Library gates: tests/libs/test_<lib>.cpp is the numerical gate for library
@@ -157,6 +162,15 @@ foreach(src ${LIB_TEST_SRC})
       foreach(_tile 128x64 256x64)
         add_test(NAME ${name}_${_tile}_queue COMMAND ${name} ${_tile} queue)
         set_tests_properties(${name}_${_tile}_queue PROPERTIES SKIP_RETURN_CODE 77
+                             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/libs)
+      endforeach()
+    endif()
+    # And on the first board's module: on the host, no GPU behind it, its
+    # operands in host memory and used in place.
+    if(GRXCP_ENABLE_PTA AND _src_text MATCHES "pta_twin_install_module")
+      foreach(_tile 128x64 256x64)
+        add_test(NAME ${name}_${_tile}_module COMMAND ${name} ${_tile} module)
+        set_tests_properties(${name}_${_tile}_module PROPERTIES SKIP_RETURN_CODE 77
                              WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/libs)
       endforeach()
     endif()
