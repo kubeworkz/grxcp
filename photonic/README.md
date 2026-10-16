@@ -33,6 +33,8 @@ verification pending) or an MPW intermediary.
 
 ## Status
 
-Skeleton only. No vehicle cells yet; the first cell set (waveguide,
-splitter, MZM coupon, Ge-PD coupon, coupler test structures) is the next
-addition once this runner is green.
+Toolchain verified 2026-10-16: klayout 0.30.12, gdsfactory 9.51.0,
+sax 0.18.2 installed; smoke.py passes (gdsfactory -> GDS -> KLayout
+round-trip on placeholder layer (1, 0)). No vehicle cells yet; the first
+cell set (waveguide, splitter, MZM coupon, Ge-PD coupon, coupler test
+structures) is the next addition.
