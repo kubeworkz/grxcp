@@ -8,7 +8,7 @@
 [`pta_chiplet_link.py`](pta_chiplet_link.py),
 [`pta_shot_rate.py`](pta_shot_rate.py).
 
-**Status: BASELINE v0, drafted 2026-10-16.** Freezes the chiplet interface
+**Status: BASELINE v0, drafted 2026-10-16; v0.1 2026-10-16.** Freezes the chiplet interface
 starting from the regmap and the ICD so GF Fotonix preparation has a fixed
 target before the PDK lands. Fixes nothing the companions have not already
 decided; every number below is traced to one of them, to a public GF
@@ -198,8 +198,13 @@ numbers for a photonic chip wait on silicon (§7).
    vehicle PIC content, checked into the same shape as the existing
    `pta_*.py` models.
 6. Calibre deck stubs (curvilinear DRC/LVS) + dummy-fill flow ownership.
-7. GF access thread: GF Connect PDK request + MPW slot inquiry
+7. GF access thread: GF Connect Atlas account created 2026-10-16,
+   verification pending; then PDK request + MPW slot inquiry
    (GlobalShuttle or EUROPRACTICE), so §7's device numbers get sources.
+8. Open-source flow skeleton: GDSFactory project PDK with GF-rule
+   placeholders, KLayout DRC stubs, SAX harness — see photonic/README.md.
+   The skeleton runs end to end on placeholders; the foundry layer map
+   and rule values drop in on PDK access without restructuring.
 
 ---
 
