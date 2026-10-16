@@ -776,8 +776,18 @@ grxError_t grxMallocHost(void** ptr, size_t size) {
   // back "invalid value" and blame the size.
   if (d->type == grxcp::DeviceType::NPU) return grxcp::set_error(grxErrorNotSupported);
 #endif
-  // Nor on a PTA chiplet, which has no driver handle either.
-  if (d->type == grxcp::DeviceType::PTA) return grxcp::set_error(grxErrorNotSupported);
+  // Nor on a PTA chiplet, which has no driver handle either. On the first
+  // board's PTA module it is memory that module's queue can reach: the memory a
+  // GEMM on it uses in place.
+  if (d->type == grxcp::DeviceType::PTA) {
+#ifdef GRXCP_ENABLE_PTA
+    if (grxcp::pta_on_host(d->index)) {
+      const grxError_t pe = grxcp::pta_host_alloc(d->index, size, ptr);
+      return (pe == grxSuccess) ? pe : grxcp::set_error(pe);
+    }
+#endif
+    return grxcp::set_error(grxErrorNotSupported);
+  }
 
   vx_buffer_h buf = nullptr;
   vx_result_t r = vx_buffer_create(d->handle, size,
@@ -803,14 +813,20 @@ grxError_t grxMallocHost(void** ptr, size_t size) {
 
 grxError_t grxFreeHost(void* ptr) {
   if (!ptr) return grxSuccess;
-  std::lock_guard<std::mutex> lock(grxcp::g_mem_mutex);
-  auto it = grxcp::g_host.find(ptr);
-  if (it == grxcp::g_host.end())
-    return grxcp::set_error(grxErrorInvalidValue);
-  vx_buffer_unmap(it->second.buffer, ptr);
-  vx_buffer_release(it->second.buffer);
-  grxcp::g_host.erase(it);
-  return grxSuccess;
+  {
+    std::lock_guard<std::mutex> lock(grxcp::g_mem_mutex);
+    auto it = grxcp::g_host.find(ptr);
+    if (it != grxcp::g_host.end()) {
+      vx_buffer_unmap(it->second.buffer, ptr);
+      vx_buffer_release(it->second.buffer);
+      grxcp::g_host.erase(it);
+      return grxSuccess;
+    }
+  }
+#ifdef GRXCP_ENABLE_PTA
+  if (grxcp::pta_host_free(ptr)) return grxSuccess;   // the PTA module's
+#endif
+  return grxcp::set_error(grxErrorInvalidValue);
 }
 
 grxError_t grxHostRegister(void* ptr, size_t size, unsigned int flags) {
