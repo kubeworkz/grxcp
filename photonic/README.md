@@ -35,6 +35,7 @@ verification pending) or an MPW intermediary.
 
 Toolchain verified 2026-10-16: klayout 0.30.12, gdsfactory 9.51.0,
 sax 0.18.2 installed; smoke.py passes (gdsfactory -> GDS -> KLayout
-round-trip on placeholder layer (1, 0)). No vehicle cells yet; the first
-cell set (waveguide, splitter, MZM coupon, Ge-PD coupon, coupler test
-structures) is the next addition.
+round-trip on placeholder layer (1, 0)). First vehicle cell set is in
+cells.py (waveguide, 1x2 splitter, MZM, Ge-PD, coupler array) with
+widths checked against the placeholder minima; vehicle.gds reloads all
+5 coupons in KLayout.

@@ -8,7 +8,7 @@
 [`pta_chiplet_link.py`](pta_chiplet_link.py),
 [`pta_shot_rate.py`](pta_shot_rate.py).
 
-**Status: BASELINE v0, drafted 2026-10-16; v0.1 2026-10-16.** Freezes the chiplet interface
+**Status: BASELINE v0, drafted 2026-10-16; v0.1 2026-10-16; v0.2 2026-10-16.** Freezes the chiplet interface
 starting from the regmap and the ICD so GF Fotonix preparation has a fixed
 target before the PDK lands. Fixes nothing the companions have not already
 decided; every number below is traced to one of them, to a public GF
@@ -49,7 +49,7 @@ of the electro-optic film onto the silicon circuit (imec has demonstrated
 both TFLN and LiTaO3 transfer-printing onto silicon photonics, not
 qualified on GF). So GF approval, contamination control, thermal budget,
 alignment, post-process rules, and reliability are a co-development with GF
-and the integration partner — tracked as open items in §7, not assumed.
+and the integration partner — tracked as open items in §8, not assumed.
 
 ---
 
@@ -82,8 +82,8 @@ migration note, not a silent drift.
   function; polling stays valid and is what the twin supports first.
 - **Seed discipline.** `PTA_SEED` written once; GEMM *i*'s seed is a stated
   function of `PTA_SEED` and the published `PTA_GEMM_CT` (0x018), matching
-  the C1 harness `gemm_seed()`. The exact function becomes normative at v1
-  (§7).
+  the C1 harness `gemm_seed()`. The exact function is normative in §7
+  below, pending a diff against the harness text.
 - **Counters are 64-bit.** Low halves keep their §3.1 offsets; reading a
   low half latches the high half at 0x0E0-0x0EC (`SHOT`, `WLOAD`, `SAT`,
   `CAL_CYC`). A 32-bit shot counter wraps in ~4 s at 1 shot/ns — inside
@@ -101,19 +101,20 @@ migration note, not a silent drift.
   is legal on one build and refused on another. v0 keeps the firmware
   search (refusal is observable via CAL_ERR, cleared by MODEL_RST) and
   records the two candidate fixes: a read-only datapath-width field, or a
-  width-relative amplitude encoding. One of them lands at v1.
+  width-relative amplitude encoding. Resolved in §7 (v0.2): check
+  `PTA_CAPS0.DIN_W` first, fall back to width-relative encoding.
 - **Completion contract behind a link.** Driver test is GPU queue empty
   AND one read of `PTA_STATUS` showing neither BUSY nor CAL_BUSY — the
   device side of the predicate is a single read, never two reads that can
   straddle a change. `MODEL_RST` while BUSY/CAL_BUSY leaves the device
   unchanged and raises `IRQ_STATUS.ERR` (refused, not dropped).
   Calibration queues work rather than losing it; chiplet keeps its own
-  command queue (depth open, §7). CXL.io posted-write / non-posted-read
+  command queue (depth open, §8). CXL.io posted-write / non-posted-read
   ordering is the launch flush; config registers take effect at the next
   GEMM start.
 - **`PTA_TW` / `PTA_TS` on silicon: open.** They drive the twin's modelled
   settle/shot latency. Whether silicon reports back measured values or
-  nothing at all is a v1 decision (§7).
+  nothing at all is decided in §7 below.
 
 ---
 
@@ -128,7 +129,7 @@ and the package — on devices GF ships natively.
   off-package laser module (ICD links 2-4).
 - **PIC content, GF-native.** Si waveguides / splitters / MMIs, one
   modulator array (MZM-first; ring-bank topology stays a hypothesis until
-  the source-kind question in §7 closes), Ge photodiodes (one per column),
+  the source-kind question in §8 closes), Ge photodiodes (one per column),
   grating + edge coupler test structures, fiber attach. No TFLT film on
   this vehicle.
 - **EIC content.** 6-bit activation DACs, 7-bit ADCs, receiver noise budget
@@ -142,13 +143,13 @@ and the package — on devices GF ships natively.
   direction at 0.9 efficiency) carries it with margin per
   `pta_chiplet_link.py` §2. Wider geometries (64x8, 128x64, 256x64) are
   link-sized in that model, not claimed here; module count follows the
-  frozen `PTA_CAPS0` geometry (§7).
+  frozen `PTA_CAPS0` geometry (§8).
 - **TFLT annex (separate).** Bonded / transfer-printed TFLT modulator
   section over a GF waveguide coupon on a parallel MPW or partner run.
   Success criterion is process compatibility + Pockels modulation + drift
   comparison vs TFLN, not GEMM throughput. It does not gate the vehicle.
 - **Laser.** Off-package module owned by the board team; PIC owns fiber
-  attach + polarization. Power/kind/wavelength open (§7): budget 0.66-6.6 W
+  attach + polarization. Power/kind/wavelength open (§8): budget 0.66-6.6 W
   at 1 GS/s for a 256x64 tile behind 10-20 dB loss, RIN ~-150 dB/Hz at
   1 GS/s (10 dB tighter per decade of rate), per `pta_shot_rate.py`. No
   part picked here; comparison belongs to whoever holds a datasheet.
@@ -168,7 +169,7 @@ before first GEMM.
 
 Clocks: 100 MHz PCIe reference arrangement open; UCIe forwarded clock per
 spec (not read out here); shot clock owned by the chiplet — 0.1 and
-1 GS/s are the sized candidates, rate open (§7). Debug: JTAG order open,
+1 GS/s are the sized candidates, rate open (§8). Debug: JTAG order open,
 UART console from GRX930, CXL state in config space, UCIe DFx surface open,
 PTA counters as MMIO over CXL.io.
 
@@ -181,17 +182,19 @@ for driver, grxcp, and dispatch bring-up. It reports itself via
 `PTA_CAPS2`'s emulation bit. Per the honesty rules: a green twin run
 proves the digital architecture and the register contract — never device
 physics, photonic throughput, or mesh-topology validation. Throughput
-numbers for a photonic chip wait on silicon (§7).
+numbers for a photonic chip wait on silicon (§8).
 
 ---
 
 ## 6. Immediate work this baseline unblocks (no PDK needed)
 
-1. Version-stamp the map: `PTA_ID` value + `PTA_CAPS2` emulation bit
-   wiring in the twin and the c930 CSR block.
-2. Close the `DIN_W` reporting gap one of the two recorded ways.
-3. Normative seed function: promote the C1 harness `gemm_seed()` text
-   into this baseline.
+1. ~~Version-stamp the map~~ — done in §7 (v0.2): `PTA_ID`
+   `0x50540100`, `PTA_CAPS2` bit assignments. Twin and c930 CSR wiring
+   still owed in those repos.
+2. ~~Close the `DIN_W` reporting gap~~ — resolved in §7 (v0.2) without
+   a new register, pending the `PTA_CAPS0.DIN_W` decode check.
+3. ~~Normative seed function~~ — derivation frozen in §7 (v0.2),
+   pending a diff against grx930's harness text.
 4. gdsfactory/KLayout parameterized PIC cells with GF-rule placeholders
    (bend, density, marker layers as parameters, not constants).
 5. Lumerical forward-model harness (MODE/FDTD/CHARGE/HEAT) for the
@@ -200,7 +203,7 @@ numbers for a photonic chip wait on silicon (§7).
 6. Calibre deck stubs (curvilinear DRC/LVS) + dummy-fill flow ownership.
 7. GF access thread: GF Connect Atlas account created 2026-10-16,
    verification pending; then PDK request + MPW slot inquiry
-   (GlobalShuttle or EUROPRACTICE), so §7's device numbers get sources.
+   (GlobalShuttle or EUROPRACTICE), so §8's device numbers get sources.
 8. Open-source flow skeleton: GDSFactory project PDK with GF-rule
    placeholders, KLayout DRC stubs, SAX harness — see photonic/README.md.
    The skeleton runs end to end on placeholders; the foundry layer map
@@ -208,7 +211,48 @@ numbers for a photonic chip wait on silicon (§7).
 
 ---
 
-## 7. Open (needs PDK, partner, or part)
+## 7. Version stamp v0.2: identity, seed, and the DIN_W gap
+
+Normative assignments. Twin, CSR RTL, drivers, and grxcp implement
+these exactly; the reset values below are what `grx-smi` checks.
+
+- **`PTA_ID` (0x000).** Bits [31:16] magic `0x5054` ("PT"); bits [15:8]
+  map version, `0x01` for this baseline; bits [7:0] reserved, zero.
+  Reset value: `0x50540100`. A driver that reads anything else is not
+  talking to this map.
+- **`PTA_CAPS2` (0x00C), bit assignments.** Bit 31 `TWIN` (1 = digital
+  twin, 0 = silicon — the honesty bit); bit 30 calibration engine
+  present; bit 29 activation stage present; bits [28:16] reserved,
+  zero; bits [15:0] shot rate as built, in MHz (covers the 0.1 and
+  1 GS/s candidates: 100 and 1000). The twin sets `TWIN` and reports
+  the modelled rate; silicon reports its measured rate or zero where
+  the rate is fixed by construction and reported in the datasheet.
+- **GEMM seed derivation.** GEMM *i*'s per-stream seed is
+  `PTA_SEED ^ (i * 0x9E3779B1)`, with *i* the `PTA_GEMM_CT` value at
+  that GEMM's start. Same mixing constant as `PTA_CAL_SEED`'s by
+  construction, so one audit covers both. Provenance flag: this
+  matches the regmap's "stated function" requirement, but the
+  `gemm_seed()` text itself lives in grx930's C1 harness, which this
+  repo does not vendor — if the harness differs, the harness wins
+  (grx930 owns the tile IP) and this baseline takes a v0.3
+  correction. Do not tape out the EIC's seed block until the two
+  texts are diffed equal.
+- **The `DIN_W` reporting gap: resolved without a new register.**
+  `PTA_CAPS0` already carries `DIN_W`, so the first step is to confirm
+  against the CSR decode whether that field is the datapath width
+  the `PTA_CAL_CFG` amplitude bound needs. If it is, firmware
+  computes the legal amplitude range from `PTA_CAPS0` and the search
+  goes away with zero map change. If it is not (quantiser width vs
+  datapath width), the fallback is the width-relative amplitude
+  encoding (`DIN_W - 2 - n`, tile does the arithmetic): no new
+  register, and a value that cannot be read wrong. Either way the
+  firmware search is retired at v1; it stays, observable via
+  `CAL_ERR`, until the decode question is answered.
+
+§8 items 4 (MSI vectors) and 5 (seed function) are proposed above;
+item 4 still needs the GPU function owner's vector count.
+
+## 8. Open (needs PDK, partner, or part)
 
 1. Tile geometry + shot rate that `PTA_CAPS0`/`PTA_CAPS2` will report.
 2. `PTA_TW`/`PTA_TS` meaning on silicon (read-back vs unimplemented).
