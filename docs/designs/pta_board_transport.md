@@ -4,7 +4,7 @@
 S1, S4), [`board_icd.md`](board_icd.md) §9 (the first board),
 [`pta_chiplet_regmap.md`](pta_chiplet_regmap.md) (X4, the map),
 [`pta_board_transport.py`](pta_board_transport.py) (the model of this
-document), and grxgpu's `docs/proposals/pta_chiplet_host_path.md` (the GEMM
+document), and `grxgpu/docs/proposals/pta_chiplet_host_path.md` (the GEMM
 command this keeps).
 
 **Status: S4's transport for the first board, drafted 2026-10-15.** The owner
