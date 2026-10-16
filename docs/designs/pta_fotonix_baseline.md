@@ -8,7 +8,7 @@
 [`pta_chiplet_link.py`](pta_chiplet_link.py),
 [`pta_shot_rate.py`](pta_shot_rate.py).
 
-**Status: BASELINE v0, drafted 2026-10-16; v0.1 2026-10-16; v0.2 2026-10-16.** Freezes the chiplet interface
+**Status: BASELINE v0, drafted 2026-10-16; v0.1 2026-10-16; v0.2 2026-10-16; v0.3 2026-10-16.** Freezes the chiplet interface
 starting from the regmap and the ICD so GF Fotonix preparation has a fixed
 target before the PDK lands. Fixes nothing the companions have not already
 decided; every number below is traced to one of them, to a public GF
@@ -227,16 +227,18 @@ these exactly; the reset values below are what `grx-smi` checks.
   1 GS/s candidates: 100 and 1000). The twin sets `TWIN` and reports
   the modelled rate; silicon reports its measured rate or zero where
   the rate is fixed by construction and reported in the datasheet.
-- **GEMM seed derivation.** GEMM *i*'s per-stream seed is
-  `PTA_SEED ^ (i * 0x9E3779B1)`, with *i* the `PTA_GEMM_CT` value at
-  that GEMM's start. Same mixing constant as `PTA_CAL_SEED`'s by
-  construction, so one audit covers both. Provenance flag: this
-  matches the regmap's "stated function" requirement, but the
-  `gemm_seed()` text itself lives in grx930's C1 harness, which this
-  repo does not vendor — if the harness differs, the harness wins
-  (grx930 owns the tile IP) and this baseline takes a v0.3
-  correction. Do not tape out the EIC's seed block until the two
-  texts are diffed equal.
+- **GEMM seed derivation (v0.3: corrected against the harness).**
+  v0.2 froze `PTA_SEED ^ (i * 0x9E3779B1)` from the `PTA_CAL_SEED`
+  precedent — the harness does something else, and the harness wins.
+  GEMM *i*'s per-stream seed is `splitmix64(&s) >> 32` with
+  `s = ((uint64_t)PTA_SEED << 32) | i`, *i* the `PTA_GEMM_CT` value
+  at that GEMM's start, splitmix64 the standard Steele/Vigna
+  mixer (`0x9E3779B97F4A7C15` / `0xBF58476D1CE4E5B9` /
+  `0x94D049BB133111EB`). Verbatim the `gemm_seed()` of grx930's
+  `c930/sim/pta_mnist.c` (branch `npu/shim-tile-model`), read
+  directly from that checkout — this is the v0.2 provenance flag
+  firing as designed. The EIC seed block implements this text, not
+  v0.2's.
 - **The `DIN_W` reporting gap: resolved without a new register.**
   `PTA_CAPS0` already carries `DIN_W`, so the first step is to confirm
   against the CSR decode whether that field is the datapath width
