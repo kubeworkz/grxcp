@@ -96,7 +96,21 @@ does in the C1 harness, and publishes the counter so a run stays reproducible:
 
 | Offset | Name | Access | Description |
 |---|---|---|---|
-| 0x018 | `PTA_GEMM_CT` | R | GEMMs started since the last `PTA_SEED` write; the seed of GEMM *i* is a stated function of `PTA_SEED` and *i* |
+| 0x018 | `PTA_GEMM_CT` | R | GEMM commands seeded since the last `PTA_SEED` write; the seed of GEMM *i* is a stated function of `PTA_SEED` and *i* |
+
+**Calibration streams are the engine's, not the host's.** A calibration does not
+draw from `PTA_SEED` and does not advance `PTA_GEMM_CT`. The engine loads the
+tile's streams from `PTA_CAL_SEED` (0x0DC) mixed with the calibration's own
+number — the register's own row in §4's table, with `j` the `PTA_CAL_CT` value
+before that calibration runs, so any of them is reproducible from one word and
+no two draw the same noise. That is what the tile implements
+(`c930/rtl/pta/c930_pta_cal.sv` computes the mixed seed; `c930/rtl/pta/c930_ptm_c.sv`
+loads the streams from it for a calibration and only for a calibration), and
+grx930's SoC test writes the register before it drives the engine. The C1
+harness's `PTA_SEED ^ 0xCA11B` on the run's issued-command counter is the
+host-side model's own numbering — it has no engine to call — so a calibrated
+harness run does not reproduce seed for seed here; the baseline's §2 seed bullet
+and §7 say the same.
 
 **Counters are 64 bits.** A 32-bit `PTA_SHOT_CT` wraps in 4.3 seconds at one
 shot a nanosecond, which is inside X2's candidate range. The low half keeps its
@@ -124,7 +138,7 @@ hold — and the engine cannot be written without all three. The CPU document's
 
 | Offset | Name | Access | Description |
 |---|---|---|---|
-| 0x0D4 | `PTA_CAL_CFG` | RW | [3:0] probe amplitude, `1 <<` this, bounded by `DIN_W - B_a` and `DIN_W - 2` (see the note below: nothing here reports `DIN_W`); [7:4] repeats a pass, `1 <<` this; [9:8] auto-ranging passes; [10] the bank to calibrate |
+| 0x0D4 | `PTA_CAL_CFG` | RW | [3:0] probe amplitude, `1 <<` this, bounded by `DIN_W - B_a` and `DIN_W - 2` (`DIN_W` is `PTA_CAPS0[25:20]`; see the note below); [7:4] repeats a pass, `1 <<` this; [9:8] auto-ranging passes; [10] the bank to calibrate |
 | 0x0D8 | `PTA_TRIM` | RW | [3:0] the weight DAC's step below the weight code, `1 <<` this in Q.8 weight LSB; [31:16] its clamp, Q.8 weight LSB |
 | 0x0DC | `PTA_CAL_SEED` | RW | the calibration's noise seed. Calibration *j* draws from `PTA_CAL_SEED ^ (j · 0x9E3779B1)`, `j` being `PTA_CAL_CT` before it runs, so no two draw the same noise and any of them can be reproduced from one word |
 | 0x0F0 | `PTA_ERR_FOUND` | R | the error the last calibration **found**, Q.8 weight LSB: the widest correction its first pass had to make, before any of it was applied. This, not `PTA_ERR_MAX`, is what the drift-predictive scheduler extrapolates — see [`pta_chiplet_calibration.md`](pta_chiplet_calibration.md) §5 |
@@ -133,21 +147,29 @@ Every field is a power of two or a log2 of one, which is not tidiness: it is wha
 lets the estimator divide with a shift and the DAC round with a mask, so the tile
 carries no divider (grx930's design note §4).
 
-**`PTA_CAL_CFG`'s amplitude is bounded by something this map does not report.**
-*C4(a), 2026-09-24.* The bound `[DIN_W - B_a, DIN_W - 2]` is on the datapath's
-operand width, and no register here carries it — `PTA_BITS` gives the quantiser's
-bit counts, not the width they quantise into. So the same value is right on one
-build and refused on another: 6 is right for grx930's eight-bit bench tile and
+**`PTA_CAL_CFG`'s amplitude is bounded by the datapath's operand width, which
+`PTA_CAPS0` reports.** *Raised C4(a), 2026-09-24; closed against the tile
+owner's review and its test, in v0.4 of the baseline.* The bound
+`[DIN_W - B_a, DIN_W - 2]` is on the datapath's operand width. `DIN_W` is
+`PTA_CAPS0[25:20]` — grx930's field map (`c930/rtl/c930_npu_core.sv:522`), with the
+twin reporting its own
+(`c930/sim/npu_dpi_shim.c:94`) — and `B_a` is the activation width, `PTA_BITS[3:0]`,
+so both bounds come out of registers already in this table and neither candidate
+fix is needed: no new read-only field for the width, no width-relative
+translation of the amplitude. What the entry was right about is worth keeping,
+because it is why the closure is trustworthy: the same value is right on one
+build and refused on another — 6 is right for grx930's eight-bit bench tile and
 refused by its sixteen-bit SoC tile, which ends the calibration in two cycles
-with `CAL_ERR` set and `CAL_CT` unmoved. Firmware can find a value the tile
-accepts — the refusal is observable and `MODEL_RST` clears it, and grx930's
-`sw/pta_test.c` does exactly that — but a driver searching for a number the
-hardware already knows is a gap in this table, not a technique. Two ways to
-close it: a read-only field for the datapath width, next to whatever else a
-capability word should carry, or specify the amplitude *relative* to the width
-(`DIN_W - 2 - n`) and let the tile do the arithmetic. The second costs no
-register and cannot be read wrong; the first is more use to a driver that wants
-to size anything else. Either is better than the search.
+with `CAL_ERR` set and `CAL_CT` unmoved — and grx930's `c930/sw/pta_test.c` found a
+value the way a driver would have had to. Nothing about that search contradicts
+the registers: the value it accepts is the value the registers compute. Its T8
+requires the amplitude its search lands on to equal `PTA_CAL_AMP_MAX(caps0)`,
+which is `DIN_W - 2`, on the sixteen-bit SoC tile, and the eight-bit bench
+refuses `2^(DIN_W - 1)` with the error bit set. Firmware reads the registers;
+the search stays in that test as its cross-check, not as the driver's route.
+The tile owner's own record of the closure is
+`c930/doc/pta_error_model_design_note.md` §7 item 5; the answer it gave the
+handoff is in `pta_handoff_review.md` §1.
 
 ---
 

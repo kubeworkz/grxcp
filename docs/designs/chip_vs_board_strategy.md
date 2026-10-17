@@ -186,13 +186,14 @@ Beyond the hardware stack, UCIe defines a software model and system-level featur
 
 ### 💡 Specific Considerations for Our PTA Chiplet
 
-Integrating your photonic tensor accelerator (PTA) introduces unique requirements:
+The board plan's B4/B7 decisions are the current design baseline; they do not by themselves prove the selected GPU/EIC implementation or close the open forwarding interface. This section replaces the earlier raw-mode/control-only/optical-bulk suggestion; any revival requires an explicit owner-approved reopening of B4/B7.
 
-- **Electronic-Optical Interface**: The PTA chiplet will need a UCIe PHY, but its primary data path will be optical. The UCIe link would likely be used for **control, configuration, and calibration** of the PTA, while the bulk tensor data flows over the optical interconnect. You will need a dedicated **electronic interface chip (EIC)** to bridge the UCIe electrical domain to the PTA's optical domain.
-- **Protocol Selection**: For the PTA, the **Streaming Raw Mode** of UCIe is likely the best fit. This mode provides the lowest-latency path by logically connecting the PHY directly to the application layer, bypassing the FLIT formatting overhead of the D2D adapter.
-- **Thermal & Calibration Management**: The UCIe sideband channel can be used to carry the low-speed control signals needed for runtime calibration of the PTA's phase shifters and modulators to counteract thermal drift.
+- **Electrical data path:** GPU tensor operands and results cross UCIe mainband between the GRX-G100 and the EIC. The optical segment is inside the EIC/PIC path, not a GPU-to-PTA board-level optical link. The EIC contains the converters and any buffering/accumulation specified by the board plan.
+- **Protocol selection:** Keep the UCIe streaming protocol in FLIT format with adapter CRC and retry enabled, as recorded in board plan B4/L3 and `board_icd.md` Link 2. Streaming Raw Mode is not the current baseline. Reopening B4/B7 requires an owner-approved counter-proposal that specifies control/register routing, integrity and recovery, and measured bandwidth/latency benefit; no benefit is assumed here.
+- **Register forwarding remains an interface detail:** The PTA register window is exposed through the GPU's CXL.io BAR, but the precise route from the GPU BAR decode to the EIC register endpoint across UCIe is not yet specified or verified. Name the transport, addresses, ordering/completion behavior, and error propagation in the GPU/EIC interface specification before claiming this path is implemented. Do not infer that UCIe sideband carries these BAR transactions; it is reserved for link management unless the interface owners explicitly decide otherwise.
+- **Thermal and calibration management:** Use the UCIe sideband for link management as specified by the chosen IP. Route PTA runtime registers through the documented BAR-to-EIC path once agreed; do not conflate that path with sideband management.
 
-In summary, both your CPU and GPU/PTA chiplets must implement a compatible UCIe PHY, D2D Adapter, and Protocol Layer. The CPU-GPU link would likely use **CXL over UCIe** for cache coherence, while the link to our PTA would use **Streaming Raw Mouide** for low-latency control and data transfer. This layered approach ensures your chiplets can interoperate as a cohesive system.
+The GPU and EIC owners must confirm that their selected endpoints implement the FLIT + CRC/retry baseline and provide configuration/test evidence. The board-level decision is intent, not implementation sign-off.
 
 ---
 
@@ -240,7 +241,7 @@ For small matrices, the DAC/ADC, optical modulation, photodetection, and digital
 
 - **First board**: Keep the GPU’s tensor cores. The PTA is a co-processor, not a replacement.
 - **Software**: We need a unified compiler/runtime (e.g., MLIR-based) that recognizes matmul patterns and routes them to PTA, GPU, or NPU based on shape, precision, and data locality.
-- **Interconnect**: UCIe + CXL gives us coherent control and fallback; the optical path handles bulk PTA data. But the PTA still needs a digital fallback path for correctness and calibration.
+- **Interconnect**: CXL connects the CPU and GPU packages; UCIe mainband carries GPU↔EIC tensor data, with the optical segment confined to the EIC/PIC path. The GPU CXL.io BAR is the planned PTA register interface, but its forwarding route across UCIe to the EIC remains an open interface detail. The PTA also needs a digital fallback path for correctness and calibration.
 - **Later revisions**: If the PTA proves itself on inference workloads, we could reduce tensor-core area in a future GPU revision and lean harder on photonics. But that’s a second-generation decision, not a first-board one.
 
 So the correct framing is: **the PTA will absorb some matrix multiplications — primarily low-precision inference GEMMs — while the GPU retains the rest.** It’s an offload engine, not a wholesale transfer.

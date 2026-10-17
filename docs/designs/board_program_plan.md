@@ -547,11 +547,12 @@ figure this program does not hold.
 
 Each lands when its decision settles, in its own document's repository.
 
-- [`chip_vs_board_strategy.md`](chip_vs_board_strategy.md), whose author is
-  still writing it: UCIe joins dies within one package (§1); the PTA's bulk
-  data path is electrical up to the modulators (§1); optical I/O is not
-  photonic compute; Raw mode has no CRC or retry, and one control path is
-  enough (B7); FP8 reaches the tile block-scaled (§4.2).
+- [`chip_vs_board_strategy.md`](chip_vs_board_strategy.md): align the PTA
+  section to B4/B7 — GPU↔EIC tensor traffic is electrical over UCIe mainband,
+  with optics inside EIC/PIC; retain FLIT + adapter CRC/retry; correct the
+  prior Raw-mode/control-only/optical-bulk conflict; and leave the BAR-to-EIC
+  register-forwarding route explicitly open until its owners specify it.
+  *Updated; implementation and route evidence remain pending.*
 - [GRX_GCPU.md](../GRX_GCPU.md) §2: CXL, and why it reverses the TileLink
   recommendation (B3). *Made; §9.*
 - [`pta_gpu_integration.md`](pta_gpu_integration.md): its scope line; §2's
@@ -735,9 +736,10 @@ Made on 2026-09-21, when B1 and B3 settled:
   TileLink recommendation for the board, and why. B1 moves the CPU–GPU link
   between packages, where that document's objection to CXL.cache — too heavy
   for on-package — no longer applies.
-- [`chip_vs_board_strategy.md`](chip_vs_board_strategy.md): its author is still
-  writing it, so B1's correction is handed over rather than made. UCIe joins
-  dies within one package, and on rev A the CPU–GPU link is CXL over PCIe.
+- [`chip_vs_board_strategy.md`](chip_vs_board_strategy.md): B1's correction
+  records that UCIe joins dies within one package, and on rev A the CPU–GPU
+  link is CXL over PCIe. The PTA section is now aligned to B4/B7; the BAR-to-EIC
+  forwarding route and implementation evidence remain open.
 
 And on 2026-09-22, when B2 and B6 settled:
 

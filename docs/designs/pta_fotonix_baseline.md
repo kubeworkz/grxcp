@@ -8,7 +8,7 @@
 [`pta_chiplet_link.py`](pta_chiplet_link.py),
 [`pta_shot_rate.py`](pta_shot_rate.py).
 
-**Status: BASELINE v0, drafted 2026-10-16; v0.1 2026-10-16; v0.2 2026-10-16; v0.3 2026-10-16.** Freezes the chiplet interface
+**Status: BASELINE v0, drafted 2026-10-16; v0.1 2026-10-16; v0.2 2026-10-16; v0.3 2026-10-16; v0.4 2026-10-17.** Freezes the chiplet interface
 starting from the regmap and the ICD so GF Fotonix preparation has a fixed
 target before the PDK lands. Fixes nothing the companions have not already
 decided; every number below is traced to one of them, to a public GF
@@ -80,10 +80,16 @@ migration note, not a silent drift.
 - **Interrupts (new).** `PTA_IRQ_STATUS` 0x010 (RW1C: CAL_DONE, ERR,
   DRIFT_ALARM, SAT_THRESHOLD), `PTA_IRQ_MASK` 0x014. MSI through the GPU
   function; polling stays valid and is what the twin supports first.
-- **Seed discipline.** `PTA_SEED` written once; GEMM *i*'s seed is a stated
-  function of `PTA_SEED` and the published `PTA_GEMM_CT` (0x018), matching
-  the C1 harness `gemm_seed()`. The exact function is normative in §7
-  below, pending a diff against the harness text.
+- **Seed discipline.** `PTA_SEED` written once; stream *i*'s seed is
+  `splitmix64` over `(PTA_SEED << 32) | i`, high 32 bits kept, matching
+  the C1 harness `gemm_seed()`. The index *i* is the GEMM commands the
+  engine has seeded since the `PTA_SEED` write, 0-based, which is what
+  `PTA_GEMM_CT` (0x018) counts. Calibration commands are not in that
+  sequence and are not seeded from `PTA_SEED`: the calibration engine
+  loads the tile's streams from its own register, `PTA_CAL_SEED ^
+  (j * 0x9E3779B1)` with *j* the calibration number — the Calibration
+  configuration bullet below, and the regmap's 0x0DC row. Normative
+  text in §7 below.
 - **Counters are 64-bit.** Low halves keep their §3.1 offsets; reading a
   low half latches the high half at 0x0E0-0x0EC (`SHOT`, `WLOAD`, `SAT`,
   `CAL_CYC`). A 32-bit shot counter wraps in ~4 s at 1 shot/ns — inside
@@ -96,13 +102,13 @@ migration note, not a silent drift.
   LSB — this, not `PTA_ERR_MAX`, is what the drift-predictive scheduler
   extrapolates). All power-of-two / log2 fields so the tile carries no
   divider.
-- **Known gap, carried not hidden.** `PTA_CAL_CFG`'s amplitude is bounded by
-  the datapath width `DIN_W`, which no register reports — the same value
-  is legal on one build and refused on another. v0 keeps the firmware
-  search (refusal is observable via CAL_ERR, cleared by MODEL_RST) and
-  records the two candidate fixes: a read-only datapath-width field, or a
-  width-relative amplitude encoding. Resolved in §7 (v0.2): check
-  `PTA_CAPS0.DIN_W` first, fall back to width-relative encoding.
+- **Amplitude bound, closed at v0.4.** `PTA_CAL_CFG`'s probe amplitude is
+  legal over `[DIN_W − B_a, DIN_W − 2]`, `DIN_W` from `PTA_CAPS0` and
+  `B_a` the activation width from `PTA_BITS[3:0]` — both already in the
+  map, so no new register. The ceiling alone (`DIN_W − 2`, the driver's
+  `PTA_CAL_AMP_MAX`) is always safe wherever `B_a ≥ 2`. Firmware reads
+  the registers instead of searching; refusal stays observable via
+  `CAL_ERR`, cleared by `MODEL_RST`. Full derivation in §7.
 - **Completion contract behind a link.** Driver test is GPU queue empty
   AND one read of `PTA_STATUS` showing neither BUSY nor CAL_BUSY — the
   device side of the predicate is a single read, never two reads that can
@@ -114,7 +120,7 @@ migration note, not a silent drift.
   GEMM start.
 - **`PTA_TW` / `PTA_TS` on silicon: open.** They drive the twin's modelled
   settle/shot latency. Whether silicon reports back measured values or
-  nothing at all is decided in §7 below.
+  nothing at all is open (§8 item 2).
 
 ---
 
@@ -188,13 +194,14 @@ numbers for a photonic chip wait on silicon (§8).
 
 ## 6. Immediate work this baseline unblocks (no PDK needed)
 
-1. ~~Version-stamp the map~~ — done in §7 (v0.2): `PTA_ID`
-   `0x50540100`, `PTA_CAPS2` bit assignments. Twin and c930 CSR wiring
-   still owed in those repos.
-2. ~~Close the `DIN_W` reporting gap~~ — resolved in §7 (v0.2) without
-   a new register, pending the `PTA_CAPS0.DIN_W` decode check.
-3. ~~Normative seed function~~ — derivation frozen in §7 (v0.2),
-   pending a diff against grx930's harness text.
+1. ~~Version-stamp the map~~ — decided in §7 (v0.4): `PTA_ID`
+   `0x50544101`, `PTA_CAPS2` layout per the tile owner's live fields.
+   Twin and c930 CSR wiring still owed in those repos.
+2. ~~Close the `DIN_W` reporting gap~~ — closed in §7 (v0.4): range
+   from `PTA_CAPS0` + `PTA_BITS`, ceiling `DIN_W − 2`, no new register.
+   Bench-tile acceptance still owed where the engine exists.
+3. ~~Normative seed function~~ — frozen in §7 (v0.4) with harness pin
+   (blob `95392729…`) and the cumulative-command index definition.
 4. gdsfactory/KLayout parameterized PIC cells with GF-rule placeholders
    (bend, density, marker layers as parameters, not constants).
 5. Lumerical forward-model harness (MODE/FDTD/CHARGE/HEAT) for the
@@ -211,56 +218,116 @@ numbers for a photonic chip wait on silicon (§8).
 
 ---
 
-## 7. Version stamp v0.2: identity, seed, and the DIN_W gap
+## 7. Version stamp v0.4: identity, seed, and the DIN_W bound
 
 Normative assignments. Twin, CSR RTL, drivers, and grxcp implement
-these exactly; the reset values below are what `grx-smi` checks.
+these exactly; the reset values below are what `grx-smi` checks. This
+supersedes v0.2/v0.3 on the ID word, the `CAPS2` layout, and the seed
+index — every claim below was decided against the tile owner's review
+(docs/designs/pta_handoff_review.md), which checked each one against
+RTL, shim, driver header, and harness rather than prose.
 
-- **`PTA_ID` (0x000).** Bits [31:16] magic `0x5054` ("PT"); bits [15:8]
-  map version, `0x01` for this baseline; bits [7:0] reserved, zero.
-  Reset value: `0x50540100`. A driver that reads anything else is not
-  talking to this map.
-- **`PTA_CAPS2` (0x00C), bit assignments.** Bit 31 `TWIN` (1 = digital
-  twin, 0 = silicon — the honesty bit); bit 30 calibration engine
-  present; bit 29 activation stage present; bits [28:16] reserved,
-  zero; bits [15:0] shot rate as built, in MHz (covers the 0.1 and
-  1 GS/s candidates: 100 and 1000). The twin sets `TWIN` and reports
-  the modelled rate; silicon reports its measured rate or zero where
-  the rate is fixed by construction and reported in the datasheet.
-- **GEMM seed derivation (v0.3: corrected against the harness).**
-  v0.2 froze `PTA_SEED ^ (i * 0x9E3779B1)` from the `PTA_CAL_SEED`
-  precedent — the harness does something else, and the harness wins.
-  GEMM *i*'s per-stream seed is `splitmix64(&s) >> 32` with
-  `s = ((uint64_t)PTA_SEED << 32) | i`, *i* the `PTA_GEMM_CT` value
-  at that GEMM's start, splitmix64 the standard Steele/Vigna
-  mixer (`0x9E3779B97F4A7C15` / `0xBF58476D1CE4E5B9` /
-  `0x94D049BB133111EB`). Verbatim the `gemm_seed()` of grx930's
-  `c930/sim/pta_mnist.c` (branch `npu/shim-tile-model`), read
-  directly from that checkout — this is the v0.2 provenance flag
-  firing as designed. The EIC seed block implements this text, not
-  v0.2's.
-- **The `DIN_W` reporting gap: resolved without a new register.**
-  `PTA_CAPS0` already carries `DIN_W`, so the first step is to confirm
-  against the CSR decode whether that field is the datapath width
-  the `PTA_CAL_CFG` amplitude bound needs. If it is, firmware
-  computes the legal amplitude range from `PTA_CAPS0` and the search
-  goes away with zero map change. If it is not (quantiser width vs
-  datapath width), the fallback is the width-relative amplitude
-  encoding (`DIN_W - 2 - n`, tile does the arithmetic): no new
-  register, and a value that cannot be read wrong. Either way the
-  firmware search is retired at v1; it stays, observable via
-  `CAL_ERR`, until the decode question is answered.
+- **`PTA_ID` (0x000): `0x50544101`.** Bits [31:8] magic `"PTA"`; bits
+  [7:0] map version, `0x01` for this baseline. A driver that reads
+  anything else is not talking to this map. This supersedes v0.2's
+  `0x50540100`, which dropped the "A" and fails the live `IS_PTA`
+  mask — and which contradicted grxcp's own test expectation already
+  in the tile tree. One line plus assertions on their side; wiring
+  only.
+- **`PTA_CAPS2` (0x00C), bit assignments.** Bit 31 twin/emulated (the
+  honesty bit — `TWIN` and `EMULATED` are the same fact under two
+  names); bits [30:20] reserved, zero; bits [19:18] tile kind (0 none,
+  1 PTM-C, 2 PTM-B, 3 the model alone); bit [17] activation stage
+  present; bit [16] calibration engine present; bits [15:0] shot rate
+  as built, in MHz (covers the 0.1 and 1 GS/s candidates: 100 and
+  1000). This keeps the tile owner's live fields and moves v0.2's
+  presence bits down from 30/29 — same information, one layout. The
+  twin sets bit 31 with kind 3 and zero rate; the modelled rate is
+  available from `PTA_TS` × clock. A twin publishing 100/1000 in the
+  rate field would claim photonic throughput §5 forbids, so zero rate
+  is correct there, and kind 3 (not bit 31) is the reliable twin
+  discriminator where built impairments also set the emulated bit.
+  Silicon reports its measured rate or zero where the rate is fixed by
+  construction and reported in the datasheet.
+- **Seed derivation (v0.3 function, v0.4 index).** Stream *i*'s seed is
+  `splitmix64` over `((uint64_t)PTA_SEED << 32) | i`, high 32 bits
+  kept — the standard Steele/Vigna mixer — verbatim the `gemm_seed()`
+  of the tile harness c930/sim/pta_mnist.c. Provenance pin:
+  function-text blob `95392729c0231a3332b8853437543032c788cb33`
+  (branch-independent — cite the blob, since rebases move commit ids),
+  last text change `b1a6e1b` (2026-09-22). The v0.3 sentence defining
+  *i* as "the `PTA_GEMM_CT` value at that GEMM's start" is replaced:
+  *i* is the GEMM commands the chiplet has seeded since the last
+  `PTA_SEED` write, 0-based — what `PTA_GEMM_CT` (0x018) counts. The
+  tile side holds no such counter, its host writing `PTA_SEED` per
+  command, so the chiplet's numbering is the one the EIC seed block
+  implements: this text, not v0.2's XOR construction.
+- **Calibration streams are the engine's, not the host's.** A
+  calibration's noise is not `PTA_SEED`'s and not in `PTA_GEMM_CT`.
+  The calibration engine loads the tile's streams from `PTA_CAL_SEED`
+  (0x0DC) mixed with the calibration's own number: `PTA_CAL_SEED ^
+  (j * 0x9E3779B1)`, *j* being `PTA_CAL_CT` before that calibration
+  runs. This is what the tile implements (`c930/rtl/pta/c930_pta_cal.sv`
+  computes it and `c930/rtl/pta/c930_ptm_c.sv` loads the streams from it,
+  for a calibration and only for a calibration), what §2's Calibration
+  configuration bullet and the regmap's 0x0DC row say, and what grx930's
+  SoC test writes before it drives the engine (`c930/sw/pta_test.c`). v0.4's
+  earlier wording — the calibration phase re-seeding from
+  `PTA_SEED ^ 0xCA11B` on the run's issued-command counter — described
+  the C1 harness instead. That harness has no engine and models the
+  probe host-side with the run's own numbering (`c930/sim/pta_mnist.c`),
+  which is a model of the procedure, not the register's contract: a
+  calibrated harness run does not reproduce seed for seed here unless
+  the host renumbers, and the EIC block must implement this bullet.
+- **The `DIN_W` bound: closed without a new register.** The legal probe
+  amplitude range is `[DIN_W − B_a, DIN_W − 2]`: the ceiling from
+  `PTA_CAPS0[25:20]`, which is `DIN_W` (the tile owner's field map,
+  `c930/rtl/c930_npu_core.sv:522`; the twin reports its own,
+  `c930/sim/npu_dpi_shim.c:94`), the floor additionally from `PTA_BITS[3:0]`
+  (the activation width `B_a`) — both already in the map, and both
+  decoded on the tile side (`PTA_CAPS0_DIN_W`, `PTA_CAL_AMP_MAX`,
+  `PTA_CAL_AMP_MIN` in grx930's `c930/sw/c930_npu_driver.h`). The ceiling
+  (`DIN_W − 2`, the driver's `PTA_CAL_AMP_MAX`) is always safe wherever
+  `B_a ≥ 2` and is the value the tile SoC test independently measures.
+  Firmware reads the registers; the search is retired. Acceptance runs
+  where the engine exists (bench/SoC tile): the twin carries no
+  calibration engine, so `CAL_ERR` can never fire there and that half
+  would pass vacuously.
+- **The two bounds are held together by measurement, not by reading.**
+  grx930's `c930/sw/pta_test.c` sets the amplitude from `PTA_CAPS0` and its
+  T8 requires the value its search accepts to equal
+  `PTA_CAL_AMP_MAX(caps0)` — the engine's boundary and `CAPS0`'s ceiling
+  are the same number on the sixteen-bit SoC tile — while the
+  eight-bit bench refuses `2^(DIN_W − 1)` with `CAL_ERR` set and
+  `PTA_CAL_CT` unmoved. The search stays in that test as the
+  cross-check; it is not the driver's route. The tile owner's own record
+  of the closure is `c930/doc/pta_error_model_design_note.md` §7 item 5.
 
-§8 items 4 (MSI vectors) and 5 (seed function) are proposed above;
-item 4 still needs the GPU function owner's vector count.
+Dispositions: §8 item 5 (seed text) is closed by the above. Item 4 has an
+owner-approved recommended baseline from the handoff
+(docs/designs/pta_handoff_grxgpu.md Q1): MSI-X, two-entry table —
+vector 0 CP completion (pending: the CP `irq` pulse is not yet wired to
+a host ISR), vector 1 aggregate PTA. Still to verify before it becomes
+normative: the selected function IP advertises two entries (Table Size
+field reads 1) and the driver actually obtains two, else an explicit
+fallback decision. Item 3 (queue depth) and question 5 (UCIe posture
+confirmation, register-forwarding route) stay open with the GPU owner.
+The handoff's CP-ring lossless contract and link-window numbers are
+proposals and analytical predictions, not measured behavior — they enter
+no normative claim here until the sign-off checklist lands with
+evidence.
 
 ## 8. Open (needs PDK, partner, or part)
 
 1. Tile geometry + shot rate that `PTA_CAPS0`/`PTA_CAPS2` will report.
 2. `PTA_TW`/`PTA_TS` meaning on silicon (read-back vs unimplemented).
-3. Chiplet command-queue depth for the GPU dispatcher.
-4. MSI vector count and sharing with the GPU function.
-5. Normative seed function text.
+3. Chiplet command-queue depth for the GPU dispatcher (grxgpu handoff:
+   questions 2–4 unanswered; number awaited).
+4. MSI vector count and sharing with the GPU function (grxgpu handoff Q1:
+   two-entry MSI-X owner-approved as recommended baseline — vector 0 CP
+   completion, vector 1 aggregate PTA; function-IP capability + OS-allocated
+   count still to verify).
+5. ~~Normative seed function text~~ — frozen in §7 (v0.4) with pin.
 6. Source kind for link 4 (single line vs line-per-input — the error
    model as written assumes a ring bank summing powers, i.e. many lines),
    wavelength (1550 vs 1310), power, RIN, and the picked laser part.
