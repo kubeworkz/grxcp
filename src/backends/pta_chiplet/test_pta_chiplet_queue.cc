@@ -422,6 +422,62 @@ void t_wrap(const pta_twin_build& b) {
   pta_twin_free(ref);
 }
 
+// Submit a doorbell exactly one ring ahead of the consumer, while its first
+// command is still in the tile. The full capacity is legal; one more is not.
+void t_full_capacity(const pta_twin_build& b) {
+  section("a doorbell exactly one ring ahead is accepted, and the full ring drains");
+  Ring r(b, 3);
+  Gemm g(r, 2, 3, 4, 37);
+  for (uint32_t i = 0; i < r.slots; ++i) g.put(r);
+
+  r.ring_bell();
+  const uint32_t status = pta_module_read32(r.m, PTA_MODULE_PTQ_STATUS);
+  check("a tail exactly one ring ahead is accepted without halting",
+        status == PTA_MODULE_STATUS_ENABLED &&
+            pta_module_read32(r.m, PTA_MODULE_PTQ_HEAD) == 0u &&
+            pta_module_read32(r.m, PTA_MODULE_PTQ_TAIL) == r.slots &&
+            pta_twin_pending(r.t) == 1u);
+
+  r.run_until_head(r.slots);
+  bool drained = pta_module_read32(r.m, PTA_MODULE_PTQ_HEAD) == r.slots &&
+                 pta_twin_pending(r.t) == 0u;
+  for (uint32_t i = 0; i < r.slots; ++i)
+    drained = drained && r.status(i) == PTA_MODULE_DONE && r.index(i) == i;
+  check("the full ring drains every command once, in index order", drained);
+}
+
+void t_counter_wrap(const pta_twin_build& b) {
+  section("free-running producer and consumer indices wrap at 32 bits");
+  Ring r(b, 3);
+  pta_module_write32(r.m, PTA_MODULE_PTQ_CTRL, 0);
+  r.next = UINT32_MAX - 3u;
+  pta_module_write32(r.m, PTA_MODULE_PTQ_TAIL, r.next);
+  pta_module_write32(r.m, PTA_MODULE_PTQ_CTRL, PTA_MODULE_CTRL_ENABLE);
+  check("an empty ring can start immediately before the producer counter wraps",
+        pta_module_read32(r.m, PTA_MODULE_PTQ_HEAD) == UINT32_MAX - 3u &&
+            pta_module_read32(r.m, PTA_MODULE_PTQ_TAIL) == UINT32_MAX - 3u);
+
+  Gemm g(r, 2, 3, 4, 39);
+  for (uint32_t i = 0; i < r.slots; ++i) g.put(r);
+  const uint32_t final_tail = r.next;
+  r.ring_bell();
+  const uint32_t status = pta_module_read32(r.m, PTA_MODULE_PTQ_STATUS);
+  check("a full ring straddling UINT32_MAX is accepted while its first command is active",
+        status == PTA_MODULE_STATUS_ENABLED &&
+            pta_module_read32(r.m, PTA_MODULE_PTQ_HEAD) == UINT32_MAX - 3u &&
+            pta_module_read32(r.m, PTA_MODULE_PTQ_TAIL) == final_tail &&
+            final_tail == 4u && pta_twin_pending(r.t) == 1u);
+
+  r.run_until_head(final_tail);
+  bool drained = pta_module_read32(r.m, PTA_MODULE_PTQ_HEAD) == final_tail &&
+                 pta_twin_pending(r.t) == 0u;
+  for (uint32_t i = 0; i < r.slots; ++i) {
+    const uint32_t idx = UINT32_MAX - 3u + i;
+    drained = drained && r.status(idx) == PTA_MODULE_DONE && r.index(idx) == i;
+  }
+  check("the wrapped full ring drains exactly once in unsigned index order", drained);
+}
+
 void t_halt(const pta_twin_build& b) {
   section("a doorbell that makes no sense, and memory that fails, halt the queue");
   Ring r(b);
@@ -839,6 +895,8 @@ int main() {
     t_done(*b);
     t_endings(*b);
     t_wrap(*b);
+    t_full_capacity(*b);
+    t_counter_wrap(*b);
     t_halt(*b);
     t_teardown(*b);
     t_driver(*b);
