@@ -144,6 +144,10 @@ takes host buffers whose physical addresses the driver can hand the module.
 `grxMallocHost` and `grxHostRegister` are where such buffers would come from.
 What `parentDevice` reports then, and how those calls give memory that is
 physically contiguous, are S4's to settle as it is built (§10, item 11).
+*Settled as built, 2026-10-15* (§12): `parentDevice` is -1, and
+`grxMallocHost` on the module is memory its queue reaches. `grxHostRegister`
+stays refused:
+pinning pages a caller already has needs a kernel driver nobody has written.
 
 ---
 
@@ -498,9 +502,10 @@ and its ticks are not nanoseconds.
     2026-10-15 (B25):* a stand-in for integration only, over F1 and reporting
     `PTA_CAPS2[31]`, and the map the discovery contract on both boards. Who
     builds a stand-in is still open, and no RTL exists at 128 × 64.
-11. **The PTA's parent and its buffers in grxcp** (§3). What `parentDevice`
-    reports on the first board, and how `grxMallocHost` or `grxHostRegister`
-    gives the physically contiguous memory a descriptor's one address needs.
+11. ~~**The PTA's parent and its buffers in grxcp**~~ (§3). *Built,
+    2026-10-15 (§12):* `parentDevice` -1, and `grxMallocHost` on the module.
+    A GEMM on three of its buffers runs in place, and on other memory it is
+    copied. `grxHostRegister` stays refused.
 
 ---
 
@@ -529,10 +534,11 @@ Both halves of §4 to §6 exist as code, and neither is hardware.
 - **The runtime** attaches the queue when its test seam is given host memory,
   and then every GEMM on the PTA device goes through the ring.
 
-**What holds it.** `test_pta_chiplet_queue.cc`, 110 checks, 55 on each of the
-two tiles. It holds the module to this design with descriptors written by hand:
-each way a command ends, a record that keeps the host's fields, results over
-five lines and every line before the record, a ring that wraps, both
+**What holds it.** `test_pta_chiplet_queue.cc`, 128 checks, 64 on each of the
+two tiles, §12's in-place cases among them. It holds the module to this design
+with descriptors written by hand: each way a command ends, a record that keeps
+the host's fields, results over five lines and every line before the record, a
+ring that wraps, both
 interrupts, both halts, a teardown with the GEMM caught running, the slot
 behind it held until the tile is free, and a reset. And it holds the driver's
 transport through the module to the twin's own call, bit for bit, with the
@@ -554,7 +560,8 @@ on each tile.
 1. The operands are copied, into memory the driver owns. The driver's interface
    takes the twin's int32 integers, and a caller's own buffers cannot yet be
    handed to the module (§10, item 11). So a lost GEMM leaves the caller's C
-   untouched after all: only the driver's copy is undefined.
+   untouched after all: only the driver's copy is undefined. *Since §12 this
+   is so only of memory the module did not hand out.*
 
 2. `PTQ_STATUS.ENABLED` reads 0 the moment the queue is told to stop. In a
    model a write call returns ordered, so nothing is ever in flight.
@@ -565,7 +572,72 @@ on each tile.
 **What is not built.** Version 2 descriptors and the activation stage through
 the queue: `PTQ_CAPS` says version 1 only, and a version 2 descriptor ends NOT
 ISSUED. The interrupts, which the module raises and no driver waits on. Reading
-ahead. The PTA device with no parent GPU, whose operands are the host's: the
-runtime's device is still S4's, behind a GPU, and grxBLAS still copies its
-operands out of the parent's memory. And anything CXL: there is no root port,
-no flit and no snoop, only what the design's rules say happens at the line.
+ahead. The PTA device with no parent GPU, whose operands are the host's, *built
+since in §12*. And anything CXL: there is no root port, no flit and no snoop,
+only what the design's rules say happens at the line.
+
+---
+
+## 12. The first board's device, built (2026-10-15)
+
+The runtime's PTA device was S4's: a chiplet behind a GPU, whose operands
+grxBLAS copied out of the GPU's memory. The first board's is a module on the
+host with no GPU behind it, and now it exists in grxcp as that.
+
+- **Enumeration.** A model attached through the seam with parent -1 is a module
+  on the host. It is enumerated only if it was given host memory and its queue
+  answers: without a queue a PTA on the host has no way to be given work. It
+  reports `parentDevice` -1, GEMM and nothing else, no device memory, and the
+  name "GRX PTA module on the host (software register model, NOT hardware)".
+
+- **Its memory.** `grxMallocHost` on it is memory its queue reaches, from the
+  same hooks the queue's ring comes from. It is recorded apart from the GPUs'
+  pinned memory, which no GPU can reach, and `grxFreeHost` gives it back.
+  `grxMalloc` and managed memory are refused. So is `grxHostRegister`, because
+  pinning a caller's existing pages needs a kernel driver.
+
+- **A GEMM in place.** When A, B and C are inside buffers `grxMallocHost` gave
+  out on this device, each on a line with C's last line inside its buffer,
+  grxBLAS hands the driver their addresses. `pta_chiplet_gemm_at` publishes a
+  descriptor that names them, and the module reads A and B and writes C where
+  the caller put them. Nothing is copied. On any other host memory the GEMM is
+  staged through the driver's own, as before. A GPU's pointer is refused by
+  name.
+
+- **What lost means now.** In place, a GEMM that ended lost leaves C undefined,
+  as B25 ruled. This is the first place a caller sees that. A refusal still
+  leaves C untouched.
+
+**What holds it.**
+
+- `tests/unit/test_pta_module_device.cpp`, 33 checks a tile. It checks
+  enumeration and the property, what is refused and what is not,
+  `grxMallocHost` and `grxFreeHost`, and a GEMM in place, held to the exact
+  product. It holds from the module's own line log that the module read A and B
+  and wrote C. It also covers C off a line, which is copied instead and never
+  written by the module, plain host memory staged, a GPU's pointer refused, and
+  a refusal in place with C as it was. Run with `nomemory`, a module given no
+  host memory is not enumerated.
+
+- `tests/libs/test_grxblas_pta_chiplet.cpp` with `module` as its third word: 52
+  checks a tile. That is the 4,164 results bit for bit to the model built from
+  the device property alone, with every operand allocated by `grxMallocHost` on
+  the module. Every GEMM that ran, 16 of 16 on each tile, ran in place, and
+  plain host memory is staged to the same product.
+
+- The queue's gate gained the driver's in-place cases: the call's answer in the
+  caller's buffer, nothing staged, an address off a line refused before a
+  doorbell, a refusal in place untouched, and a halt in place lost.
+
+- Planted, one at a time in a copy and not in CI: eight errors in the runtime's
+  and grxBLAS's half. Seven fail the gates, among them A taken as the
+  activations, every GEMM staged, buffers not recorded, `grxFreeHost` leaking
+  them, and `parentDevice` reported as 0. A GPU's pointer let through fails
+  only by crashing: the staged path reads the GPU's address as host memory. The
+  eighth, a module enumerated with no host memory, is not told apart, because
+  the check after it refuses the same device for having no queue.
+
+**What is not built.** `grxPointerGetAttributes` knows nothing of the module's
+buffers. A caller's existing pages, which is `grxHostRegister`. More than one
+module. And still, as §11 has it, version 2 descriptors, the interrupts,
+reading ahead and anything CXL.

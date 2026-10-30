@@ -102,10 +102,14 @@ be handed to the module (the design's open item 11), the operands go through
 memory the driver owns.
 
 **The runtime** attaches the queue when the seam is given host memory,
-`grxcp_pta_attach_memory_for_testing`. Its device is still S4's, a chiplet
-behind a GPU parent, so grxBLAS still copies its operands out of the parent's
-memory: what changes is how the driver reaches the tile. The device with no
-parent GPU, whose operands are the host's, is a later step.
+`grxcp_pta_attach_memory_for_testing`. With the parent left at a GPU the device
+is still S4's, a chiplet behind it, and grxBLAS copies its operands out of the
+parent's memory. With the parent -1 it is the first board's: a module on the
+host, `parentDevice` -1, enumerated only if its queue answers. `grxMallocHost`
+on it is memory its queue reaches, and a GEMM on three such buffers runs in
+place: grxBLAS gives the driver their addresses, `pta_chiplet_gemm_at` names
+them in the descriptor, and the module reads and writes the caller's own bytes.
+Other host memory is staged, and a GPU's pointer refused.
 
 The gate is `test_pta_chiplet_queue.cc`, on 128 × 64 and on 256 × 64, and
 `tests/libs/test_grxblas_pta_chiplet.cpp` runs a second time on each tile with
