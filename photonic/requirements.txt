@@ -1,0 +1,7 @@
+# Open-source photonic flow. Installed when the layout work starts;
+# photonic/check.py itself is stdlib-only and runs without these.
+gdsfactory>=8
+klayout>=0.29
+sax>=0.13
+numpy>=1.26
+scipy>=1.12
