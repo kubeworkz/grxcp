@@ -315,7 +315,72 @@ int pta_chiplet_queue_teardown(pta_chiplet_device_t* dev) {
   return 0;
 }
 
-// One GEMM through the queue: the design's section 4, the host's half.
+// Publish one descriptor, ring the doorbell, and wait for its record: the
+// design's section 4, the host's half, whoever's memory the three addresses
+// are in. Returns 0 when the GEMM ended done, with dev->last_index its index,
+// or -1 with dev->error saying why.
+static int queue_run(pta_chiplet_device_t* dev, int bank, int M, int N, int K,
+                     uint64_t act, uint64_t wgt, uint64_t out) {
+  // The descriptor, version 1, status zero: the host path's, field for field.
+  uint8_t d[PTA_CHIPLET_LINE];
+  std::memset(d, 0, sizeof d);
+  put32(d + 0x00, (1u << 16) | 64u);
+  put32(d + 0x04, (uint32_t)bank << 8);
+  put32(d + 0x08, 0);
+  put32(d + 0x0C, (uint32_t)M);
+  put32(d + 0x10, (uint32_t)K);
+  put32(d + 0x14, (uint32_t)N);
+  put64(d + 0x18, act);
+  put64(d + 0x20, wgt);
+  put64(d + 0x28, out);
+  const uint32_t idx = dev->next;
+  volatile uint8_t* slot = slot_of(dev, idx);
+  for (unsigned i = 0; i < sizeof d; ++i) slot[i] = d[i];
+
+  // The fence, then the doorbell: the module must read what was written here.
+  std::atomic_thread_fence(std::memory_order_release);
+  ++dev->next;
+  wr(dev, PTA_CHIPLET_PTQ_TAIL, dev->next);
+
+  uint32_t st = 0;
+  for (int i = 0; i < kQueuePolls; ++i) {
+    st = ld32(slot + PTA_CHIPLET_D_STATUS);
+    if (st != 0) break;
+    if (rd(dev, PTA_CHIPLET_PTQ_STATUS) & PTA_CHIPLET_PTQ_HALTED) break;
+  }
+  if (st == 0) {
+    // Halted, or it never ended: tear the queue down, which ends the slot.
+    if (pta_chiplet_queue_teardown(dev) != 0) {
+      dev->ended = dev->next;
+      dev->error = PTA_CHIPLET_ERR_WEDGED;
+      return -1;
+    }
+    st = ld32(slot + PTA_CHIPLET_D_STATUS);
+  }
+  dev->ended = dev->next;
+  std::atomic_thread_fence(std::memory_order_acquire);
+
+  switch (st) {
+    case PTA_CHIPLET_REC_DONE:
+      dev->last_index = (int64_t)ld32(slot + PTA_CHIPLET_D_INDEX);
+      dev->error = PTA_CHIPLET_OK;
+      return 0;
+    case PTA_CHIPLET_REC_REFUSED:
+      dev->refused_impairments =
+          rd(dev, PTA_CHIPLET_IMPAIR) & PTA_CHIPLET_DEFINED & ~rd(dev, PTA_CHIPLET_CAPS1);
+      dev->error = PTA_CHIPLET_ERR_REFUSED;
+      return -1;
+    case PTA_CHIPLET_REC_NOT_ISSUED:
+    case PTA_CHIPLET_REC_NOT_RUN:
+      dev->error = PTA_CHIPLET_ERR_NOT_ACCEPTED;
+      return -1;
+  }
+  dev->error = PTA_CHIPLET_ERR_LOST;   // lost, or a status no version of the queue writes
+  return -1;
+}
+
+// One GEMM through the queue, from the driver's int32 interface: the operands
+// are copied into memory the driver owns, and the results out of it.
 static int queue_gemm(pta_chiplet_device_t* dev, int bank, int M, int N, int K,
                       const int32_t* A, const int32_t* B, int64_t* C) {
   if (dev->queue_dead) { dev->error = PTA_CHIPLET_ERR_WEDGED; return -1; }
@@ -354,65 +419,31 @@ static int queue_gemm(pta_chiplet_device_t* dev, int bank, int M, int N, int K,
   for (uint64_t i = 0; i < na; ++i) stage[i] = (uint8_t)(int8_t)A[i];
   for (uint64_t i = 0; i < nb; ++i) stage[off_w + i] = (uint8_t)(int8_t)B[i];
 
-  // The descriptor, version 1, status zero: the host path's, field for field.
-  uint8_t d[PTA_CHIPLET_LINE];
-  std::memset(d, 0, sizeof d);
-  put32(d + 0x00, (1u << 16) | 64u);
-  put32(d + 0x04, (uint32_t)bank << 8);
-  put32(d + 0x08, 0);
-  put32(d + 0x0C, (uint32_t)M);
-  put32(d + 0x10, (uint32_t)K);
-  put32(d + 0x14, (uint32_t)N);
-  put64(d + 0x18, dev->stage.addr);
-  put64(d + 0x20, dev->stage.addr + off_w);
-  put64(d + 0x28, dev->stage.addr + off_c);
-  const uint32_t idx = dev->next;
-  volatile uint8_t* slot = slot_of(dev, idx);
-  for (unsigned i = 0; i < sizeof d; ++i) slot[i] = d[i];
+  if (queue_run(dev, bank, M, N, K, dev->stage.addr, dev->stage.addr + off_w,
+                dev->stage.addr + off_c) != 0)
+    return -1;
+  const volatile uint8_t* out = static_cast<volatile uint8_t*>(dev->stage.cpu) + off_c;
+  for (uint64_t i = 0; i < nc; ++i) C[i] = (int64_t)(int32_t)ld32(out + 4u * i);
+  return 0;
+}
 
-  // The fence, then the doorbell: the module must read what was written here.
-  std::atomic_thread_fence(std::memory_order_release);
-  ++dev->next;
-  wr(dev, PTA_CHIPLET_PTQ_TAIL, dev->next);
-
-  uint32_t st = 0;
-  for (int i = 0; i < kQueuePolls; ++i) {
-    st = ld32(slot + PTA_CHIPLET_D_STATUS);
-    if (st != 0) break;
-    if (rd(dev, PTA_CHIPLET_PTQ_STATUS) & PTA_CHIPLET_PTQ_HALTED) break;
+int pta_chiplet_gemm_at(pta_chiplet_device_t* dev, int bank, int M, int N, int K,
+                        uint64_t act, uint64_t wgt, uint64_t out) {
+  if (!dev) return -1;
+  dev->refused_impairments = 0;
+  dev->last_index = -1;
+  if (!has_window(dev)) { dev->error = PTA_CHIPLET_ERR_NO_WINDOW; return -1; }
+  if (!dev->present)    { dev->error = PTA_CHIPLET_ERR_NOT_PRESENT; return -1; }
+  if (!dev->queue)      { dev->error = PTA_CHIPLET_ERR_NO_LINK; return -1; }
+  if (dev->queue_dead)  { dev->error = PTA_CHIPLET_ERR_WEDGED; return -1; }
+  // What the module would end NOT ISSUED is refused here, before a doorbell.
+  if (M <= 0 || N <= 0 || K <= 0 || bank < 0 || bank > 0xFF ||
+      (act | wgt | out) % PTA_CHIPLET_LINE != 0 ||
+      dev->next - dev->ended >= (1u << dev->ring_log2)) {
+    dev->error = PTA_CHIPLET_ERR_NOT_ACCEPTED;
+    return -1;
   }
-  if (st == 0) {
-    // Halted, or it never ended: tear the queue down, which ends the slot.
-    if (pta_chiplet_queue_teardown(dev) != 0) {
-      dev->ended = dev->next;
-      dev->error = PTA_CHIPLET_ERR_WEDGED;
-      return -1;
-    }
-    st = ld32(slot + PTA_CHIPLET_D_STATUS);
-  }
-  dev->ended = dev->next;
-  std::atomic_thread_fence(std::memory_order_acquire);
-
-  switch (st) {
-    case PTA_CHIPLET_REC_DONE: {
-      const volatile uint8_t* out = static_cast<volatile uint8_t*>(dev->stage.cpu) + off_c;
-      for (uint64_t i = 0; i < nc; ++i) C[i] = (int64_t)(int32_t)ld32(out + 4u * i);
-      dev->last_index = (int64_t)ld32(slot + PTA_CHIPLET_D_INDEX);
-      dev->error = PTA_CHIPLET_OK;
-      return 0;
-    }
-    case PTA_CHIPLET_REC_REFUSED:
-      dev->refused_impairments =
-          rd(dev, PTA_CHIPLET_IMPAIR) & PTA_CHIPLET_DEFINED & ~rd(dev, PTA_CHIPLET_CAPS1);
-      dev->error = PTA_CHIPLET_ERR_REFUSED;
-      return -1;
-    case PTA_CHIPLET_REC_NOT_ISSUED:
-    case PTA_CHIPLET_REC_NOT_RUN:
-      dev->error = PTA_CHIPLET_ERR_NOT_ACCEPTED;
-      return -1;
-  }
-  dev->error = PTA_CHIPLET_ERR_LOST;   // lost, or a status no version of the queue writes
-  return -1;
+  return queue_run(dev, bank, M, N, K, act, wgt, out);
 }
 
 int pta_chiplet_gemm(pta_chiplet_device_t* dev, int bank, int M, int N, int K,

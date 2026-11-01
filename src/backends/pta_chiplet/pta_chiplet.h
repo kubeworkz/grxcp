@@ -254,6 +254,18 @@ int  pta_chiplet_queue_teardown(pta_chiplet_device_t* dev);
 int pta_chiplet_gemm(pta_chiplet_device_t* dev, int bank, int M, int N, int K,
                      const int32_t* A, const int32_t* B, int64_t* C);
 
+// One GEMM through the queue on buffers already where the module can reach
+// them, which is the first board's: `act` M x K int8, `wgt` K x N int8 and
+// `out` M x N int32, row-major, each a host physical address on a 64-byte
+// line, `out` with room for its last line whole. Nothing is copied: the module
+// reads the operands and writes the results where they are. Returns 0 with the
+// results at `out` and dev->last_index set, or -1 with dev->error saying why.
+// After PTA_CHIPLET_ERR_LOST what `out` holds is undefined (the board plan's
+// B25); after any other failure it is untouched. Without a queue it is
+// PTA_CHIPLET_ERR_NO_LINK.
+int pta_chiplet_gemm_at(pta_chiplet_device_t* dev, int bank, int M, int N, int K,
+                        uint64_t act, uint64_t wgt, uint64_t out);
+
 // GEMM i's seed under PTA_SEED `seed`: the map's section 4. Here so that what
 // reads the property can reproduce a result without a twin.
 uint32_t pta_chiplet_gemm_seed(uint32_t seed, uint32_t index);

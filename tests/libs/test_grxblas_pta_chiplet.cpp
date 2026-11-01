@@ -22,6 +22,13 @@
 // resolved against a device other than the current one, and the refusals at
 // the end of this file are its edges.
 //
+// AND ON THE FIRST BOARD (the third word of the command line, "module"), the
+// PTA is a module on the host with no GPU behind it, and its operands are host
+// memory: allocated with grxMallocHost on the PTA itself, which is memory its
+// queue can reach, and used in place. Every GEMM that runs is held to having
+// read A and B and written C where the caller put them, from the lines the
+// module itself touched.
+//
 // WHICH OPERAND IS THE WEIGHT. As on the c930: A is programmed into the tile
 // and each column of B is a shot. One library, two tiles, one answer, and the
 // "weights" case below is what would notice the other one.
@@ -243,8 +250,12 @@ void program(pta_twin* t, const Case& c) {
 // The devices, and the three buffers of one GEMM on the PARENT.
 struct Rig {
   int pta = -1, parent = -1;
+  bool module = false;      // the first board's: on the host, no parent
   grxblasHandle_t h = nullptr;
 };
+
+// On the module: how many GEMMs ran, and how many of them in place.
+int g_ran = 0, g_in_place = 0;
 
 const int32_t kSentinel = (int32_t)0x5A5A5A5A;
 
@@ -257,6 +268,31 @@ grxblasStatus_t device_gemm(const Rig& rig, const Case& c, const std::vector<int
                             grxblasOperation_t transa = GRXBLAS_OP_N) {
   const size_t cn = (size_t)c.m * c.n;
   void *dA = nullptr, *dB = nullptr, *dC = nullptr;
+  if (rig.module) {
+    // Host memory the module's queue reaches, from the PTA device itself.
+    grxSetDevice(rig.pta);
+    if (grxMallocHost(&dA, A.size()) != grxSuccess || grxMallocHost(&dB, B.size()) != grxSuccess ||
+        grxMallocHost(&dC, cn * sizeof(int32_t)) != grxSuccess)
+      return GRXBLAS_STATUS_ALLOC_FAILED;
+    std::memcpy(dA, A.data(), A.size());
+    std::memcpy(dB, B.data(), B.size());
+    for (size_t i = 0; i < cn; ++i) static_cast<int32_t*>(dC)[i] = kSentinel;
+    grxtest::pta_host_lines().clear();
+    const float one = 1.0f, zero = 0.0f;
+    const grxblasStatus_t s = grxblasGemmEx(
+        rig.h, transa, GRXBLAS_OP_N, c.m, c.n, c.k, alpha ? alpha : &one,
+        dA, GRX_R_8I, c.m, dB, GRX_R_8I, c.k, &zero, dC, GRX_R_32I, c.m);
+    if (s == GRXBLAS_STATUS_SUCCESS) {
+      ++g_ran;
+      if (grxtest::pta_host_lines_in(dA, A.size(), false) > 0 &&
+          grxtest::pta_host_lines_in(dB, B.size(), false) > 0 &&
+          grxtest::pta_host_lines_in(dC, cn * sizeof(int32_t), true) > 0)
+        ++g_in_place;
+    }
+    C->assign(static_cast<const int32_t*>(dC), static_cast<const int32_t*>(dC) + cn);
+    grxFreeHost(dA); grxFreeHost(dB); grxFreeHost(dC);
+    return s;
+  }
   grxSetDevice(rig.parent);
   if (grxMalloc(&dA, A.size()) != grxSuccess || grxMalloc(&dB, B.size()) != grxSuccess ||
       grxMalloc(&dC, cn * sizeof(int32_t)) != grxSuccess)
@@ -320,16 +356,21 @@ int main(int argc, char** argv) {
   // Through the queue the twin is behind the first board's module, and there is
   // no link: every GEMM below goes through the ring or does not run.
   const bool queue = how == grxtest::PtaTransport::Queue;
-  const bool installed = queue ? grxtest::pta_twin_install_queue(build) : grxtest::pta_twin_install(build);
+  const bool module = how == grxtest::PtaTransport::Module;
+  const bool installed = module  ? grxtest::pta_twin_install_module(build)
+                         : queue ? grxtest::pta_twin_install_queue(build)
+                                 : grxtest::pta_twin_install(build);
   section("the twin is behind the runtime's PTA device");
-  check(installed, queue ? "the twin is installed behind the module's queue, with no link"
-                         : "the twin's window and link are installed");
+  check(installed, module ? "the twin is installed as the first board's module: on the host, no GPU behind it"
+                   : queue ? "the twin is installed behind the module's queue, with no link"
+                           : "the twin's window and link are installed");
   if (!installed) return grxtest::report();
   pta_twin* twin = grxtest::pta_twin_installed();
 
   int count = 0;
   GRX_REQUIRE(grxGetDeviceCount(&count), "grxGetDeviceCount");
   Rig rig;
+  rig.module = module;
   for (int i = 0; i < count; ++i) {
     grxDeviceProp_t p{};
     if (grxGetDeviceProperties(&p, i) == grxSuccess && p.deviceType == GRX_DEVICE_TYPE_PTA) {
@@ -340,8 +381,10 @@ int main(int argc, char** argv) {
       break;
     }
   }
-  check(rig.pta >= 0 && rig.parent >= 0, "a PTA chiplet is enumerated, with a parent");
-  if (rig.pta < 0 || rig.parent < 0) return grxtest::report();
+  const bool parent_ok = module ? rig.parent == -1 : rig.parent >= 0;
+  check(rig.pta >= 0 && parent_ok, module ? "a PTA module is enumerated, with no parent: its operands are host memory"
+                                          : "a PTA chiplet is enumerated, with a parent");
+  if (rig.pta < 0 || !parent_ok) return grxtest::report();
   const pta_tile tile = {build.rows, build.cols, build.din_w, build.acc_w};
   {
     const grxAnalogGemm_t a = read_property(rig.pta);
@@ -519,14 +562,29 @@ int main(int argc, char** argv) {
     s = device_gemm(rig, c, A, B, &C, nullptr, GRXBLAS_OP_T);
     check(s != GRXBLAS_STATUS_SUCCESS && untouched(C), "a transposed A: no untransposed answer in its place");
 
-    // Pointers that are not the parent's.
+    // Pointers that are not the parent's -- or, on the module, a GPU's.
     std::vector<int32_t> hostC((size_t)c.m * c.n, kSentinel);
     const float one = 1.0f, zero = 0.0f;
-    s = grxblasGemmEx(rig.h, GRXBLAS_OP_N, GRXBLAS_OP_N, c.m, c.n, c.k, &one,
-                      A.data(), GRX_R_8I, c.m, B.data(), GRX_R_8I, c.k, &zero,
-                      hostC.data(), GRX_R_32I, c.m);
-    check(s == GRXBLAS_STATUS_INVALID_VALUE && untouched(hostC),
-          "host pointers: refused, the operands have to be on the parent");
+    if (module) {
+      void* gpuA = nullptr;
+      grxSetDevice(0);
+      GRX_REQUIRE(grxMalloc(&gpuA, A.size()), "grxMalloc on the GPU");
+      grxSetDevice(rig.pta);
+      s = grxblasGemmEx(rig.h, GRXBLAS_OP_N, GRXBLAS_OP_N, c.m, c.n, c.k, &one,
+                        gpuA, GRX_R_8I, c.m, B.data(), GRX_R_8I, c.k, &zero,
+                        hostC.data(), GRX_R_32I, c.m);
+      check(s == GRXBLAS_STATUS_INVALID_VALUE && untouched(hostC),
+            "a GPU's pointer: refused, the module has no GPU behind it and takes host memory");
+      grxSetDevice(0);
+      grxFree(gpuA);
+      grxSetDevice(rig.pta);
+    } else {
+      s = grxblasGemmEx(rig.h, GRXBLAS_OP_N, GRXBLAS_OP_N, c.m, c.n, c.k, &one,
+                        A.data(), GRX_R_8I, c.m, B.data(), GRX_R_8I, c.k, &zero,
+                        hostC.data(), GRX_R_32I, c.m);
+      check(s == GRXBLAS_STATUS_INVALID_VALUE && untouched(hostC),
+            "host pointers: refused, the operands have to be on the parent");
+    }
     check(read_property(rig.pta).gemmIndex == 0, "and none of those started a GEMM");
 
     // And with the register put right, the same call runs.
@@ -548,8 +606,28 @@ int main(int argc, char** argv) {
     const grxblasStatus_t s = device_gemm(rig, cases[1], A, B, &C);
     check(s == GRXBLAS_STATUS_SUCCESS && mismatches(C, exact_gemm(cases[1], A, B)) == 0,
           "and a GEMM is the exact product again");
+    if (module) {
+      // Host memory that is not the module's: copied through the driver's own,
+      // the same answer, and the caller's bytes never read by the module.
+      std::vector<int32_t> plainC((size_t)cases[1].m * cases[1].n, kSentinel);
+      const float one = 1.0f, zero = 0.0f;
+      grxtest::pta_host_lines().clear();
+      const grxblasStatus_t p = grxblasGemmEx(
+          rig.h, GRXBLAS_OP_N, GRXBLAS_OP_N, cases[1].m, cases[1].n, cases[1].k, &one,
+          A.data(), GRX_R_8I, cases[1].m, B.data(), GRX_R_8I, cases[1].k, &zero,
+          plainC.data(), GRX_R_32I, cases[1].m);
+      check(p == GRXBLAS_STATUS_SUCCESS && mismatches(plainC, exact_gemm(cases[1], A, B)) == 0 &&
+                grxtest::pta_host_lines_in(A.data(), A.size(), false) == 0 &&
+                grxtest::pta_host_lines_in(plainC.data(), plainC.size() * sizeof(int32_t), true) == 0,
+            "plain host memory is staged: the exact product, and the module never touched the caller's bytes");
+    }
   }
 
+  if (module) {
+    std::printf("  note  in place: %d of %d GEMMs that ran\n", g_in_place, g_ran);
+    check(g_ran > 0 && g_in_place == g_ran,
+          "every GEMM that ran on grxMallocHost's memory ran in place: the module read A and B and wrote C there");
+  }
   check(grxblasDestroy(rig.h) == GRXBLAS_STATUS_SUCCESS, "grxblasDestroy");
   grxtest::pta_transport_note(how);
   return grxtest::report();

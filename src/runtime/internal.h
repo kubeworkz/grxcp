@@ -108,8 +108,22 @@ void probe_pta_device(std::vector<Device>& devices);
 // The chiplet's driver handle, or null when `index` is not a PTA device.
 struct pta_chiplet_device* pta_device_for(int index);
 
-// The GPU a PTA device's operands live on, or -1 when `index` is not one.
+// The GPU a PTA device's operands live on, or -1 when `index` is not one --
+// and -1 too for the first board's module, whose operands are the host's.
 int pta_parent_of(int index);
+
+// Whether `index` is the first board's PTA: a module on the host, with no
+// parent GPU and a queue (docs/designs/pta_board_transport.md).
+bool pta_on_host(int index);
+
+// Host memory that module's queue can reach: grxMallocHost on it. Free with
+// pta_host_free, which returns false for a pointer that is not one of these.
+grxError_t pta_host_alloc(int index, size_t size, void** ptr);
+bool       pta_host_free(void* ptr);
+
+// Whether `ptr` is inside one of device `index`'s host buffers, and if it is,
+// the address the module reaches it at and the bytes left from there.
+bool pta_host_lookup(int index, const void* ptr, uint64_t* addr, uint64_t* room);
 #endif
 
 // ---------------------------------------------------------------------------

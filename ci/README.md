@@ -256,7 +256,7 @@ in front of the same twin, and the driver's `pta_chiplet_attach_queue` is the
 host's half. The gate holds the module to the design with descriptors written
 by hand — every way a command ends, the order its lines go out in, a halt, a
 teardown and a reset — and the driver's transport through it to the twin's own
-call, bit for bit. 110 checks, 55 on each of the two builds. Then five modules
+call, bit for bit. 128 checks, 64 on each of the two builds. Then five modules
 each wrong in one way, from `PTA_MODULE_ABLATE_RECORD_FIRST` to
 `PTA_MODULE_ABLATE_DOORBELL`, and the gate has to fail against each.
 
@@ -280,6 +280,15 @@ tile is the gate's argument: `128x64`, which is also what no argument means, or
 `256x64`. The script then reads the tile a run was on back out of its log, from
 a line the gate prints off the device property, because a gate that ignored its
 argument would run one tile twice and be reported as both.
+
+**And through the first board's queue and on its module.** The grxBLAS gate
+runs again on each tile with `queue`, the twin behind the module and no link,
+and with `module`, the first board's PTA on the host with no GPU behind it and
+every operand from `grxMallocHost` on it. The script reads the transport back
+out of each log from the module's own `PTQ_HEAD`, and on the module requires
+every GEMM that ran to have run in place.
+`tests/unit/test_pta_module_device.cpp` is the module's device gate on each
+tile, and run with `nomemory` it has to find no device at all.
 
 Two things in those gates and the driver's follow a tile's rows, and each is
 derived for the tile the run is on and not carried over from the other:

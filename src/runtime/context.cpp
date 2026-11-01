@@ -12,6 +12,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <map>
+#include <mutex>
 #include <string>
 
 #ifdef GRXCP_ENABLE_NPU
@@ -547,8 +549,11 @@ static void populate_pta_properties(Device& d) {
   p.analogGemm   = read_pta_analog(d.pta_dev);
   p.parentDevice = d.parent;
 
-  std::snprintf(p.name, sizeof(p.name),
-                "GRX PTA chiplet (software register model, NOT hardware)");
+  // parentDevice -1 is the first board's: a module on the host, whose
+  // operands are host memory (docs/designs/pta_board_transport.md).
+  std::snprintf(p.name, sizeof(p.name), d.parent < 0
+                    ? "GRX PTA module on the host (software register model, NOT hardware)"
+                    : "GRX PTA chiplet (software register model, NOT hardware)");
 }
 
 void probe_pta_device(std::vector<Device>& devices) {
@@ -561,12 +566,21 @@ void probe_pta_device(std::vector<Device>& devices) {
     // in the package.
     if (!g_pta_model.read32 && !g_pta_model.write32) return;
 
-    // A tile with no parent has nothing to compute on, so it is not a device.
+    // A tile with no parent has nothing to compute on, so it is not a device --
+    // unless it is the first board's: a module on the host, parent -1, whose
+    // operands are host memory that its queue reaches. That one needs host
+    // memory to have been given, and a queue to answer (below).
     const int parent = g_pta_model.parent;
-    if (parent < 0 || (size_t)parent >= devices.size() ||
-        devices[parent].type != DeviceType::GPU) {
+    const bool on_host = parent == -1;
+    if (!on_host && (parent < 0 || (size_t)parent >= devices.size() ||
+                     devices[parent].type != DeviceType::GPU)) {
       std::fprintf(stderr, "grxcp: a PTA chiplet model was attached behind "
                    "device %d, which is not a GPU here; not enumerated\n", parent);
+      return;
+    }
+    if (on_host && !g_pta_model.dma_alloc) {
+      std::fprintf(stderr, "grxcp: a PTA module model was attached on the host with no"
+                   " host memory for its queue to reach; not enumerated\n");
       return;
     }
 
@@ -592,6 +606,13 @@ void probe_pta_device(std::vector<Device>& devices) {
         std::fprintf(stderr, "grxcp: PTA chiplet: given host memory, and no queue answers"
                      " on page 1: %s\n", pta_chiplet_error_string(dev->error));
     }
+    // On the host the queue is the only way to the tile: without it there is
+    // no device.
+    if (on_host && !dev->queue) {
+      std::fprintf(stderr, "grxcp: a PTA module on the host with no queue; not enumerated\n");
+      delete dev;
+      return;
+    }
     Device d;
     d.index   = (int)devices.size();
     d.type    = DeviceType::PTA;
@@ -601,8 +622,12 @@ void probe_pta_device(std::vector<Device>& devices) {
     d.parent  = parent;
     d.pta_dev = dev;
     devices.push_back(d);
-    std::fprintf(stderr, "grxcp: PTA chiplet detected behind device %d (device %d)"
-                 " -- THROUGH A REGISTER MODEL, not hardware\n", parent, d.index);
+    if (on_host)
+      std::fprintf(stderr, "grxcp: PTA module detected on the host (device %d)"
+                   " -- THROUGH A REGISTER MODEL, not hardware\n", d.index);
+    else
+      std::fprintf(stderr, "grxcp: PTA chiplet detected behind device %d (device %d)"
+                   " -- THROUGH A REGISTER MODEL, not hardware\n", parent, d.index);
   });
 }
 
@@ -616,6 +641,69 @@ int pta_parent_of(int index) {
   if (index < 0 || (size_t)index >= g_devices.size()) return -1;
   const Device& d = g_devices[index];
   return (d.type == DeviceType::PTA) ? d.parent : -1;
+}
+
+bool pta_on_host(int index) {
+  if (index < 0 || (size_t)index >= g_devices.size()) return false;
+  const Device& d = g_devices[index];
+  return d.type == DeviceType::PTA && d.parent < 0 && d.pta_dev && d.pta_dev->queue;
+}
+
+// THE MODULE'S HOST BUFFERS. grxMallocHost on the first board's module hands
+// out memory its queue can reach, from the hooks the model was given, and each
+// is recorded here and not among the GPUs' pinned allocations: no GPU can
+// reach it, and a GPU copy must see it as the plain host memory it is to them.
+struct PtaHostBuffer {
+  pta_chiplet_dma_t dma;
+  int               device;
+};
+static std::mutex                         g_pta_host_mutex;
+static std::map<uintptr_t, PtaHostBuffer> g_pta_host;   // by cpu address
+
+grxError_t pta_host_alloc(int index, size_t size, void** ptr) {
+  if (!pta_on_host(index)) return grxErrorNotSupported;
+  pta_chiplet_device_t* dev = g_devices[index].pta_dev;
+  pta_chiplet_dma_t b;
+  std::memset(&b, 0, sizeof b);
+  if (dev->dma_alloc(dev->dma_ctx, size, &b) != 0 || !b.cpu || b.bytes < size) {
+    if (b.cpu) dev->dma_free(dev->dma_ctx, &b);
+    return grxErrorMemoryAllocation;
+  }
+  {
+    std::lock_guard<std::mutex> lock(g_pta_host_mutex);
+    g_pta_host[(uintptr_t)b.cpu] = PtaHostBuffer{b, index};
+  }
+  *ptr = b.cpu;
+  return grxSuccess;
+}
+
+bool pta_host_free(void* ptr) {
+  PtaHostBuffer b;
+  {
+    std::lock_guard<std::mutex> lock(g_pta_host_mutex);
+    auto it = g_pta_host.find((uintptr_t)ptr);
+    if (it == g_pta_host.end()) return false;
+    b = it->second;
+    g_pta_host.erase(it);
+  }
+  pta_chiplet_device_t* dev = pta_device_for(b.device);
+  if (dev && dev->dma_free) dev->dma_free(dev->dma_ctx, &b.dma);
+  return true;
+}
+
+bool pta_host_lookup(int index, const void* ptr, uint64_t* addr, uint64_t* room) {
+  std::lock_guard<std::mutex> lock(g_pta_host_mutex);
+  if (g_pta_host.empty()) return false;
+  const uintptr_t p = (uintptr_t)ptr;
+  auto it = g_pta_host.upper_bound(p);
+  if (it == g_pta_host.begin()) return false;
+  --it;
+  const PtaHostBuffer& b = it->second;
+  if (b.device != index || p < it->first || p - it->first >= b.dma.bytes) return false;
+  const uint64_t delta = (uint64_t)(p - it->first);
+  if (addr) *addr = b.dma.addr + delta;
+  if (room) *room = (uint64_t)b.dma.bytes - delta;
+  return true;
 }
 
 #endif  // GRXCP_ENABLE_PTA

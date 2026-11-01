@@ -731,7 +731,7 @@ else
        -DGRXCP_VORTEX_INCLUDE_DIR="$VORTEX_INCLUDE" \
        > "$BUILD/cmake-pta.log" 2>&1 ||
      ! cmake --build "$BUILD/cmake-pta" -j"$(nproc 2>/dev/null || echo 4)" \
-       --target test_pta_chiplet_device test_grxblas_pta_chiplet grx-smi \
+       --target test_pta_chiplet_device test_pta_module_device test_grxblas_pta_chiplet grx-smi \
        >> "$BUILD/cmake-pta.log" 2>&1; then
     echo "  FAIL  -DGRXCP_ENABLE_PTA=ON does not build."
     grep -E "error:|Error|CMake Error" "$BUILD/cmake-pta.log" | head -8 |
@@ -771,11 +771,18 @@ else
   # read back out of its log as the tile is, from the line the gate prints off
   # the module's own PTQ_HEAD: a run that ignored "queue" would put nothing
   # through the ring.
+  #
+  # AND ON THE FIRST BOARD'S MODULE: on the host with no GPU behind it, its
+  # operands host memory from grxMallocHost on the PTA itself, used in place.
+  # The device's own gate, and the same grxBLAS gate, which has to report every
+  # GEMM that ran as having run in place.
   for gate in "unit:test_pta_chiplet_device:link" "libs:test_grxblas_pta_chiplet:link" \
-              "libs:test_grxblas_pta_chiplet:queue"; do
+              "libs:test_grxblas_pta_chiplet:queue" "libs:test_grxblas_pta_chiplet:module" \
+              "unit:test_pta_module_device:module"; do
     dir="${gate%%:*}"; rest="${gate#*:}"; name="${rest%%:*}"; how="${rest##*:}"
     for tile in 128x64 256x64; do
-      args=("$tile"); [[ "$how" == "queue" ]] && args+=(queue)
+      args=("$tile")
+      [[ "$how" != "link" && "$name" == "test_grxblas_pta_chiplet" ]] && args+=("$how")
       log="$BUILD/$name.$tile.$how.log"
       echo "--- $name, on a $tile tile, through the $how"
       if ( cd "$ROOT/tests/$dir" && "$BUILD/cmake-pta/tests/$name" "${args[@]}" ) \
@@ -790,13 +797,27 @@ else
         echo "  FAIL  $name was asked for a $tile tile, and its device does not report one."
         exit 1
       fi
-      if [[ "$how" == "queue" ]] && ! grep -qE "^  note  transport queue, [1-9][0-9]* commands" "$log"; then
-        echo "  FAIL  $name was asked for the queue, and nothing went through the ring."
+      if [[ "$how" != "link" ]] && ! grep -qE "^  note  transport $how, [1-9][0-9]* commands" "$log"; then
+        echo "  FAIL  $name was asked for the $how, and nothing went through the ring."
+        exit 1
+      fi
+      if [[ "$how" == "module" && "$name" == "test_grxblas_pta_chiplet" ]] &&
+         ! grep -qE "^  note  in place: ([1-9][0-9]*) of \1 GEMMs" "$log"; then
+        echo "  FAIL  $name on the module ran a GEMM that was not in place."
         exit 1
       fi
       tail -1 "$log"
     done
   done
+  echo "--- test_pta_module_device, a module given no host memory"
+  if ( cd "$ROOT/tests/unit" && "$BUILD/cmake-pta/tests/test_pta_module_device" 128x64 nomemory ) \
+       > "$BUILD/test_pta_module_device.nomemory.log" 2>&1; then rc=0; else rc=$?; fi
+  grep -E '^  (ok|FAIL|note) ' "$BUILD/test_pta_module_device.nomemory.log" | sed 's/^/  /'
+  if [[ $rc -ne 0 ]] || ! grep -qE "^  ok    is not enumerated" "$BUILD/test_pta_module_device.nomemory.log"; then
+    echo "FAILED: a PTA module on the host with no host memory was not refused (exit $rc)"
+    exit 1
+  fi
+  tail -1 "$BUILD/test_pta_module_device.nomemory.log"
 fi
 
 echo "all mock checks passed"

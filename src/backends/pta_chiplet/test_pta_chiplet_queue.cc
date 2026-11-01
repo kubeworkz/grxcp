@@ -75,6 +75,7 @@ uint64_t addr_of(const void* p) { return (uint64_t)(uintptr_t)p; }
 // ---- host memory, as the module reaches it ---------------------------------
 struct Host {
   std::vector<uint64_t> writes;      // every line the module wrote, in order
+  std::vector<uint64_t> reads;       // and every line it read
   uint64_t poison_lo = 0, poison_hi = 0;   // a range whose reads fail
   int msi[2] = {0, 0};
   pta_module* m = nullptr;
@@ -86,6 +87,7 @@ struct Host {
 int host_read(void* ctx, uint64_t addr, uint8_t line[64]) {
   Host* h = static_cast<Host*>(ctx);
   if (addr >= h->poison_lo && addr < h->poison_hi) return -1;
+  h->reads.push_back(addr);
   std::memcpy(line, reinterpret_cast<const void*>((uintptr_t)addr), 64);
   return 0;
 }
@@ -737,6 +739,96 @@ void t_driver(const pta_twin_build& b) {
   board_close(&bd);
 }
 
+// How many of a log's lines fell inside [lo, lo + n).
+size_t lines_in(const std::vector<uint64_t>& log, uint64_t lo, size_t n) {
+  size_t k = 0;
+  for (uint64_t a : log) k += (a >= lo && a < lo + n);
+  return k;
+}
+
+void t_in_place(const pta_twin_build& b) {
+  section("the driver, in place: the caller's own buffers, and nothing copied");
+  Board bd;
+  board_open(&bd, b);
+  Dma dma;
+  pta_chiplet_device_t dev;
+  pta_chiplet_attach_window(&dev, board_read, board_write, &bd);
+  pta_chiplet_detect(&dev);
+  pta_chiplet_attach_queue(&dev, dma_alloc, dma_free, &dma, 4);
+  pta_twin* ref = pta_twin_new(&b);
+  program_v1(bd.t, b, 0x1A9u);
+  program_v1(ref, b, 0x1A9u);
+
+  // Three buffers of the caller's, in memory the module reaches: int8 operands
+  // and int32 results, row-major, as format 0 has them.
+  const int M = 3, N = b.cols + 5, K = b.rows + 20;
+  const auto A = operands(61, static_cast<size_t>(M) * K);
+  const auto B = operands(62, static_cast<size_t>(K) * N);
+  pta_chiplet_dma_t act, wgt, out;
+  dma_alloc(&dma, A.size(), &act);
+  dma_alloc(&dma, B.size(), &wgt);
+  dma_alloc(&dma, static_cast<size_t>(M) * N * 4, &out);
+  for (size_t i = 0; i < A.size(); ++i) static_cast<uint8_t*>(act.cpu)[i] = (uint8_t)(int8_t)A[i];
+  for (size_t i = 0; i < B.size(); ++i) static_cast<uint8_t*>(wgt.cpu)[i] = (uint8_t)(int8_t)B[i];
+  std::memset(out.cpu, 0xA5, out.bytes);
+  const int allocs = dma.allocs;
+  bd.host.reads.clear();
+  bd.host.writes.clear();
+  int rc = pta_chiplet_gemm_at(&dev, 0, M, N, K, act.addr, wgt.addr, out.addr);
+  std::vector<int64_t> want;
+  twin_gemm(ref, 0, M, N, K, A, B, &want);
+  bool same = rc == 0;
+  for (size_t i = 0; same && i < want.size(); ++i)
+    same = (int64_t)(int32_t)get32(static_cast<uint8_t*>(out.cpu) + 4 * i) == as_format0(want)[i];
+  char name[200];
+  std::snprintf(name, sizeof name,
+                "a GEMM at three addresses the caller holds, %d x %d x %d: the call's answer, in its buffer",
+                M, N, K);
+  check(name, same && dev.last_index == 0);
+  check("the module read the caller's operands and wrote the caller's results, and nothing else",
+        lines_in(bd.host.reads, act.addr, A.size()) > 0 && lines_in(bd.host.reads, wgt.addr, B.size()) > 0 &&
+            lines_in(bd.host.writes, out.addr, out.bytes) > 0 &&
+            lines_in(bd.host.writes, out.addr, out.bytes) + 1 == bd.host.writes.size());
+  check("and the driver staged nothing: it took no memory of its own",
+        dma.allocs == allocs && dev.stage.cpu == nullptr);
+
+  const uint32_t tail = pta_module_read32(bd.m, PTA_MODULE_PTQ_TAIL);
+  rc = pta_chiplet_gemm_at(&dev, 0, M, N, K, act.addr + 8, wgt.addr, out.addr);
+  check("an address off a line: NOT ACCEPTED, and no doorbell rung",
+        rc == -1 && dev.error == PTA_CHIPLET_ERR_NOT_ACCEPTED &&
+            pta_module_read32(bd.m, PTA_MODULE_PTQ_TAIL) == tail);
+  std::memset(out.cpu, 0xA5, out.bytes);
+  pta_twin_write32(bd.t, PTA_TWIN_IMPAIR, PTA_QUANT | PTA_MZM_NL);
+  rc = pta_chiplet_gemm_at(&dev, 0, M, N, K, act.addr, wgt.addr, out.addr);
+  bool untouched = true;
+  for (size_t i = 0; i < out.bytes; ++i) untouched = untouched && static_cast<uint8_t*>(out.cpu)[i] == 0xA5;
+  check("refused in place: REFUSED, the bit named, and the caller's results untouched",
+        rc == -1 && dev.error == PTA_CHIPLET_ERR_REFUSED && dev.refused_impairments == 0x20u && untouched);
+  pta_twin_write32(bd.t, PTA_TWIN_IMPAIR, PTA_QUANT);
+  bd.host.poison_lo = act.addr;
+  bd.host.poison_hi = act.addr + 64;
+  rc = pta_chiplet_gemm_at(&dev, 0, M, N, K, act.addr, wgt.addr, out.addr);
+  check("a halt in place: torn down and LOST, where what the results hold is undefined",
+        rc == -1 && dev.error == PTA_CHIPLET_ERR_LOST && pta_module_read32(bd.m, PTA_MODULE_PTQ_STATUS) == 1u);
+  bd.host.poison_lo = bd.host.poison_hi = 0;
+  rc = pta_chiplet_gemm_at(&dev, 0, M, N, K, act.addr, wgt.addr, out.addr);
+  check("and the next GEMM in place runs", rc == 0 && dev.error == PTA_CHIPLET_OK);
+
+  pta_chiplet_device_t linkless;
+  pta_chiplet_attach_window(&linkless, board_read, board_write, &bd);
+  pta_chiplet_detect(&linkless);
+  rc = pta_chiplet_gemm_at(&linkless, 0, M, N, K, act.addr, wgt.addr, out.addr);
+  check("with no queue there is no way to the tile: NO LINK", rc == -1 && linkless.error == PTA_CHIPLET_ERR_NO_LINK);
+
+  dma_free(&dma, &act);
+  dma_free(&dma, &wgt);
+  dma_free(&dma, &out);
+  pta_chiplet_detach_queue(&dev);
+  check("detached, every buffer is given back", dma.allocs == dma.frees);
+  pta_twin_free(ref);
+  board_close(&bd);
+}
+
 }  // namespace
 
 int main() {
@@ -750,6 +842,7 @@ int main() {
     t_halt(*b);
     t_teardown(*b);
     t_driver(*b);
+    t_in_place(*b);
   }
   std::printf("\n%d checks, %d failed\n", g_checks, g_fail);
   std::printf("%s\n", g_fail ? "FAILED" : "PASSED");

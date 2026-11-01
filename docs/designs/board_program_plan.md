@@ -1033,6 +1033,17 @@ wrong on purpose each fail it. grxBLAS's 4,164 results a tile hold through the
 queue as they do through the call. Not built: the device with no parent GPU, a
 caller's buffers handed to the module in place, and version 2 descriptors.
 
+*And its device, 2026-10-15*
+([`pta_board_transport.md`](pta_board_transport.md) §12). The runtime
+enumerates the first board's PTA as a module on the host, `parentDevice` -1,
+whose operands are host memory: `grxMallocHost` on it is memory its queue
+reaches, and grxBLAS on three such buffers runs in place, the module reading A
+and B and writing C where the caller put them. Other host memory is staged, and
+a GPU's pointer refused. `test_pta_module_device.cpp` and grxBLAS's gate on the
+module hold it: the 4,164 results a tile again, every GEMM that ran in place. A
+lost GEMM in place leaves C undefined, as B25 ruled. Still not built: version 2
+descriptors through the queue, and a caller's existing pages.
+
 **S3, predicted 2026-10-04.** [`pta_dispatch.py`](pta_dispatch.py) is the model:
 the CPU document's §2.1 for the NPU, X2's link and
 [`pta_shot_rate.py`](pta_shot_rate.py) §5's weight path for the chiplet, a GEMM

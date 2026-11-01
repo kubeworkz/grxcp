@@ -145,7 +145,10 @@ typedef enum {
   // engine a GEMM runs on, and on this one every GEMM runs on the tile. It is
   // GEMM-only and has no memory: its operands are its parent GPU's, moved by
   // that GPU's copy engine, so grxDeviceProp_t.parentDevice says whose
-  // pointers it takes (docs/designs/board_program_plan.md, B9).
+  // pointers it takes (docs/designs/board_program_plan.md, B9). On the first
+  // development board it is instead a module on the host with no GPU behind
+  // it, parentDevice -1, whose operands are host memory
+  // (docs/designs/pta_board_transport.md).
   GRX_DEVICE_TYPE_PTA = 2
 } grxDeviceType_t;
 
@@ -346,6 +349,11 @@ typedef struct {
   // grxMalloc on the chiplet itself is refused. This is the one place a
   // pointer is resolved against a device other than the current one, and the
   // field is how a caller finds out which.
+  //
+  // A PTA device with parentDevice -1 is the first board's module on the host:
+  // no device memory either, and its operands are host memory. grxMallocHost
+  // on it gives memory its queue reaches, and a GEMM on three such buffers
+  // runs in place; on any other host memory it is copied.
   int    parentDevice;
 } grxDeviceProp_t;
 
