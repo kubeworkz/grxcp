@@ -1,0 +1,53 @@
+{
+  "repo": "kubeworkz/grxcp",
+  "commit": "98954ac085579f431b251e9f7a8a970a555874d9",
+  "run_url": "https://github.com/kubeworkz/grxcp/actions/runs/41333292431",
+  "generated_at": "2026-11-01T17:48:56+00:00",
+  "emcc": "emcc (Emscripten gcc/clang-like replacement + linker emulating GNU ld) 3.1.74 (1092ec30a3fb1d46b1782ff1b4db5094d3d06ae5)",
+  "gcc": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+  "harness": {
+    "pta_mnist.c": "495e370989f7275ba05fc276e8b9a894b03fa5b463274923b7ef2b564b3a728d",
+    "pta_mnist.sh": "66d50632de0b6f66a3fa2191f933aa59b4f46bae57ca966fd60e34ae58682a03",
+    "pta_tile_model.c": "a9d008d8ee6ed367a364c22cb2f7a978dbe566b3a0fa625e563ed536add385bd",
+    "pta_tile_model.h": "dd5255ccf8f6fa02f67f9f621d8efe065cfcf32b953f14aa24b288a8cb70b186"
+  },
+  "files": {
+    "canary_seed1.net": {
+      "bytes": 37496,
+      "sha256": "b6320b380dff3e3c84d4035fd54554207a29c64a067082b4d9ec5a1612f603ea"
+    },
+    "pta_mnist.js": {
+      "bytes": 63514,
+      "sha256": "516e757a325c782d97ad1bf600ac4bb285c3e0640f7cc45c9e819bcf40633b74"
+    },
+    "pta_mnist.wasm": {
+      "bytes": 206563,
+      "sha256": "4043c52f08dbef4edd7cdcff407f1243ad80a1b15bb2e4651b84c56b2f19cd0d"
+    },
+    "rows.json": {
+      "bytes": 4852,
+      "sha256": "7939508f890c6583a2e494dec83af5052b084e1f33164d61383fe74261ec30a7"
+    },
+    "summary.md": {
+      "bytes": 227,
+      "sha256": "dd665c89f3a330f07c3faf9a4755a1e1e0c4d78856fd8e93fed6dec9cb857f45"
+    },
+    "t10k-images-idx3-ubyte.gz": {
+      "bytes": 378876,
+      "sha256": "5cd02fa27b08f601347e0817501a18a2abb49f48ef1cd9c00a08da7559ccb858"
+    },
+    "t10k-labels-idx1-ubyte.gz": {
+      "bytes": 4540,
+      "sha256": "01951d7130652fc9cc5ca67effa3cef1ded19e02fc6edaa6c031e8b05320504e"
+    },
+    "train-images-idx3-ubyte.gz": {
+      "bytes": 2270058,
+      "sha256": "fefb4a1a4fa43fa545816dbf699c768594474e180a203a4ad31de9e0216d8013"
+    },
+    "train-labels-idx1-ubyte.gz": {
+      "bytes": 28881,
+      "sha256": "dd32086a37df7acc96078646b51c5e6c05c3d918e4c30c0f17e36fccb7f5441f"
+    }
+  },
+  "identical_to_native": true
+}
