@@ -1,0 +1,52 @@
+# pta-web-spike.yml -- can a browser run the PTA canary and print exactly what the harness does?
+#
+# Builds the canary's pinned harness (docs/designs/canary/harness) with gcc and
+# with emcc, runs three of the canary's settings both ways, and fails unless the
+# outputs are byte-identical. Keeps the browser build and the pooled data as an
+# artifact. Runs only on pushes to its own branch and on demand: a spike, not a
+# gate on anything else.
+name: PTA web spike
+
+on:
+  push:
+    branches: [spike/pta-web]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  spike:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 3.1.74
+
+      - name: Build natively and as WebAssembly
+        run: bash tools/pta-web/build.sh "$RUNNER_TEMP/pta-web"
+
+      - name: Compare native and WebAssembly output
+        run: bash tools/pta-web/compare.sh "$RUNNER_TEMP/pta-web"
+
+      - name: Summary
+        if: always()
+        run: |
+          f="$RUNNER_TEMP/pta-web/summary.md"
+          [ -f "$f" ] && cat "$f" >> "$GITHUB_STEP_SUMMARY" || echo "no summary written" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Keep the browser build and the runs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pta-web
+          retention-days: 30
+          if-no-files-found: ignore
+          path: |
+            ${{ runner.temp }}/pta-web/web
+            ${{ runner.temp }}/pta-web/runs
+            ${{ runner.temp }}/pta-web/summary.md
