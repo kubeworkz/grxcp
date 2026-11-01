@@ -1,0 +1,115 @@
+# pta-web.yml -- the canary's PTA harness as a browser module, checked and published.
+#
+# tools/pta-web/build.sh builds the harness pinned in docs/designs/canary/harness
+# with gcc and with emcc; tools/pta-web/compare.sh runs the canary's rows
+# natively, as a node build and as the browser module itself, and fails unless
+# all three print the same bytes.
+#
+# On main (and on demand) a passing build is force-pushed as one commit to the
+# orphan branch `pta-web`: the module, the canary network, the pooled data,
+# rows.json (the canary's settings and what the harness printed for them) and
+# manifest.json (source commit, harness digests, compilers, file digests).
+# A page can load it from raw.githubusercontent.com with no token. A build that
+# does not match the harness is never published.
+#
+# Pull requests build and compare, and publish nothing.
+name: PTA web module
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/designs/canary/**'
+      - 'tools/pta-web/**'
+      - '.github/workflows/pta-web.yml'
+  pull_request:
+    paths:
+      - 'docs/designs/canary/**'
+      - 'tools/pta-web/**'
+      - '.github/workflows/pta-web.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write         # push the pta-web branch
+
+concurrency:
+  group: pta-web-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 3.1.74
+
+      - name: Build natively and as WebAssembly
+        run: bash tools/pta-web/build.sh "$RUNNER_TEMP/pta-web"
+
+      - name: Compare native, node build and browser module
+        run: bash tools/pta-web/compare.sh "$RUNNER_TEMP/pta-web"
+
+      - name: Summary
+        if: always()
+        run: |
+          f="$RUNNER_TEMP/pta-web/summary.md"
+          [ -f "$f" ] && cat "$f" >> "$GITHUB_STEP_SUMMARY" || echo "no summary written" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Keep the build and the runs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pta-web
+          retention-days: 30
+          if-no-files-found: ignore
+          path: |
+            ${{ runner.temp }}/pta-web/web
+            ${{ runner.temp }}/pta-web/runs
+            ${{ runner.temp }}/pta-web/summary.md
+
+      # Only after compare passed (no always()), and never from a pull request.
+      - name: Publish to the pta-web branch
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        run: |
+          set -eu
+          web="$RUNNER_TEMP/pta-web/web"
+          cp "$RUNNER_TEMP/pta-web/summary.md" "$web/"
+          python3 - "$web" <<'PY'
+          import hashlib, json, os, subprocess, sys, datetime
+          web = sys.argv[1]
+          sha = lambda p: hashlib.sha256(open(p, 'rb').read()).hexdigest()
+          harness = 'docs/designs/canary/harness'
+          doc = dict(
+              repo=os.environ['GITHUB_REPOSITORY'], commit=os.environ['GITHUB_SHA'],
+              run_url=f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}",
+              generated_at=datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds'),
+              emcc=subprocess.run(['emcc', '--version'], capture_output=True, text=True).stdout.splitlines()[0],
+              gcc=subprocess.run(['gcc', '--version'], capture_output=True, text=True).stdout.splitlines()[0],
+              harness={f: sha(os.path.join(harness, f)) for f in sorted(os.listdir(harness))},
+              files={f: dict(bytes=os.path.getsize(os.path.join(web, f)), sha256=sha(os.path.join(web, f)))
+                     for f in sorted(os.listdir(web)) if f != 'manifest.json'},
+              identical_to_native=True,
+          )
+          json.dump(doc, open(os.path.join(web, 'manifest.json'), 'w'), indent=2)
+          PY
+          cat > "$web/README.md" <<MD
+          # pta-web
+
+          Written by \`.github/workflows/pta-web.yml\` and force-pushed on every passing build: the
+          canary's PTA harness (\`docs/designs/canary/harness\`) as a browser module, with the canary
+          network and MNIST pooled to 8 x 8. Every row in \`rows.json\` printed the same bytes natively,
+          as a node build and from this module. Source commit: ${GITHUB_SHA}.
+          MD
+          cd "$web"
+          git init -q -b pta-web
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "PTA web module for ${GITHUB_SHA::7}"
+          git push -q --force "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${GITHUB_REPOSITORY}.git" pta-web
+          echo "published $(ls | wc -l) files to pta-web"
